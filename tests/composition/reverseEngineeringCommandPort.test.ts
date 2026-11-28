@@ -9,6 +9,7 @@ import { ReverseEngineeringService } from "../../src/application/reverse/Reverse
 import { findsNoExecutable } from "../support/reverseEngineeringService.js";
 import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
 import { ok } from "../../src/domain/result.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import type { runOwnedCommand } from "../../src/process/OwnedCommand.js";
@@ -16,6 +17,22 @@ import {
   fixtureCommandRepair,
   ownedOutput,
 } from "../support/reverseEngineeringCompositionFixtures.js";
+
+it("documents caller-selected combined capture budgets for both command tools", () => {
+  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS) {
+    expect(contract.description).toMatch(/max_output_bytes.*combined output/u);
+    expect(contract.description).toContain("16 MiB default");
+    expect(contract.description).toContain("next call without restart");
+    expect(contract.description).toContain("client receive limits");
+    for (const example of contract.examples)
+      expect(
+        contract.inputSchema.safeParse({
+          ...example.input,
+          max_output_bytes: 32 * 1024 * 1024,
+        }).success,
+      ).toBe(true);
+  }
+});
 
 it("uses provider profiles supplied through the application port", async () => {
   const directory = await createTestTempDirectory("rea-reverse-port-");

@@ -54,7 +54,9 @@ it("validates selected and existing JEB endpoints without losing caller selectio
   delete env.REA_JEB_MCP_URL;
   const invalidExisting = registration(invalidEndpoint);
   await writeFile(path, invalidExisting);
-  expect((await setup()).status).toBe("needs_human");
+  const existingRefused = await setup();
+  expect(existingRefused.status).toBe("needs_human");
+  expect(existingRefused.remediation).toContain("REA_JEB_MCP_URL");
   expect(await readFile(path, "utf8")).toBe(invalidExisting);
 
   env.REA_JEB_MCP_URL = selectedEndpoint;

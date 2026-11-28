@@ -169,12 +169,12 @@ export const declaredTokenPattern = <Schema extends z.ZodString>(
 ): Schema => schema.meta({ pattern: declaredPattern(pattern) });
 
 /**
- * Check `predicate` and declare it as an `allOf` of patterns built from the
- * same expressions, annotated with how the declaration relates to it.
+ * Check a predicate or canonical regex and declare its pattern-only wire
+ * form. A regex keeps Zod's format issue rather than becoming a custom issue.
  */
 export const declaredByPatterns = <Schema extends z.ZodString>(
   schema: Schema,
-  predicate: (value: string) => boolean,
+  predicate: ((value: string) => boolean) | RegExp,
   declaration: PatternDeclaration,
   check: { readonly message: string; readonly abort?: boolean },
 ): Schema => {
@@ -190,7 +190,10 @@ export const declaredByPatterns = <Schema extends z.ZodString>(
   if (allOf.length === 0)
     throw new TypeError("A pattern declaration needs at least one pattern");
   return annotatePatternDeclaration(
-    schema.refine(predicate, check).meta({ allOf }) as Schema,
+    (predicate instanceof RegExp
+      ? schema.regex(predicate, check)
+      : schema.refine(predicate, check)
+    ).meta({ allOf }) as Schema,
     declaration.relation,
   );
 };

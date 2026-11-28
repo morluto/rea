@@ -78,4 +78,25 @@ describe("Ghidra local transport", () => {
       });
     },
   );
+
+  it("rejects an oversized endpoint before parsing its otherwise valid record", async () => {
+    const root = await createTestTempDirectory("rea-ghidra-transport-");
+    const runtime = await createGhidraTestRuntime(root);
+    runtimes.push(runtime);
+    const path = await publishGhidraTestEndpoint(
+      runtime,
+      `${JSON.stringify({ host: "127.0.0.1", port: 65535 })}  `,
+    );
+
+    await expect(
+      observeGhidraEndpoint({ transport: "authenticated-loopback-tcp", path }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        kind: "start",
+        message: "Ghidra TCP endpoint is invalid",
+        cause: { reason: "limit" },
+      },
+    });
+  });
 });

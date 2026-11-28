@@ -33,6 +33,7 @@ describe("compiled CLI JSON input failure status", () => {
   // Analysis view owns its input. Export shape comparison uses the shared
   // contract document command.
   for (const [command, operation] of [
+    ["inspect-adb-ui", "inspect_adb_ui"],
     ["inspect-analysis-view", "inspect_analysis_view"],
     ["compare-javascript-export-shapes", "compare_javascript_export_shapes"],
   ] as const)

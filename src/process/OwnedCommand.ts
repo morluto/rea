@@ -234,6 +234,10 @@ export const runOwnedCommand = async (
   },
   options: {
     readonly signal?: AbortSignal | undefined;
+    /** Bounded caller-owned bytes/text delivered through piped stdin, never argv or diagnostics. */
+    readonly input?: string | Uint8Array;
+    /** Synchronously record the admitted body's handoff to child stdin. */
+    readonly onInputSubmission?: () => void;
     /** Synchronously accept unresolved cleanup ownership; execution still returns its original outcome. Must not throw. */
     readonly retainCleanup?: (
       owner: ProviderProcessSupervisor,
@@ -245,6 +249,12 @@ export const runOwnedCommand = async (
   } = {},
 ): Promise<ProviderProcessSnapshot> => {
   const callerSignal = options.signal ?? spawn.signal;
+  if (
+    options.input !== undefined &&
+    spawn.stdin !== "pipe" &&
+    limits.stdin === undefined
+  )
+    throw new TypeError("Owned command input requires piped stdin");
   if (callerSignal?.aborted)
     throw new OwnedCommandFailure(
       "cancelled",
@@ -271,6 +281,8 @@ export const runOwnedCommand = async (
       control,
       callerSignal,
       options.retainCleanup,
+      options.input,
+      options.onInputSubmission,
     );
   } finally {
     deadline?.dispose();
@@ -311,6 +323,8 @@ const collectOwnedCommand = async (
     owner: ProviderProcessSupervisor,
     result: Extract<ProviderProcessStopResult, { status: "incomplete" }>,
   ) => void,
+  input?: string | Uint8Array,
+  onInputSubmission?: () => void,
 ): Promise<ProviderProcessSnapshot> => {
   const signal = deadline.signal;
   let launched: SpawnedOwnedProviderProcess;
@@ -412,18 +426,7 @@ const collectOwnedCommand = async (
     if (failure !== undefined) recordCollectionFailure(failure);
   });
   let inputFailure: CommandProcessFailure | undefined;
-  const inputCompleted =
-    limits.stdin === "closed-pipe"
-      ? finishCommandInput(launched.process.stdin, (cause) => {
-          inputFailure ??= {
-            cause,
-            message: `stdin stream failed: ${errorMessage(cause)}`,
-            processError: cause instanceof Error ? cause : undefined,
-          };
-          recordCollectionFailure(inputFailure);
-          abandoned.abort(OwnerCancellation.noLongerNeeded);
-        })
-      : Promise.resolve();
+  let inputCompleted = Promise.resolve();
   let failure: OwnedCommandFailure | undefined;
   const interruptionOrObservedFailure = (
     interruption: "cancelled" | "timeout" | undefined,
@@ -455,6 +458,26 @@ const collectOwnedCommand = async (
     );
   };
   try {
+    if (input !== undefined || limits.stdin === "closed-pipe") {
+      // Ownership preparation and launch must not consume the deadline and
+      // still deliver a body after the caller has stopped waiting.
+      const interrupted = interruptionOrObservedFailure(deadline.interruption);
+      if (interrupted !== undefined) throw interrupted;
+      inputCompleted = finishCommandInput(
+        launched.process.stdin,
+        (cause) => {
+          inputFailure ??= {
+            cause,
+            message: `stdin stream failed: ${errorMessage(cause)}`,
+            processError: cause instanceof Error ? cause : undefined,
+          };
+          recordCollectionFailure(inputFailure);
+          abandoned.abort(OwnerCancellation.noLongerNeeded);
+        },
+        input,
+        onInputSubmission,
+      );
+    }
     while (!(await supervisor.waitForOutputClose(undefined, wakeSignal))) {
       const interrupted = interruptionOrObservedFailure(deadline.interruption);
       if (interrupted !== undefined) throw interrupted;
@@ -611,6 +634,8 @@ const collectOwnedCommand = async (
 const finishCommandInput = (
   input: Writable | null | undefined,
   failed: (cause: unknown) => void,
+  payload?: string | Uint8Array,
+  onInputSubmission?: () => void,
 ): Promise<void> => {
   if (input === null || input === undefined) {
     failed(new Error("stdin stream is unavailable"));
@@ -630,7 +655,8 @@ const finishCommandInput = (
       else resolve();
     });
     try {
-      input.end();
+      if (payload !== undefined) onInputSubmission?.();
+      input.end(payload);
     } catch (cause: unknown) {
       failure(cause);
     }

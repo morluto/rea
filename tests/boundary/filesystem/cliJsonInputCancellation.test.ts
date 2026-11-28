@@ -47,32 +47,44 @@ it("stops a streamed file read on cancellation and allows the next read", async 
   });
 });
 
-it("retains a physical undefined read rejection when the caller also cancels", async () => {
-  const root = await createTestTempDirectory("rea-json-input-late-io-");
-  const path = join(root, "input.json");
-  await writeFile(path, '{"value":1}');
-  const controller = new AbortController();
-  await failFileReadAfterAbort(
-    path,
-    controller,
-    new Error("later cancellation"),
-    undefined,
-  );
-  try {
-    expect(
-      await parseCliJsonInput(path, "test-input", controller.signal),
-    ).toMatchObject({
-      ok: false,
-      error: {
-        code: "invalid_request",
-        input_reason: "read-failed",
-        details: { operation: "test-input" },
-      },
-    });
-  } finally {
-    vi.restoreAllMocks();
-  }
-});
+it.each([
+  { label: "undefined", physical: undefined },
+  { label: "null", physical: null },
+  {
+    label: "streamed undefined",
+    physical: undefined,
+    padding: 9 * 1024 * 1024,
+  },
+  { label: "streamed null", physical: null, padding: 9 * 1024 * 1024 },
+])(
+  "classifies a physical $label read rejection before late cancellation",
+  async ({ physical, padding }) => {
+    const root = await createTestTempDirectory("rea-json-input-late-io-");
+    const path = join(root, "input.json");
+    await writeFile(path, `${" ".repeat(padding ?? 0)}{"value":1}`);
+    const controller = new AbortController();
+    await failFileReadAfterAbort(
+      path,
+      controller,
+      new Error("later cancellation"),
+      physical,
+    );
+    try {
+      expect(
+        await parseCliJsonInput(path, "test-input", controller.signal),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          code: "invalid_request",
+          input_reason: "read-failed",
+          details: { operation: "test-input" },
+        },
+      });
+    } finally {
+      vi.restoreAllMocks();
+    }
+  },
+);
 
 it("keeps a physical rejection when it is the identical object used to abort", async () => {
   const root = await createTestTempDirectory("rea-json-input-identical-abort-");

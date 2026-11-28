@@ -15,6 +15,21 @@
       "reason": "Bounds the reply to `adb version`, a short fixed-format banner; no analysis input passes through it."
     }
   },
+  "src/adb/AdbUiRunner.ts": {
+    "\"UI private request protocol\"": {
+      "class": "protocol",
+      "reason": "Bounds one complete request frame on the private stdin channel; the UI runner's protocol v2 reader fixes the frame size, not analysis input."
+    },
+    "\"UI Binder response protocol\"": {
+      "class": "protocol",
+      "reason": "Bounds one complete reply on the device's Binder transaction channel; the Binder transaction buffer, not analysis input, fixes it."
+    },
+    "\"ADB UI complete-output capture\"": {
+      "class": "pending",
+      "issue": 5033,
+      "reason": "UI runner output capture is a producer budget without a per-call control; the unshipped UI experiment tracks it under the view-hierarchy feature issue."
+    }
+  },
   "src/android/JadxSession.ts": {
     "`The external DEX ${failure.stage} representation allowance`": {
       "class": "protocol",

@@ -4,10 +4,12 @@ import {
 } from "../../domain/adb/adbDeviceAnalysis.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
+import { ADB_UI_TOOL_CONTRACTS } from "./adbUiToolContracts.js";
 import { toolContractMetadata, toolEffects } from "../toolEffects.js";
 
 /** ADB device inspection and acquisition over a caller-supplied binary. */
 export const ADB_TOOL_CONTRACTS = [
+  ...ADB_UI_TOOL_CONTRACTS,
   {
     name: "inspect_adb_client",
     cli: true,

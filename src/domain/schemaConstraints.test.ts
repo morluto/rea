@@ -188,6 +188,30 @@ describe("schema constraints", () => {
   });
 });
 
+it("preserves regex format issues while declaring a wider wire pattern", () => {
+  const schema = declaredByPatterns(
+    z.string(),
+    /^[^\s]+$/u,
+    { matches: [/^[^ ]+$/u], relation: "wider" },
+    { message: "Whitespace is not an identity" },
+  );
+  const rejected = schema.safeParse("two\u00a0words");
+  expect(rejected.success).toBe(false);
+  if (!rejected.success)
+    expect(rejected.error.issues).toMatchObject([
+      {
+        code: "invalid_format",
+        format: "regex",
+        message: "Whitespace is not an identity",
+      },
+    ]);
+  expect(schemaAnnotations(schema)?.patternDeclaration).toBe("wider");
+  expect(schema.safeParse("emulator-5554").success).toBe(true);
+  expect(z.toJSONSchema(schema)).toHaveProperty("allOf", [
+    { pattern: "^[^ ]+$" },
+  ]);
+});
+
 describe("value requirements and JSON document text", () => {
   it("declares a rule requiring a value as if/then with a const", () => {
     const schema = requirePresence(

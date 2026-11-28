@@ -6,6 +6,10 @@ import type { Logger } from "pino";
 import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import { createAdbDeviceAnalysisProvider } from "../composition/adb.js";
 import { ADB_TOOL_CONTRACTS } from "../contracts/adb/adbToolContracts.js";
+import { ADB_UI_TOOL_CONTRACTS } from "../contracts/adb/adbUiToolContracts.js";
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import {
   activityExtraCliEntrySchema,
   MAX_ADB_ACTIVITY_EXTRAS,
@@ -44,7 +48,14 @@ const serialFirst = <const Rest extends readonly string[]>(...rest: Rest) =>
  */
 const ADB_COMMANDS: {
   readonly [
-    Name in Exclude<AdbOperation, "start_adb_activity">
+    Name in Exclude<
+      AdbOperation,
+      | "start_adb_activity"
+      | "inspect_adb_ui"
+      | "find_adb_ui_elements"
+      | "wait_for_adb_ui"
+      | "perform_adb_ui_action"
+    >
   ]: AdbProjection<Name>;
 } = {
   inspect_adb_client: {
@@ -181,6 +192,25 @@ export const registerAdbCommands = (
   ),
 ): void => {
   const service = new AdbDeviceAnalysisService(provider);
+  for (const contract of ADB_UI_TOOL_CONTRACTS)
+    registerContractDocumentCommand(
+      cli,
+      logger,
+      contract,
+      {
+        description: contract.description,
+        document:
+          "Inline JSON or input file containing the selected device, package and UI request",
+      },
+      (input, { signal, operation }) =>
+        finishAnalysisCommand(
+          () => service.execute(contract.name, input, { signal }),
+          provider,
+          "adb",
+          operation,
+          signal,
+        ).then(projectCliAnalysisResult),
+    );
   const run = (operation: AdbOperation) => (): EvidenceInspectionService => ({
     inspect: (input, { signal }) =>
       service.execute(operation, input, { signal }),
@@ -192,7 +222,7 @@ export const registerAdbCommands = (
     registerContractCommand(
       cli,
       logger,
-      contractNamed(ADB_TOOL_CONTRACTS, name as AdbOperation),
+      contractNamed(ADB_TOOL_CONTRACTS, name as keyof typeof ADB_COMMANDS),
       projection as never,
       analyzeWithService(run(name as AdbOperation), "adb"),
     );

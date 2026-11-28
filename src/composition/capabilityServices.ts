@@ -12,6 +12,7 @@ import {
   selectWiresharkTool,
 } from "../pcap/PcapConfiguration.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import type { Evidence } from "../domain/evidence.js";
 import { CapabilityScope } from "../application/CapabilityScope.js";
 import type {
   CapabilityAvailabilityFacts,
@@ -219,6 +220,8 @@ const tsharkLocatable = (environment: Readonly<NodeJS.ProcessEnv>): boolean => {
 };
 
 export interface CapabilityHostContext {
+  /** Retain ADB UI Evidence recovered after its original request completed. */
+  readonly onLateAdbUiEvidence?: (evidence: Evidence) => void;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly providerEnvironment: Readonly<NodeJS.ProcessEnv>;
   readonly settings: AnalysisSettingsReader;
@@ -686,9 +689,13 @@ const modules = {
     }),
   ),
   adbDevice: service(
-    ({ environment, options, platform }) =>
+    ({ environment, options, platform, onLateAdbUiEvidence }) =>
       options.adbDeviceAnalysis ??
-      createAdbDeviceAnalysisProvider(environment, platform),
+      createAdbDeviceAnalysisProvider(
+        environment,
+        platform,
+        onLateAdbUiEvidence,
+      ),
     (_context, value) => ({
       probes: {
         adbAnalysisAvailability: (signal: AbortSignal) =>

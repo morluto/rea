@@ -16,6 +16,7 @@ import {
 } from "../domain/immutableJson.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { analysisOperationInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {
   AnalysisExecution,

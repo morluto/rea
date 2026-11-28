@@ -122,7 +122,17 @@ export const UNIT_LAYERS = Object.freeze(
  * a deliberate decision, not a baseline debt: it is not counted, and any other
  * import between the same units still is. Keep the list short and say why.
  */
-export const LAYER_EXCEPTIONS = Object.freeze([]);
+export const LAYER_EXCEPTIONS = Object.freeze([
+  {
+    file: "src/adb/AdbUiRunner.ts",
+    target: "src/composition/resolveWindowsProviderExecutable.ts",
+    // The ADB UI runner reuses the shared Windows executable resolver owned by
+    // composition for launch selection; the runner keeps owning the launch
+    // boundary that translates selection failures into operation evidence.
+    reason:
+      "ADB UI launch selection reuses the shared Windows executable resolver owned by composition",
+  },
+]);
 
 const sourcePath = (path) => path.replace(/\.js$/u, ".ts");
 /** Whether one resolved import is a declared layer exception. */

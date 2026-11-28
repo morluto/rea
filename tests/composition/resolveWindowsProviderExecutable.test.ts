@@ -91,6 +91,20 @@ describe("resolveWindowsProviderExecutable", () => {
     ).toEqual(err({ kind: "invalid_extension", extension: "C:\\bad" }));
   });
 
+  it("keeps batch launchers under the caller's batch wrapping ownership", () => {
+    const environment = {
+      PATH: "C:\\Android SDK\\build-tools",
+      PATHEXT: ".COM;.EXE;.BAT;.CMD",
+    };
+    const expected = "C:\\Android SDK\\build-tools\\apksigner.BAT";
+    const lookup = windowsLookup("C:\\work", [expected]);
+    // The shared resolver searches runnable image extensions only; batch
+    // launchers stay the caller's wrapping boundary, never an implicit pick.
+    expect(
+      resolveWindowsProviderExecutable("apksigner", environment, lookup),
+    ).toEqual(err({ kind: "not_found" }));
+  });
+
   it("passes an absolute selected command through provider composition", () => {
     const commands = createReverseEngineeringCommandPort(
       { REA_OBJDUMP_COMMAND: "C:\\tools\\objdump.exe" },

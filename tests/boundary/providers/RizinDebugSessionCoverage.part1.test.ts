@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
+import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   stopFakeNoInferior,
@@ -130,6 +131,48 @@ it.skipIf(process.platform === "win32")(
       if (!result.ok) expect(result.error.message).toContain("timed out");
     } finally {
       vi.useRealTimers();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "does not spawn Rizin when cancellation arrives during TTY finalization",
+  async () => {
+    const controller = new AbortController();
+    const reason = { stage: "TTY handle closed" };
+    const close = OwnedFileHandle.prototype.close;
+    const validation = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementationOnce(async function (this: OwnedFileHandle) {
+        await close.call(this);
+        controller.abort(reason);
+      });
+    let spawned = false;
+    const manager = createManager(
+      { REA_RIZIN_COMMAND: "injected-rizin" },
+      {
+        spawnProcess: async () => {
+          spawned = true;
+          throw new Error("must not spawn after cancellation");
+        },
+      },
+    );
+    try {
+      const result = await manager.start(
+        {
+          path: "/tmp/cancel-before-spawn",
+          inferior_tty: await rizinTestInferiorTty(),
+        },
+        controller.signal,
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisCancelledError", cause: reason },
+      });
+      expect(validation).toHaveBeenCalledOnce();
+      expect(spawned).toBe(false);
+    } finally {
+      validation.mockRestore();
     }
   },
 );
