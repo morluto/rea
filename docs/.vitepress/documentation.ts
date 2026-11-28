@@ -199,6 +199,11 @@ export const documentationSections = [
         route: "/pe-overlay",
       },
       {
+        text: "Amiga Hunk executables",
+        source: "guides/native/amiga-hunk-executables.md",
+        route: "/amiga-hunk-executables",
+      },
+      {
         text: "Match native functions across builds",
         source: "native-function-matching.md",
         route: "/native-function-matching",

@@ -28,6 +28,10 @@ import {
 } from "../domain/iso9660/iso9660Structures.js";
 import { gzipTarExtraFieldProbeBytes } from "../domain/tarFormat.js";
 import {
+  amigaHunkPrefixDecision,
+  amigaHunkPrefixGrowth,
+} from "../domain/amigaHunk.js";
+import {
   createAsarHeaderSignatureProbe,
   type FinalAsarHeaderProbeObservation,
 } from "../resources/index.js";
@@ -158,6 +162,7 @@ export const createArtifactClassificationProbe = (
   const blocks: Buffer[] = [];
   let retainedBytes = 0;
   let observedBytes = 0;
+  let amigaPrefixLimit = ARTIFACT_CLASSIFICATION_PREFIX_BYTES;
   let fatTable: FatContainerTable | undefined;
   const fatSliceHeadersByOffset = new Map<number, MachoHeaderPrefixFacts>();
   const partialFatHeaders = new Map<
@@ -293,11 +298,23 @@ export const createArtifactClassificationProbe = (
     }
     return prefix;
   };
-  const signaturePrefixLimit = (): number =>
-    Math.max(
+  const signaturePrefixLimit = (): number => {
+    // Recheck a pending header only after its requested prefix is retained.
+    // Zero ends probing after recognition or rejection.
+    if (amigaPrefixLimit !== 0 && retainedBytes >= amigaPrefixLimit) {
+      const fileSize = Number.MAX_SAFE_INTEGER; // The stream may still grow.
+      const decision = amigaHunkPrefixDecision(retainedPrefix(), fileSize);
+      amigaPrefixLimit =
+        decision?.state === "needs-prefix"
+          ? amigaHunkPrefixGrowth(retainedBytes, decision.bytes, fileSize)
+          : 0;
+    }
+    return Math.max(
       ARTIFACT_CLASSIFICATION_PREFIX_BYTES,
       retainedBytes < 12 ? 0 : gzipTarExtraFieldProbeBytes(blocks[0]!),
+      amigaPrefixLimit,
     );
+  };
 
   return {
     get length(): number {

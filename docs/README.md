@@ -50,6 +50,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [PE TLS callbacks and load configuration](pe-load-config.md)
 - [PE x64 exception-directory function ranges](guides/native/pe-unwind-ranges.md)
 - [PE overlay](guides/native/pe-overlay.md)
+- [Amiga Hunk executables](guides/native/amiga-hunk-executables.md)
 - [Match native functions across builds](native-function-matching.md)
 - [Rust binary dependency metadata](rust-binaries.md)
 - [LabVIEW RSRC containers](guides/native/labview-analysis.md)

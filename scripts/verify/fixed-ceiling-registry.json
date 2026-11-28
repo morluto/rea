@@ -59,6 +59,28 @@
       "reason": "Bounds the reply to `apktool --version`, a short fixed-format banner; no analysis input passes through it."
     }
   },
+  "src/artifacts/AmigaHunkArtifactReader.ts": {
+    "\"The Amiga Hunk file allowance\"": {
+      "class": "representation",
+      "reason": "Bounds the admitted image at 64 MiB so every relocation offset can be checked without an unbounded buffer. This is a REA representation bound, not an AmigaDOS maximum, and this release has no runtime override."
+    },
+    "\"The Amiga Hunk hunk-count allowance\"": {
+      "class": "representation",
+      "reason": "Bounds the header hunk table at 1024 hunks before the size words are read. This is a REA representation bound, not an AmigaDOS maximum, and this release has no runtime override."
+    },
+    "\"The Amiga Hunk relocation allowance\"": {
+      "class": "representation",
+      "reason": "Bounds counted relocations in one hunk at 65536. Offsets are not retained. This is a REA representation bound, not an AmigaDOS maximum, and this release has no runtime override."
+    },
+    "\"The Amiga Hunk relocation-record allowance\"": {
+      "class": "representation",
+      "reason": "Bounds distinct relocation records (kind and target) retained across the file at 65536, because the per-hunk relocation count does not bound them file-wide. This is a REA representation bound, not an AmigaDOS maximum, and this release has no runtime override."
+    },
+    "\"The Amiga Hunk symbol-byte allowance\"": {
+      "class": "representation",
+      "reason": "Bounds resident-library, hunk, symbol and object-file unit name bytes at 65536, charged before a name is decoded. This is a REA representation bound, not an AmigaDOS maximum, and this release has no runtime override."
+    }
+  },
   "src/artifacts/AndroidBootImageArtifactReader.ts": {
     "ceiling.name": {
       "class": "forwarding",

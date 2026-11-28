@@ -152,6 +152,7 @@ const TARGETS: TargetFixtures = {
   "ubi-image": { ...archive, format: "ubi-image" },
   uf2: { ...archive, format: "uf2" },
   dfuse: { ...archive, format: "dfuse" },
+  "amiga-hunk": { ...archive, format: "amiga-hunk" },
   bflt: { ...archive, format: "bflt" },
   dmg: { ...archive, format: "dmg" },
   pkg: { ...archive, format: "pkg" },

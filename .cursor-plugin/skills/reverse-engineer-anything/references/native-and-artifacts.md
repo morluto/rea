@@ -977,11 +977,14 @@ matters, save your request beside the Evidence, together with its
 `6502` selects NMOS 6502; the entry and complete file mapping must fit within
 `0x0000..0xffff`. 65C02, 65816, cartridge containers, bank switching, and mapper
 semantics are unsupported. `m68k` requires an even entry and decodes the 68040
-superset of the 68000 family; Amiga/Atari containers and vector-table entry
-discovery are unsupported. A Mega Drive or Genesis ROM is a container:
+superset of the 68000 family. Amiga Hunk load files are inventoried by
+`inspect_artifact` (`amiga-hunk`); open an extracted code hunk as raw `m68k`
+with an even `entry_point` at the chosen base. The raw lane does not read a
+Hunk header or a vector table. A Mega Drive or Genesis ROM is a container:
 `inspect_artifact` reads its header, and an `.smd` dump is de-interleaved to
 `program.bin`. Open that file as raw-binary `m68k` with `entry_point` set to
-`rom.bus_start`, the 24-bit ROM start, usually `0x0`. Windows Ghidra P0 admits raw images only for `6502`. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/providers/raw-binary.md).
+`rom.bus_start`, the 24-bit ROM start, usually `0x0`. Atari containers and
+vector-table entry discovery remain unsupported. Windows Ghidra P0 admits raw images only for `6502`. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/providers/raw-binary.md).
 
 Intel HEX, S-record, UF2 and DfuSe files are containers, not raw images:
 `inspect_artifact` lists address regions (UF2 per familyID, DfuSe per element
@@ -1122,6 +1125,17 @@ and `relocations.bin` are extractable. gzip and gzdata bodies are inflated
 under `artifact_limits.expanded_bytes`; revision 2 bodies are read as stored.
 Open `text.bin` as a raw binary with a chosen architecture. See
 [uClinux bFLT flat executables](https://github.com/morluto/rea/blob/main/docs/bflt-executables.md).
+
+AmigaOS Hunk load files (`HUNK_HEADER` `0x000003F3`) and object files
+(`HUNK_UNIT` `0x000003E7`) use the same inspection and extraction workflows.
+The container does not name a CPU. Load files list each hunk's type, memory
+flags, sizes, relocation counts, symbol names and debug presence. Code and
+data hunks extract as `hunk-<n>-code.bin` and `hunk-<n>-data.bin`. BSS hunks
+are metadata only. Relocations are counted and not applied. Object files list
+units and their hunks and extract nothing. Open an extracted code
+hunk as raw `m68k` with an even `entry_point` at the chosen base. File offset
+0 of that hunk maps at `entry_point`. See
+[Amiga Hunk executables](https://github.com/morluto/rea/blob/main/docs/guides/native/amiga-hunk-executables.md).
 
 Nintendo DS ROMs (`nds`) are detected from the header (logo CRC `0xCF56`,
 unit code, ARM9 offset, and a matching logo or header CRC), not the filename,

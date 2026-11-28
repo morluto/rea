@@ -92,6 +92,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "srec",
   "uf2",
   "dfuse",
+  "amiga-hunk",
   "bflt",
   "esp-image",
   "fit",
