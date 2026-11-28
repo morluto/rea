@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **javascript:** a decode_android_resources call that omits detail on a decode above the agent result budget now returns the retained summary. Pass detail: "complete" (--detail complete) for the previous shape.
 * **gpu:** inspect_gpu_code_objects adds optional per-call budget parameters and reports details.limit with details.refusal.kind "adjustable_budget" instead of "fixed_ceiling" on top-level object, work, report, metadata, structure, and parser budget refusals.
 * **macho:** select arm64e.x1 slices of universal Mach-O files by exact subtype ([#14881](https://github.com/morluto/rea/issues/14881))
 * **elf:** an inspect_elf_unwind_ranges call that omits limit returns at most 64 ranges. Page with next_offset, or pass limit.
@@ -389,6 +390,7 @@
 * **elf:** clear the ARM Thumb bit before naming unwind ranges ([#9692](https://github.com/morluto/rea/issues/9692)) ([ce3506e](https://github.com/morluto/rea/commit/ce3506e298e1a42d111a08613821ce8868f411cd))
 * **elf:** do not count SPARC register declarations as imports ([d955cd0](https://github.com/morluto/rea/commit/d955cd0d60558a3f884b057e9aa6653b7652134d))
 * **elf:** establish direct initializer slot mappings ([#13452](https://github.com/morluto/rea/issues/13452)) ([bb81b0a](https://github.com/morluto/rea/commit/bb81b0a88dbb95dce6e86e737e35889e74d5deb0))
+* **elf:** leave the unwind GOT base unknown when DT_PLTGOT is not established ([2761248](https://github.com/morluto/rea/commit/27612481f00f2d63db48d5e41acc9ebe1c2f5cb4)), refs [#12446](https://github.com/morluto/rea/issues/12446)
 * **elf:** mark missing tables unreadable when dynamic counts are nonzero ([#14291](https://github.com/morluto/rea/issues/14291)) ([3624a9c](https://github.com/morluto/rea/commit/3624a9c1ab4f60843d786f95cb2e4871198329af))
 * **elf:** name the auxv types current Linux kernels write ([#13569](https://github.com/morluto/rea/issues/13569)) ([0aecef3](https://github.com/morluto/rea/commit/0aecef3726c216d931d7b085725a50f099eb9e58))
 * **elf:** preserve kernel config framing and location provenance ([#14021](https://github.com/morluto/rea/issues/14021)) ([fabe0da](https://github.com/morluto/rea/commit/fabe0da74b5f2c3807b5e01be88bff476ea74a38))
@@ -499,6 +501,7 @@
 * **javascript:** drop a stream acquisition whose options Node refuses ([#9262](https://github.com/morluto/rea/issues/9262)) ([afa3482](https://github.com/morluto/rea/commit/afa34825a81496b6de427ca11ffb9b4781902855))
 * **javascript:** include the underscore in the http token class ([62c4c25](https://github.com/morluto/rea/commit/62c4c25d19b67363784b58961072cd12c509de52))
 * **javascript:** keep Electron options visible past conditional literal spreads ([#9510](https://github.com/morluto/rea/issues/9510)) ([abdf383](https://github.com/morluto/rea/commit/abdf383939bd4190c9a06dd6576f3d698718d842))
+* **javascript:** name minified receiverless import calls by their final callee ([#9095](https://github.com/morluto/rea/issues/9095)) ([f8a12eb](https://github.com/morluto/rea/commit/f8a12eba17e95d0897c4438f629d7bd30b3380cc))
 * **javascript:** omit requests rejected by the default agent protocol ([f54cc2f](https://github.com/morluto/rea/commit/f54cc2f3acf5e73b1007aafe8db69bc4b0ca29c3))
 * **javascript:** preserve abrupt destructuring boundaries ([#13433](https://github.com/morluto/rea/issues/13433)) ([365bbd9](https://github.com/morluto/rea/commit/365bbd9008ddde7b4ff6c0ba3b239e24309a7a64))
 * **javascript:** preserve CommonJS exports through TypeScript wrappers ([#4784](https://github.com/morluto/rea/issues/4784)) ([a2b1986](https://github.com/morluto/rea/commit/a2b1986b2a1ba7e1b64ab8752c6da4f590ac64c1))
@@ -525,6 +528,7 @@
 * **limits:** let inspect_sqlite_database take producer_limits.input_bytes and type SQLite, Kuna and web-bundle refusals ([#14627](https://github.com/morluto/rea/issues/14627)) ([a5c71e8](https://github.com/morluto/rea/commit/a5c71e8c88e75b1c8906a47996dbe4b360bb65a0))
 * **limits:** make the IL2CPP pointer index adjustable and require owned refusal limits ([#14243](https://github.com/morluto/rea/issues/14243)) ([6ab595c](https://github.com/morluto/rea/commit/6ab595cfd6fc67f6bfe7313e39f736ed67f036a3))
 * **limits:** omit required_value when PE/native read budgets know only a lower bound ([#14645](https://github.com/morluto/rea/issues/14645)) ([49187f1](https://github.com/morluto/rea/commit/49187f1ab39288182447537558c41a90f1976c3b))
+* **limits:** report details.limit for KernelModuleProvider refusals ([#14306](https://github.com/morluto/rea/issues/14306)) ([2c07552](https://github.com/morluto/rea/commit/2c07552b643bddc7c58c3ff0b4a58893e6c05548))
 * **limits:** report packet and signal producer budgets as details.limit and page discovery at its record budget ([#14621](https://github.com/morluto/rea/issues/14621)) ([33e4e07](https://github.com/morluto/rea/commit/33e4e07dd05f6968d106c6671ca9b38033b10f11))
 * **macho:** correct encryption range VM mapping ([#13918](https://github.com/morluto/rea/issues/13918)) ([0fb1d11](https://github.com/morluto/rea/commit/0fb1d112f699b5619607f564f95fe52f14b7b061))
 * **macho:** document what a null build platform means ([#14128](https://github.com/morluto/rea/issues/14128)) ([7fe260d](https://github.com/morluto/rea/commit/7fe260de1d145de5d9984dd4cc60485cbda723a9))
@@ -1280,6 +1284,7 @@
 * **development:** route first contact by parsed facts and split admission limits from delivery budgets ([#14193](https://github.com/morluto/rea/issues/14193)) ([a1d53d3](https://github.com/morluto/rea/commit/a1d53d39565fe0976e0c86aeca9130901f4db7c6))
 * document per-call pagination, call-graph bounds, and streaming NuGet inspection ([#13851](https://github.com/morluto/rea/issues/13851)) ([46d41e4](https://github.com/morluto/rea/commit/46d41e4b79302539222dc6eeac9e8c36466491a4)), refs [#13850](https://github.com/morluto/rea/issues/13850)
 * **elf:** give the 64-range default unwind page ([54a186d](https://github.com/morluto/rea/commit/54a186da88d9759a582d1498383277fd1ed1c9c7))
+* **elf:** state when the dynamic table establishes the unwind GOT base ([e15d64e](https://github.com/morluto/rea/commit/e15d64ec0faa3b59c41a9d53972e274eacf4c6ae))
 * **firmware:** describe UEFI extraction summaries and owners ([4db1058](https://github.com/morluto/rea/commit/4db10585f0b52921bf3caa2540aebc149aeb4689))
 * **firmware:** describe UEFI summaries and views ([89fc51b](https://github.com/morluto/rea/commit/89fc51ba975e630743f2718d7cac3d4d817cc22c))
 * **ghidra:** link the native build steps for Linux arm64 ([dc10161](https://github.com/morluto/rea/commit/dc10161a9e0663c005fffb038e697306ca224482)), refs [#7018](https://github.com/morluto/rea/issues/7018)
@@ -1510,6 +1515,7 @@
 * **elf:** assert retained reports during descriptor finalization ([3cb9042](https://github.com/morluto/rea/commit/3cb904282f16cb6fdf509ba84203f89eefa015cc))
 * **elf:** consolidate debug-link candidate coverage ([#12851](https://github.com/morluto/rea/issues/12851)) ([3dacda3](https://github.com/morluto/rea/commit/3dacda36f200cb0dbdfde85f3f5589566e718552))
 * **elf:** join the paused dependency parser on failure ([40200ae](https://github.com/morluto/rea/commit/40200aea6f2cab98f142a2c0144e25d806e5153f))
+* **elf:** write caller-chosen dynamic rows in unwind fixtures ([a9180c0](https://github.com/morluto/rea/commit/a9180c0dfe3090ec1bdc55991e8697b8bcd72e99))
 * **environment:** check replay accounting with real retention budgets ([#13405](https://github.com/morluto/rea/issues/13405)) ([1461e52](https://github.com/morluto/rea/commit/1461e52f2bd12627d9809599d10b7be8006fac70))
 * **environment:** consolidate learned route matching checks ([#12809](https://github.com/morluto/rea/issues/12809)) ([9bca53f](https://github.com/morluto/rea/commit/9bca53f96ec9701c3afe49c9eb8a88f01d1150c3))
 * **environment:** consolidate manifest template proof ([#13859](https://github.com/morluto/rea/issues/13859)) ([b707c40](https://github.com/morluto/rea/commit/b707c405d8b8449bf770303f14194290f82f4098))
