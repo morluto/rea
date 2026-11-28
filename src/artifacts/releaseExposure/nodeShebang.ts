@@ -50,16 +50,24 @@ const envProgram = (operands: string): EnvField | undefined => {
     rest = after;
     return field === undefined ? undefined : { text: field, expands: false };
   };
+  let options = true;
   for (let entry = next(); entry !== undefined; entry = next()) {
     const field = entry.text;
-    // Past `--` nothing is an option, but settings still come first.
-    if (field === "--") {
-      for (let word = next(); word !== undefined; word = next())
-        if (!word.text.includes("=")) return word;
-      return undefined;
+    // Both `--` and the first assignment end option parsing. Later fields can
+    // still be assignments, but a dash-prefixed program is no longer an option.
+    if (!options) {
+      if (!field.includes("=")) return entry;
+      continue;
     }
-    if (ENV_OPTION_WITH_ARGUMENT.has(field)) {
-      next();
+    if (field === "--") {
+      options = false;
+      continue;
+    }
+    // Short options can be grouped, and an argument-taking option owns either
+    // the rest of that field or the next one (for example `-iu NODE_OPTIONS`).
+    const shortArgument = /^-[0iv]*[uCP](.*)$/su.exec(field);
+    if (ENV_OPTION_WITH_ARGUMENT.has(field) || shortArgument !== null) {
+      if ((shortArgument?.[1] ?? "") === "") next();
       continue;
     }
     const attached =
@@ -77,7 +85,11 @@ const envProgram = (operands: string): EnvField | undefined => {
       fields.unshift(...words);
       continue;
     }
-    if (field.startsWith("-") || field.includes("=")) continue;
+    if (field.startsWith("-")) continue;
+    if (field.includes("=")) {
+      options = false;
+      continue;
+    }
     return entry;
   }
   return undefined;
