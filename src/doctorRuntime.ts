@@ -30,6 +30,10 @@ import {
 } from "./kuna/KunaDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
+import {
+  createMacHopperPythonHost,
+  inspectMacHopperPython,
+} from "./hopper/MacHopperPython.js";
 import { ok } from "./domain/result.js";
 import { cancelledBy, carriedReason } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
@@ -717,6 +721,25 @@ export const createSystemDoctorHost = (
             probeScope,
             inspectionSignal,
           ),
+      ),
+    macHopperPythonCheck: ({
+      launcherPath,
+      run,
+      resourceScope,
+      signal: inspectionSignal,
+      environment: probeEnvironment,
+    }) =>
+      withProbeResourceScope(resourceScope, "hopper-python", (probeScope) =>
+        inspectMacHopperPython(
+          createMacHopperPythonHost({
+            run,
+            environment: probeEnvironment,
+            architecture: host.architecture,
+            resourceScope: probeScope,
+            signal: inspectionSignal,
+          }),
+          launcherPath,
+        ),
       ),
   });
 };

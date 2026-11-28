@@ -131,6 +131,8 @@ export interface DoctorHost {
     path: string,
   ): Promise<Result<VerifiedLinuxHopperLauncher, HopperReleaseError>>;
   linuxDemoRuntimeCheck(): Promise<DoctorCheck>;
+  /** macOS Hopper Python observations; an uncomposed host reports no check. */
+  macHopperPythonCheck?(launcherPath: string): Promise<DoctorCheck>;
   /** Homebrew cask launcher; consulted only where macOS bundles are probed. */
   brewHopperPath(): Promise<string | undefined>;
   /** Renamed `Hopper*.app` launchers; consulted only where macOS bundles are probed. */
@@ -173,6 +175,7 @@ export type DoctorProviderProbeHost = Pick<
   | "executable"
   | "inspectLinuxHopper"
   | "linuxDemoRuntimeCheck"
+  | "macHopperPythonCheck"
   | "brewHopperPath"
   | "manualHopperPaths"
   | "providerInspections"
@@ -744,6 +747,14 @@ export interface SystemDoctorHostOptions {
     signal: AbortSignal,
     environment: Readonly<NodeJS.ProcessEnv>,
   ) => Promise<DoctorCheck>;
+  readonly macHopperPythonCheck?: (input: {
+    readonly launcherPath: string;
+    /** Bounded, owner-tracked command execution. */
+    readonly run: typeof execFileOutput;
+    readonly resourceScope: RetainedResourceScope;
+    readonly signal: AbortSignal;
+    readonly environment: Readonly<NodeJS.ProcessEnv>;
+  }) => Promise<DoctorCheck>;
   readonly desktopBuildFacts?: (
     input: DesktopBuildFactsInput,
   ) => Promise<DesktopBuildFacts>;
@@ -917,6 +928,18 @@ export const systemDoctorHost = (
               inspectionSignal,
               probeEnvironment,
             ),
+      ...(options.macHopperPythonCheck === undefined
+        ? {}
+        : {
+            macHopperPythonCheck: (launcherPath: string) =>
+              options.macHopperPythonCheck!({
+                launcherPath,
+                run: hostExecFileOutput,
+                resourceScope,
+                signal: inspectionSignal,
+                environment: probeEnvironment,
+              }),
+          }),
       inspectLinuxHopper: (path) =>
         inspectLinuxHopperLauncher(path, probeEnvironment),
       async brewHopperPath() {

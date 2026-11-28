@@ -1066,6 +1066,31 @@ bridge readiness, check Hopper for a pending demo, license, or loader dialog.
 Complete the dialog and retry. If REA reports `cleanup_incomplete`, follow the
 retained-resource guidance below before reopening the target.
 
+On macOS, Hopper embeds no Python. It runs REA's bridge bootstrap with the
+library named by its `PythonPath` user default, or with a framework it finds
+itself. Without one, Hopper logs `Cannot execute Python script` or shows `Python
+is Unavailable`, and REA reports a startup timeout. `rea doctor` reports a
+`hopper-python` check on macOS:
+
+- `config_drift`, failing: `PythonPath` names a missing path, or a file that is
+  not a Mach-O image for this host. A freshly launched Hopper 6.6.2 loaded no
+  Python from such values and did not fall back to another framework;
+- `unknown`, failing: `PythonPath` or the file it names cannot be read, the
+  launcher is not inside an application bundle, or no compatible framework
+  exists under `/Library/Frameworks/Python.framework`,
+  `/usr/local/Frameworks/Python.framework` or the active developer directory's
+  `Library/Frameworks/Python3.framework`;
+- `unknown`, not failing: `PythonPath` names a compatible image, or it is unset
+  and compatible candidates exist. Header facts do not establish that Hopper
+  loads Python: it refused a compatible library that is not Python.
+
+Launcher aliases are resolved before the bundle is identified. Hopper's full
+search order is not observed, so the interpreter it will load stays `unknown`.
+To choose one, quit Hopper and run
+`defaults write <Hopper bundle identifier> PythonPath <path to the Python library>`,
+then rerun `rea doctor --provider hopper`. See
+[#7954](https://github.com/morluto/rea/issues/7954).
+
 On macOS, Hopper can show an `Executing Python Script...` overlay while the REA
 bridge serves an active MCP connection. Long-lived MCP clients can keep that
 connection open across agent turns, so the overlay may remain visible after the
