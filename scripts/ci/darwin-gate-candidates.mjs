@@ -4,12 +4,11 @@
 // the exact discovery parses only the modules it admits, so the two cannot
 // disagree about a gated module. A gate can tell macOS from Linux only by
 // comparing process.platform with a "darwin" or "linux" literal. It is a
-// skipIf/runIf call, or a case list chosen by a conditional on that literal.
-// The test may admit modules that are not gated.
+// skipIf/runIf call, or a for/each case list. The test may admit modules
+// that are not gated.
 
 const PLATFORM_LITERAL = /["'`](?:darwin|linux)["'`]/u;
-const GATE_SHAPE =
-  /\.(?:skipIf|runIf)\s*\(|["'`](?:darwin|linux)["'`]\s*\)?\s*\?\s*\(?\s*\[/u;
+const GATE_SHAPE = /\.\s*(?:skipIf|runIf|for|each)\s*\(/u;
 
 /** Whether a test module's text could gate a test to macOS. */
 export const mayGateTestToDarwin = (source) =>

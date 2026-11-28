@@ -8,15 +8,18 @@ import { traverseFast } from "@babel/types";
 
 import { projectForTest } from "../lib/test-projects.mjs";
 import { mayGateTestToDarwin } from "./darwin-gate-candidates.mjs";
-import { evaluateGateExpression, gateSkipsOn } from "./darwin-gate-facts.mjs";
+import {
+  caseListHasDarwinOnlyCases,
+  gateSkipsOn,
+} from "./darwin-gate-facts.mjs";
 
 // Tests gated to macOS never run on the Linux lanes, so the macOS lane runs
-// every one of them. A gate is a Vitest `skipIf`/`runIf` condition, or a
-// `for`/`each` case list spread from a platform conditional, that statically
-// excludes Linux and does not statically exclude macOS. The condition is
-// evaluated from the parsed syntax with three-valued logic: a value that
-// cannot be decided from literals, `process.platform` and module constants
-// built from them, such as `process.arch`, stays unknown.
+// every one of them. A gate is a Vitest `skipIf`/`runIf` condition that
+// statically excludes Linux and does not statically exclude macOS, or a
+// `for`/`each` case list that contributes cases on macOS but none on Linux.
+// The condition is evaluated from the parsed syntax with three-valued logic:
+// a value that cannot be decided from literals, `process.platform` and
+// module constants built from them, such as `process.arch`, stays unknown.
 
 const isProcessPlatform = (node) =>
   node.type === "MemberExpression" &&
@@ -61,6 +64,26 @@ const gateExpression = (node) => {
         left: gateExpression(node.left),
         right: gateExpression(node.right),
       };
+    case "ConditionalExpression":
+      return {
+        type: "conditional",
+        test: gateExpression(node.test),
+        consequent: gateExpression(node.consequent),
+        alternate: gateExpression(node.alternate),
+      };
+    case "ArrayExpression":
+      return {
+        type: "array",
+        elements: node.elements.map((item) =>
+          item?.type === "SpreadElement"
+            ? { spread: true, expression: gateExpression(item.argument) }
+            : {
+                spread: false,
+                expression:
+                  item === null ? { type: "unknown" } : gateExpression(item),
+              },
+        ),
+      };
     case "CallExpression": {
       // `["darwin", "linux"].includes(process.platform)`
       const { callee } = node;
@@ -103,16 +126,9 @@ const moduleConstants = (program) => {
   return constants;
 };
 
-/** Evaluate `node` on `platform` through the shared gate facts. */
-const evaluate = (node, platform, constants) =>
-  evaluateGateExpression(gateExpression(node), platform, constants);
-
 /** Whether a gate certainly skips on `platform`. */
 const skipsOn = (gate, platform, constants) =>
   gateSkipsOn(gate.kind, gateExpression(gate.condition), platform, constants);
-
-const isEmptyArray = (node) =>
-  node.type === "ArrayExpression" && node.elements.length === 0;
 
 const calleeMethod = (node) =>
   node.type === "CallExpression" &&
@@ -142,18 +158,10 @@ export const isDarwinGatedTestSource = (source) => {
       return;
     }
     if ((method === "for" || method === "each") && node.arguments[0])
-      traverseFast(node.arguments[0], (child) => {
-        // `...(process.platform === "darwin" ? [cases] : [])`. The candidate
-        // filter admits only a conditional that names the platform literal.
-        if (gated || child.type !== "ConditionalExpression") return;
-        const linux = evaluate(child.test, "linux", constants);
-        const darwin = evaluate(child.test, "darwin", constants);
-        if (typeof linux !== "boolean" || typeof darwin !== "boolean") return;
-        if (linux === darwin) return;
-        const onLinux = linux ? child.consequent : child.alternate;
-        const onDarwin = darwin ? child.consequent : child.alternate;
-        gated = isEmptyArray(onLinux) && !isEmptyArray(onDarwin);
-      });
+      gated = caseListHasDarwinOnlyCases(
+        gateExpression(node.arguments[0]),
+        constants,
+      );
   });
   return gated;
 };

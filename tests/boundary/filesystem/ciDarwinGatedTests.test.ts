@@ -83,6 +83,38 @@ it.for([
     { macOsOnly: true, darwinGated: true },
   ],
   [
+    `const patch = (bytes: Buffer, original: number) => { bytes[0] = original; };\ndescribe.skipIf(process.platform !== "darwin")("runs", () => {});`,
+    { macOsOnly: true, darwinGated: true },
+  ],
+  [
+    `const cases = process.platform === "darwin" ? ["x"] : [];\nit.for(cases)("%s", () => {});`,
+    { macOsOnly: true, darwinGated: true },
+  ],
+  [
+    `const cases = process.platform === "darwin" ? ["x"] : [];\nit.for([...cases])("%s", () => {});`,
+    { macOsOnly: true, darwinGated: true },
+  ],
+  [
+    `const xs = ["x"];\nit.for(process.platform === "darwin" ? xs : [])("%s", () => {});`,
+    { macOsOnly: true, darwinGated: true },
+  ],
+  [
+    `const onDarwin = process.platform === "darwin";\nconst cases = onDarwin ? ["x"] : [];\nit.for(cases)("%s", () => {});`,
+    { macOsOnly: true, darwinGated: true },
+  ],
+  [
+    `const identity = ((value: number) => value);\ndescribe.skipIf(process.platform !== "darwin")("runs", () => {});`,
+    { macOsOnly: true, darwinGated: true },
+  ],
+  [
+    `const onDarwin = () => process.platform === "darwin";\nit.skipIf(!onDarwin())("runs", () => {});`,
+    { macOsOnly: false, darwinGated: false },
+  ],
+  [
+    `const register = () => { it("portable", () => {}); };\nregister();\nit.skipIf(process.platform !== "darwin")("mac", () => {});`,
+    { macOsOnly: false, darwinGated: true },
+  ],
+  [
     `describe.skipIf(\n  process.platform !== "darwin",\n)("runs", () => {\n  it("x", () => {});\n});`,
     { macOsOnly: true, darwinGated: true },
   ],
@@ -107,6 +139,25 @@ it.for([
     }).toEqual(expected);
   },
 );
+
+it("classifies the real macOS-only modules with top-level arrow helpers", async () => {
+  for (const name of [
+    "nativePlistBinaryScalars.test.ts",
+    "appBundleEncodingCli.test.ts",
+  ]) {
+    const source = await readFile(
+      new URL(`../../acceptance/applications/${name}`, import.meta.url),
+      "utf8",
+    );
+    expect(
+      {
+        macOsOnly: isMacOsOnlyTestSource(source),
+        darwinGated: isDarwinGatedTestSource(source),
+      },
+      name,
+    ).toEqual({ macOsOnly: true, darwinGated: true });
+  }
+});
 
 it("lists exactly the tracked tests that run on macOS but never on Linux", async () => {
   const directory = await fixtureRepository(

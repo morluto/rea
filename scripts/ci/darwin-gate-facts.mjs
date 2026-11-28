@@ -129,6 +129,63 @@ const arrayEmptiness = (
   }
 };
 
+/** Whether a case list contributes cases on macOS but none on Linux. */
+export const caseListHasDarwinOnlyCases = (
+  expression,
+  constants,
+  resolving = new Set(),
+) => {
+  switch (expression.type) {
+    case "identifier": {
+      const init = constants.get(expression.name);
+      if (init === undefined || resolving.has(expression.name)) return false;
+      resolving.add(expression.name);
+      const gated = caseListHasDarwinOnlyCases(init, constants, resolving);
+      resolving.delete(expression.name);
+      return gated;
+    }
+    case "conditional": {
+      const linux = evaluateGateExpression(
+        expression.test,
+        "linux",
+        constants,
+      );
+      const darwin = evaluateGateExpression(
+        expression.test,
+        "darwin",
+        constants,
+      );
+      if (
+        typeof linux === "boolean" &&
+        typeof darwin === "boolean" &&
+        linux !== darwin
+      ) {
+        const onLinux = linux ? expression.consequent : expression.alternate;
+        const onDarwin = darwin ? expression.consequent : expression.alternate;
+        if (
+          arrayEmptiness(onLinux, "linux", constants) === true &&
+          arrayEmptiness(onDarwin, "darwin", constants) === false
+        )
+          return true;
+      }
+      return (
+        caseListHasDarwinOnlyCases(
+          expression.consequent,
+          constants,
+          resolving,
+        ) ||
+        caseListHasDarwinOnlyCases(expression.alternate, constants, resolving)
+      );
+    }
+    case "array":
+      return expression.elements.some((element) =>
+        caseListHasDarwinOnlyCases(element.expression, constants, resolving),
+      );
+    default:
+      return false;
+  }
+};
+
 class ParseError extends Error {}
 
 const isIdentifierStart = (char) => /[A-Za-z_$]/u.test(char);
@@ -491,6 +548,126 @@ class Parser {
     }
   }
 
+  skipVariableType() {
+    let angleDepth = 0;
+    let depth = 0;
+    while (this.peek() !== undefined) {
+      const token = this.peek();
+      if (
+        depth === 0 &&
+        angleDepth === 0 &&
+        ["=", ";", ","].includes(token.value)
+      )
+        return;
+      this.next();
+      if (token.value === "<") angleDepth += 1;
+      if (token.value === ">") angleDepth = Math.max(0, angleDepth - 1);
+      if (token.value === ">>") angleDepth = Math.max(0, angleDepth - 2);
+      if (token.value === ">>>") angleDepth = Math.max(0, angleDepth - 3);
+      if (["(", "[", "{"].includes(token.value)) depth += 1;
+      if ([")", "]", "}"].includes(token.value)) depth -= 1;
+      if (depth < 0) throw new ParseError("Unbalanced type");
+    }
+  }
+
+  matchingParenIndex(start) {
+    let depth = 0;
+    for (let index = start; index < this.tokens.length; index += 1) {
+      const token = this.tokens[index];
+      if (token.value === "(") depth += 1;
+      if (token.value === ")") {
+        depth -= 1;
+        if (depth === 0) return index;
+      }
+    }
+    return undefined;
+  }
+
+  arrowAfterParen(start) {
+    const close = this.matchingParenIndex(start);
+    if (close === undefined) return false;
+    const next = this.tokens[close + 1];
+    if (next?.value === "=>") return true;
+    if (next?.value !== ":") return false;
+    let angleDepth = 0;
+    let depth = 0;
+    for (let index = close + 2; index < this.tokens.length; index += 1) {
+      const token = this.tokens[index];
+      if (depth === 0 && angleDepth === 0) {
+        if (token.value === "=>") return true;
+        if (["=", ";", ","].includes(token.value)) return false;
+      }
+      if (token.value === "<") angleDepth += 1;
+      if (token.value === ">") angleDepth = Math.max(0, angleDepth - 1);
+      if (token.value === ">>") angleDepth = Math.max(0, angleDepth - 2);
+      if (token.value === ">>>") angleDepth = Math.max(0, angleDepth - 3);
+      if (["(", "[", "{"].includes(token.value)) depth += 1;
+      if ([")", "]", "}"].includes(token.value)) depth -= 1;
+      if (depth < 0) return false;
+    }
+    return false;
+  }
+
+  isArrowInitializerAt(start) {
+    const token = this.tokens[start];
+    if (token === undefined) return false;
+    if (token.value === "async") {
+      const next = this.tokens[start + 1];
+      if (next?.type === "id" && this.tokens[start + 2]?.value === "=>")
+        return true;
+      if (next?.value === "(") return this.arrowAfterParen(start + 1);
+      return false;
+    }
+    if (token.type === "id") return this.tokens[start + 1]?.value === "=>";
+    if (token.value === "(") return this.arrowAfterParen(start);
+    if (token.value === "<") {
+      let angleDepth = 0;
+      for (let index = start; index < this.tokens.length; index += 1) {
+        const current = this.tokens[index];
+        if (current.value === "<") angleDepth += 1;
+        if (current.value === ">") angleDepth -= 1;
+        if (current.value === ">>") angleDepth -= 2;
+        if (current.value === ">>>") angleDepth -= 3;
+        if (angleDepth === 0)
+          return this.tokens[index + 1]?.value === "("
+            ? this.arrowAfterParen(index + 1)
+            : false;
+        if (angleDepth < 0) return false;
+      }
+    }
+    return false;
+  }
+
+  isHelperInitializerAt(start) {
+    const token = this.tokens[start];
+    if (token === undefined) return false;
+    if (token.value === "function" || token.value === "class") return true;
+    if (token.value === "async" && this.tokens[start + 1]?.value === "function")
+      return true;
+    return this.isArrowInitializerAt(start);
+  }
+
+  isHelperInitializer() {
+    if (this.isHelperInitializerAt(this.position)) return true;
+    return (
+      this.peek()?.value === "(" &&
+      this.isHelperInitializerAt(this.position + 1)
+    );
+  }
+
+  skipInitializer() {
+    let depth = 0;
+    while (this.peek() !== undefined) {
+      const token = this.peek();
+      if (depth === 0 && (token.value === "," || token.value === ";")) return;
+      this.next();
+      if (["(", "[", "{"].includes(token.value)) depth += 1;
+      if ([")", "]", "}"].includes(token.value)) depth -= 1;
+      if (depth < 0) throw new ParseError("Unbalanced initializer");
+    }
+    throw new ParseError("Unterminated initializer");
+  }
+
   parseExpression() {
     const expression = this.parseBinary(1);
     if (!this.match("?")) return expression;
@@ -633,9 +810,13 @@ class Parser {
       else if (this.at("{")) this.skipBalanced("{", "}");
       else if (this.at("[")) this.skipBalanced("[", "]");
       else throw new ParseError("Expected variable name");
-      if (this.match(":")) this.skipType();
+      if (this.match(":")) this.skipVariableType();
       if (this.match("=")) {
-        const expression = this.parseExpression();
+        let expression;
+        if (this.isHelperInitializer()) {
+          this.skipInitializer();
+          expression = unknownExpression;
+        } else expression = this.parseExpression();
         if (kind === "const" && name !== undefined)
           this.constants.set(name, expression);
       }
