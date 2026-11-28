@@ -443,6 +443,20 @@
       "reason": "SQLite's own result-column limit (SQLITE_LIMIT_COLUMN) for the private connection, reported by the engine with the reply; REA does not set it."
     }
   },
+  "src/application/cargoManifest/CargoManifestService.ts": {
+    "\"The Cargo manifest input allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "The Cargo manifest input allowance bounds bytes read, a resource policy; max_file_bytes below the 32 MiB release maximum is the caller's control."
+    }
+  },
+  "src/domain/cargoManifest/parseCargoManifest.ts": {
+    "\"The Cargo manifest retained-facts allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "The Cargo manifest retained-facts allowance bounds bytes retained by the offline parser, a resource policy without a per-call control."
+    }
+  },
   "src/vsix/VsixPackageProvider.ts": {
     "`The ${String(cause.failure.limit.maximum)}-node allowance for an extension.vsixmanifest document tree`": {
       "class": "pending",
