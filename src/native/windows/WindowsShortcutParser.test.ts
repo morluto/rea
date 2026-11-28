@@ -1799,3 +1799,38 @@ it.each([
     });
   },
 );
+
+/**
+ * Win32 strips trailing spaces and periods from a name before it opens the file, so
+ * `app.exe.` reaches `app.exe`. Only a source with Win32 path semantics takes that
+ * pass: a URL keeps its own reading, and a device path or an unexpanded variable can
+ * expand either way, so those keep the stored text.
+ */
+const extensionForRelativePath = async (relativePath: string) => {
+  const report = await parse(
+    windowsShortcutBytes({
+      linkInfo: null,
+      relativePath,
+      idList: null,
+      iconLocation: "",
+    }),
+  );
+  const found = report.observations.find(
+    ({ kind }) => kind === "target_extension",
+  );
+  return found?.kind === "target_extension" ? found.extension : undefined;
+};
+
+it.each([
+  ["C:\\Tools\\app.exe.", ".exe"],
+  ["C:\\Tools\\app.exe ", ".exe"],
+  ["C:\\Tools\\report.", null],
+  ["%ROOT%\\app.exe ", null],
+  ["https://example.test/app.exe.", null],
+  ["mailto:launcher.exe.", null],
+  ["x://example.test/launcher.exe.", null],
+  ["//example.test/app.exe.", null],
+  ["C:.profile.", null],
+] as const)("reads %s as the Win32 name pass does", async (path, expected) => {
+  expect(await extensionForRelativePath(path)).toBe(expected);
+});
