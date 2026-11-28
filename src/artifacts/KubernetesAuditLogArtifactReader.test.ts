@@ -563,7 +563,19 @@ it("does not retain a source address list past the list text budget", async () =
     request_uri: "/api",
     verb: "get",
     source_ips: null,
-    request_fields_omitted: false,
+    request_fields_omitted: true,
+  });
+});
+
+it("drops a response object when a later value replaces it", async () => {
+  const metadata = await metadataOf(
+    '{"auditID":"replaced","stage":"ResponseComplete","responseStatus":{"code":403},"responseStatus":null,"verb":"get"}\n',
+  );
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "replaced",
+    verb: "get",
+    response_code: null,
+    response_code_line: null,
   });
 });
 

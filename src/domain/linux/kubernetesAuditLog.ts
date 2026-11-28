@@ -472,7 +472,13 @@ class KubernetesAuditScanner {
       this.#diagnose("audit event names an unknown stage", line);
       return;
     }
-    this.#record(value, value.auditID, stage, parsed.depthLimited);
+    this.#record(
+      value,
+      value.auditID,
+      stage,
+      parsed.depthLimited,
+      parsed.budgetOmitted,
+    );
   }
 
   #countVerb(verb: string): void {
@@ -496,6 +502,7 @@ class KubernetesAuditScanner {
     auditId: string,
     stage: KubernetesAuditStage,
     depthLimited: boolean,
+    budgetOmitted: boolean,
   ): void {
     this.#recordCount += 1;
     const unsupported = isUnsupportedVersion(event.apiVersion);
@@ -532,11 +539,14 @@ class KubernetesAuditScanner {
         seenStages: new Set([stage]),
         fieldsRecorded: !unsupported,
       });
-      if (depthLimited) {
-        const created = this.#sample.get(key);
-        if (created !== undefined)
-          created.summary = { ...created.summary, depth_limited: true };
-      }
+      const created = this.#sample.get(key);
+      if (created !== undefined && (depthLimited || budgetOmitted))
+        created.summary = {
+          ...created.summary,
+          depth_limited: created.summary.depth_limited || depthLimited,
+          request_fields_omitted:
+            created.summary.request_fields_omitted || budgetOmitted,
+        };
       return;
     }
 
@@ -582,6 +592,7 @@ class KubernetesAuditScanner {
         stages.length,
       unsupported_version: previous.unsupported_version || unsupported,
       depth_limited: previous.depth_limited || depthLimited,
+      request_fields_omitted: previous.request_fields_omitted || budgetOmitted,
     };
   }
 

@@ -37,6 +37,7 @@ type StringList = {
   readonly values: string[];
   bytes: number;
   invalid: boolean;
+  overBudget: boolean;
 };
 type Frame =
   | { readonly kind: "root" }
@@ -52,6 +53,8 @@ export type KubernetesAuditLineParse =
       readonly value: Record<string, unknown>;
       /** True when the tokenizer stopped before the record's closing brace. */
       readonly depthLimited: boolean;
+      /** A kept string or list was dropped because it exceeded the text budget. */
+      readonly budgetOmitted: boolean;
     }
   | { readonly kind: "syntax" }
   | { readonly kind: "nesting" };
@@ -86,6 +89,8 @@ export const parseKubernetesAuditLine = (
   let text = "";
   let keyTooLong = false;
   let numberTooLong = false;
+  let stringOverflow = false;
+  let budgetOmitted = false;
 
   const top = (): Frame | undefined => stack.at(-1);
   const skipping = (): boolean => top()?.kind === "skip";
@@ -109,6 +114,7 @@ export const parseKubernetesAuditLine = (
       const cost = 2 * entry.length + 32;
       if (frame.bytes + cost > LIST_TEXT_BUDGET) {
         frame.invalid = true;
+        frame.overBudget = true;
         frame.values.length = 0;
         frame.bytes = 0;
         return;
@@ -139,11 +145,36 @@ export const parseKubernetesAuditLine = (
       frame.invalid = true;
       return;
     }
+    if (frame?.kind === "root" && pendingKey === "user") {
+      sawUser = false;
+      for (const key of Object.keys(user)) delete user[key];
+      return;
+    }
+    if (frame?.kind === "root" && pendingKey === "objectRef") {
+      sawObject = false;
+      for (const key of Object.keys(objectRef)) delete objectRef[key];
+      return;
+    }
+    if (frame?.kind === "root" && pendingKey === "responseStatus") {
+      sawStatus = false;
+      delete responseStatus.code;
+      return;
+    }
     if (frame?.kind === "root" && pendingKey !== undefined) {
       if (pendingKey === "auditID" || pendingKey === "stage")
         value[pendingKey] = null;
       else if (ROOT_STRINGS.has(pendingKey)) value[pendingKey] = null;
       else delete value[pendingKey];
+    } else if (frame?.kind === "user" && pendingKey === "username") {
+      sawUser = true;
+      user.username = null;
+    } else if (
+      frame?.kind === "objectRef" &&
+      pendingKey !== undefined &&
+      OBJECT_REF_STRINGS.has(pendingKey)
+    ) {
+      sawObject = true;
+      objectRef[pendingKey] = null;
     } else if (frame?.kind === "responseStatus" && pendingKey === "code") {
       sawStatus = true;
       responseStatus.code = null;
@@ -231,6 +262,7 @@ export const parseKubernetesAuditLine = (
         values: [],
         bytes: 0,
         invalid: false,
+        overBudget: false,
       });
     else if (
       token === "array" &&
@@ -243,6 +275,7 @@ export const parseKubernetesAuditLine = (
         values: [],
         bytes: 0,
         invalid: false,
+        overBudget: false,
       });
     else {
       invalidatePending();
@@ -253,6 +286,7 @@ export const parseKubernetesAuditLine = (
   };
 
   const finishList = (frame: StringList): void => {
+    if (frame.overBudget) budgetOmitted = true;
     const list = frame.invalid ? null : frame.values;
     if (frame.target === "sourceIPs") value.sourceIPs = list;
     else {
@@ -299,10 +333,24 @@ export const parseKubernetesAuditLine = (
           const room = MAX_OWNED_KEY_CHARS + 1 - text.length;
           text += token.value.slice(0, room);
           if (text.length > MAX_OWNED_KEY_CHARS) keyTooLong = true;
-        } else if (capture === "string") text += token.value;
+        } else if (capture === "string" && text.length <= LIST_TEXT_BUDGET) {
+          const room = LIST_TEXT_BUDGET + 1 - text.length;
+          text += token.value.slice(0, room);
+          if (text.length > LIST_TEXT_BUDGET) stringOverflow = true;
+        }
         break;
       case "endString":
-        if (capture === "string") takeString(text);
+        if (capture === "string" && stringOverflow) {
+          budgetOmitted = true;
+          rejectScalar();
+          const list = top();
+          if (list?.kind === "strings") {
+            list.invalid = true;
+            list.overBudget = true;
+            list.values.length = 0;
+          }
+        } else if (capture === "string") takeString(text);
+        stringOverflow = false;
         capture = undefined;
         pendingKey = undefined;
         break;
@@ -376,8 +424,18 @@ export const parseKubernetesAuditLine = (
     if (isHostLimitFailure(cause)) throw cause;
     if (!isTokenizerDepth(cause)) return { kind: "syntax" };
     return typeof value.auditID === "string" && typeof value.stage === "string"
-      ? { kind: "event", value: publish(), depthLimited: true }
+      ? {
+          kind: "event",
+          value: publish(),
+          depthLimited: true,
+          budgetOmitted,
+        }
       : { kind: "nesting" };
   }
-  return { kind: "event", value: publish(), depthLimited: false };
+  return {
+    kind: "event",
+    value: publish(),
+    depthLimited: false,
+    budgetOmitted,
+  };
 };
