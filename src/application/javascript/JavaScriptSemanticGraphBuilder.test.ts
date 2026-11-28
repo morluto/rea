@@ -150,6 +150,46 @@ it("projects bounded alias selection as a resource-limit unknown", () => {
 });
 
 it.each([
+  ["a bounded inline spread", "[...[1]]", 1, true],
+  ["a backed inline spread", "[...[1]]", 2, false],
+  [
+    "an unsupported spread after a backed spread",
+    "[...[1], ...opaque]",
+    2,
+    false,
+  ],
+  ["a second inline spread", "[...[1], ...[2]]", 2, true],
+] as const)(
+  "reports the alias selection limit only when it blocks %s",
+  (_name, array, aliasSelections, bounded) => {
+    const source = `export const answer = ${array};`;
+    const ir = analyzeJavaScriptSemantics(source, {
+      alias_selections: aliasSelections,
+    });
+    const graph = graphFor(source, ir);
+    const unknown = graph.unknowns.find(
+      ({ reason, detail }) =>
+        reason === "resource-limit" &&
+        /Alias selection expansion/u.test(detail),
+    );
+    if (bounded) {
+      expect(ir.coverage).toMatchObject({
+        status: "partial",
+        resourceLimits: ["alias-selections"],
+      });
+      expect(unknown?.detail).toContain(
+        `semantic_precision.alias_selections=${aliasSelections}`,
+      );
+    } else {
+      expect(ir.coverage.resourceLimits ?? []).not.toContain(
+        "alias-selections",
+      );
+      expect(unknown).toBeUndefined();
+    }
+  },
+);
+
+it.each([
   ["plain export", "const answer = 42; export { answer };", 0],
   ["aliased export", "const answer = 42; export { answer as result };", 0],
   ["declaration only", "const answer = 42;", 0],
@@ -1060,11 +1100,14 @@ it("attributes an adopted file to the ceiling that bounded its offer", () => {
   let step = steps.next();
   while (!step.done) step = steps.next();
   projection.adoptFileProjection(step.value);
-  const limitation = projection
-    .finish(SHA256, semanticApplication)
-    .limitations.join("\n");
-  expect(limitation).toContain("max_semantic_nodes_per_file is 3");
-  expect(limitation).not.toContain("max_semantic_nodes is 10");
+  const finished = projection.finish(SHA256, semanticApplication);
+  expect(finished.coverage.controls).toEqual([
+    expect.objectContaining({
+      parameter: "max_semantic_nodes_per_file",
+      effective_value: 3,
+      applies_at: "next_call",
+    }),
+  ]);
 });
 
 it("reports truncation only when a file exceeds its exact node budget", () => {
@@ -1484,4 +1527,96 @@ it("projects and adopts more than the default per-file capacity when explicitly 
   expect(() => bounded.adoptFileProjection(result.value)).toThrow(
     "exceed the offered tree capacity",
   );
+});
+
+it("resolves pure sequence call targets without spurious unknown frontiers", () => {
+  for (const callSource of [
+    "(0, localFn)(1);",
+    "const aliasFn = localFn; (0, aliasFn)(1);",
+    "(0, 0, localFn)(1);",
+  ]) {
+    const graph = graphFor(`
+      function localFn(x) { return x; }
+      ${callSource}
+    `);
+    expect(
+      graph.unknowns.filter(
+        ({ reason, detail }) =>
+          reason === "dynamic-call" ||
+          detail.includes("operator operand") ||
+          detail.includes("operator result"),
+      ),
+    ).toEqual([]);
+    const localNode = graph.nodes.find(
+      ({ kind, label }) => kind === "function" && label === "localFn",
+    );
+    const callNode = graph.nodes.find(({ kind }) => kind === "call-site");
+    expect(localNode).toBeDefined();
+    expect(callNode).toBeDefined();
+    expect(graph.relations).toContainEqual(
+      expect.objectContaining({
+        source_node_id: callNode?.node_id,
+        target_node_id: localNode?.node_id,
+        relation: "calls",
+        resolution: "resolved",
+      }),
+    );
+  }
+});
+
+it("projects conditional, side-effectful, and member sequence call targets accurately", () => {
+  const conditional = graphFor(`
+    function a() { return 1; }
+    function b() { return 2; }
+    (0, cond ? a : b)();
+  `);
+  const callNode = conditional.nodes.find(({ kind }) => kind === "call-site");
+  const candidateTargets = conditional.relations
+    .filter(
+      ({ source_node_id, relation }) =>
+        source_node_id === callNode?.node_id && relation === "calls",
+    )
+    .map(({ target_node_id, resolution }) => ({
+      label: conditional.nodes.find(({ node_id }) => node_id === target_node_id)
+        ?.label,
+      resolution,
+    }))
+    .sort((left, right) =>
+      String(left.label).localeCompare(String(right.label)),
+    );
+  expect(candidateTargets).toEqual([
+    { label: "a", resolution: "candidate" },
+    { label: "b", resolution: "candidate" },
+  ]);
+  expect(
+    conditional.unknowns.filter(({ reason }) => reason === "dynamic-call"),
+  ).toHaveLength(1);
+
+  const sideEffectful = graphFor(`
+    function sideEffect() {}
+    function localFn() {}
+    (sideEffect(), localFn)();
+  `);
+  expect(
+    sideEffectful.unknowns.filter(({ reason }) => reason === "dynamic-call"),
+  ).toEqual([
+    expect.objectContaining({
+      detail: "Unsupported SequenceExpression call target.",
+    }),
+  ]);
+
+  const member = graphFor(`
+    const obj = { method() { return 1; } };
+    (0, obj.method)();
+  `);
+  expect(
+    member.unknowns.filter(({ reason }) => reason === "dynamic-call"),
+  ).toEqual([
+    expect.objectContaining({
+      detail: "Unsupported MemberExpression call target.",
+    }),
+  ]);
+  expect(
+    member.unknowns.filter(({ detail }) => detail.includes("operator operand")),
+  ).toEqual([]);
 });

@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import {
   nativeExportsSchema,
@@ -5,31 +6,28 @@ import {
   elfNativeExportsSchema as elf,
   type NativeExports,
 } from "../native/nativeExports.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
+import { namePrefixesSchema, startsWithAny } from "./namePrefixFilter.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { filterSet, pickFields, selectViewRows } from "./selectViewRows.js";
 
 const peRow = pe.shape.exports.element;
 const elfRow = elf.shape.exports.element;
 const issue = pe.shape.issues.element;
 const sourceIndex = { source_index: z.int().nonnegative() };
-const page = {
-  kind: z.literal("native-exports"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("native-exports");
 
 /** Exact names preserve all versions/aliases; indices are scoped to the complete parent. */
 export const nativeExportsViewRequestSchema = z.discriminatedUnion(
@@ -44,6 +42,9 @@ export const nativeExportsViewRequestSchema = z.discriminatedUnion(
         .describe(
           "Exact PE names, or UTF-8 ELF source names. ELF display fallbacks and names with unknown encoding are not identities; use indices for those rows. Omitted includes all names; [] matches none.",
         ),
+      name_prefixes: namePrefixesSchema(
+        "PE names or UTF-8 ELF source names; ELF names that are not valid UTF-8 never match",
+      ),
       indices: z.array(z.int().nonnegative()).optional(),
       fields: z.array(z.union([peRow.keyof(), elfRow.keyof()])).optional(),
     }),
@@ -74,19 +75,68 @@ export const nativeExportsSummarySchema = z.discriminatedUnion("format", [
 
 const readReport = createAnalysisViewResultReader(nativeExportsSchema);
 
+type ExportRow = NativeExports["exports"][number];
+
+/**
+ * Match exact names and name prefixes with the identity rules of each format.
+ * ELF identities are bytes: a non-ASCII name compares its exact UTF-8 bytes,
+ * and a name that is not valid UTF-8 has no text to match.
+ */
+const exportNameMatcher = (
+  selectedNames: readonly string[] | undefined,
+  prefixes: readonly string[] | undefined,
+): ((row: ExportRow) => boolean) | undefined => {
+  if (selectedNames === undefined && prefixes === undefined) return undefined;
+  const names = filterSet(selectedNames);
+  const encodedNames =
+    names === undefined
+      ? undefined
+      : new Set(
+          [...names].flatMap((name) => {
+            const bytes = Buffer.from(name, "utf8");
+            return bytes.toString("utf8") === name
+              ? [bytes.toString("base64")]
+              : [];
+          }),
+        );
+  // As for exact names, text that does not round-trip through UTF-8 (an
+  // unpaired surrogate) has no bytes to compare and matches nothing.
+  const prefixBytes = prefixes?.flatMap((prefix) => {
+    const bytes = Buffer.from(prefix, "utf8");
+    return bytes.toString("utf8") === prefix ? [bytes] : [];
+  });
+  const exact = (row: ExportRow): boolean =>
+    names === undefined ||
+    ("name_utf8_decodable" in row
+      ? row.name_utf8_decodable &&
+        (row.name_bytes_base64 !== null
+          ? encodedNames!.has(row.name_bytes_base64)
+          : names.has(row.name))
+      : row.name !== null && names.has(row.name));
+  const prefixed = (row: ExportRow): boolean => {
+    if (prefixes === undefined) return true;
+    if (!("name_utf8_decodable" in row))
+      return row.name !== null && startsWithAny(row.name, prefixes);
+    if (!row.name_utf8_decodable) return false;
+    if (row.name_bytes_base64 === null)
+      return startsWithAny(row.name, prefixes);
+    const bytes = Buffer.from(row.name_bytes_base64, "base64");
+    return prefixBytes!.some(
+      (prefix) =>
+        bytes.length >= prefix.length &&
+        bytes.subarray(0, prefix.length).equals(prefix),
+    );
+  };
+  return (row) => exact(row) && prefixed(row);
+};
+
 /** Read selected export facts without reopening the artifact or reinterpreting its tables. */
 export const projectNativeExportsView = (
   parent: AnalysisViewParent,
   view: AdmittedView,
 ) => {
-  const invalid = (message: string) =>
-    err(
-      analysisViewInputError([
-        { path: ["view"], reason: "invalid_value", message },
-      ]),
-    );
   if (view.kind !== "summary" && view.kind !== "native-exports")
-    return invalid(
+    return invalidAnalysisView(
       "Native export Evidence supports summary and native-exports views.",
     );
   assertOwnedView<
@@ -107,11 +157,7 @@ export const projectNativeExportsView = (
     parent_operation: "inspect_native_exports" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns:
       report.coverage.status === "complete"
         ? []
@@ -128,37 +174,24 @@ export const projectNativeExportsView = (
       summary,
       coverage: completeWithinViewCoverage(exports.length),
     });
-  const indices =
-    view.indices === undefined ? undefined : new Set(view.indices);
+  const indices = filterSet(view.indices);
   if (view.collection === "issues") {
-    const selected =
-      indices === undefined
-        ? {
-            rows: issues
-              .slice(view.offset, view.offset + view.limit)
-              .map((row, index) => ({
-                ...row,
-                source_index: view.offset + index,
-              })),
-            total: issues.length,
-          }
-        : selectViewRows(
-            issues,
-            view,
-            (_, index) => indices.has(index),
-            (row, source_index) => ({ ...row, source_index }),
-          );
+    const selected = selectViewRows(
+      issues,
+      view,
+      undefined,
+      (row, source_index) => ({
+        ...row,
+        source_index,
+      }),
+      indices,
+    );
     return ok({
       ...shared,
       kind: "native-exports" as const,
       view,
       exports: summary,
-      items: selected.rows,
-      coverage: pageViewCoverage(
-        view.offset,
-        selected.rows.length,
-        selected.total,
-      ),
+      ...selectedViewPage(view.offset, selected),
     });
   }
   const allowed =
@@ -167,21 +200,9 @@ export const projectNativeExportsView = (
     view.fields === undefined ? allowed : [...new Set(view.fields)];
   const allowedFields: readonly string[] = allowed;
   if (fields.some((field) => !allowedFields.includes(field)))
-    return invalid(
+    return invalidAnalysisView(
       `Selected export fields do not belong to ${report.format}; available fields: ${allowed.join(", ")}.`,
     );
-  const names = view.names === undefined ? undefined : new Set(view.names);
-  const encodedNames =
-    names === undefined
-      ? undefined
-      : new Set(
-          [...names].flatMap((name) => {
-            const bytes = Buffer.from(name, "utf8");
-            return bytes.toString("utf8") === name
-              ? [bytes.toString("base64")]
-              : [];
-          }),
-        );
   // A projected decoded name still carries its exact bytes and encoding qualification.
   const columns = new Set<string>(fields);
   if (report.format === "elf" && columns.has("name")) {
@@ -193,44 +214,16 @@ export const projectNativeExportsView = (
     row: NativeExports["exports"][number],
     source_index: number,
   ) => ({
-    ...Object.fromEntries(
-      Object.entries(row).filter(([key]) => columns.has(key)),
-    ),
+    ...pickFields(row, columns),
     source_index,
   });
-  // Unfiltered pages use the owner's original order directly; no whole-table scan.
-  const selected =
-    names === undefined && indices === undefined
-      ? {
-          rows: rows
-            .slice(view.offset, view.offset + view.limit)
-            .map((row, index) => projectRow(row, view.offset + index)),
-          total: rows.length,
-        }
-      : selectViewRows(
-          rows,
-          view,
-          (row, index) =>
-            (indices === undefined || indices.has(index)) &&
-            (names === undefined ||
-              ("name_utf8_decodable" in row
-                ? row.name_utf8_decodable === true &&
-                  (row.name_bytes_base64 !== null
-                    ? encodedNames!.has(row.name_bytes_base64)
-                    : names.has(row.name))
-                : row.name !== null && names.has(row.name))),
-          projectRow,
-        );
+  const matchesName = exportNameMatcher(view.names, view.name_prefixes);
+  const selected = selectViewRows(rows, view, matchesName, projectRow, indices);
   return ok({
     ...shared,
     kind: "native-exports" as const,
     view,
     exports: summary,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };

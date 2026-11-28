@@ -24,7 +24,8 @@ jobs:
   mutation:
     name: Mutation sweep (${{ matrix.suite }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The complete reverse-tools sweep hit the previous 60-minute job limit.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -36,12 +37,15 @@ jobs:
             config: stryker.semantics.config.mjs
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version-file: .nvmrc
       - name: Cache npm package downloads
         uses: ./.github/actions/npm-cache
       - run: npm ci
+      - name: Require mutation targets in the checker projects
+        run: npm run verify:mutation-targets
       - name: Reuse portable build outputs across runs
         uses: ./.github/actions/portable-build-cache
       - run: npm run test:prepare
@@ -59,7 +63,7 @@ jobs:
           test -s "${REPORT_BASE}.html"
       - name: Retain available mutation diagnostics
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mutation-${{ matrix.suite }}-${{ github.run_attempt }}
           path: |

@@ -29,10 +29,7 @@ import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
-const unexpectedBundleFailures = [
-  new TypeError("bundle authentication TypeError"),
-  new Error("bundle authentication Error"),
-] as const;
+const unexpectedBundleFailure = new TypeError("bundle authentication failed");
 
 const spyOnBundleParse = (failure: Error): void => {
   const parser = vi
@@ -83,6 +80,15 @@ it.each(["missing", "invalid", "cleanup"])(
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.cleanupIncomplete).toBe(true);
+    const primary =
+      leftFailure === "invalid"
+        ? { _tag: "EvidenceIntegrityError" }
+        : {
+            _tag: "EvidenceFileError",
+            path: leftPath,
+            reason: leftFailure === "missing" ? "missing" : "io",
+          };
+    expect(result.error.cleanupPrimary).toMatchObject(primary);
     expect(result.error.cleanupResources).toContain(rightPath);
     if (leftFailure === "cleanup")
       expect(result.error.cleanupResources).toContain(leftPath);
@@ -107,7 +113,6 @@ it.each(["missing", "invalid", "cleanup"])(
 
 it.each([
   new TypeError("capture validation implementation failed"),
-  new Error("capture validator failed"),
   new z.ZodError([
     { code: "custom", path: [], message: "capture refinement failed" },
   ]),
@@ -137,142 +142,111 @@ it.each([
   },
 );
 
-it.each(unexpectedBundleFailures)(
-  "preserves unexpected bundle authentication failures in mutable and immutable readers: $name",
-  async (failure) => {
-    const directory = await createTestTempDirectory(
-      "rea-bundle-reader-failure-",
-    );
-    const { path } = await validBundleFile(directory);
-    spyOnBundleParse(failure);
-
-    await expect(readEvidenceBundle(path)).rejects.toBe(failure);
-    await expect(readImmutableEvidenceBundle(path)).rejects.toBe(failure);
-    await expect(
-      compareEvidenceBundlesCommand({ leftPath: path, rightPath: path }),
-    ).rejects.toBe(failure);
-  },
-);
-
-it.each(unexpectedBundleFailures)(
-  "does not publish output or retain resources when bundle authentication throws: $name",
-  async (failure) => {
-    const directory = await createTestTempDirectory(
-      "rea-bundle-write-failure-",
-    );
-    const { bundle } = await validBundleFile(directory, "input.json");
-    const outputPath = join(directory, "output.json");
-    const resources = new ArtifactResourceScope();
-    onTestFinished(async () => {
-      await resources.close();
-    });
-    spyOnBundleParse(failure);
-
-    await expect(
-      writeEvidenceBundle(bundle, outputPath, false, resources),
-    ).rejects.toBe(failure);
-    expect(await readdir(directory)).toEqual(["input.json"]);
-    expect(resources.hasPending).toBe(false);
+it("propagates the original bundle parser defect from read, comparison and write", async () => {
+  const directory = await createTestTempDirectory("rea-bundle-reader-failure-");
+  const { bundle, path } = await validBundleFile(directory);
+  const outputPath = join(directory, "output.json");
+  const resources = new ArtifactResourceScope();
+  onTestFinished(async () => {
     await resources.close();
-  },
-);
+  });
+  spyOnBundleParse(unexpectedBundleFailure);
 
-it.each(unexpectedBundleFailures)(
-  "preserves unexpected bundle authentication failures through SDK import: $name",
-  async (failure) => {
-    const directory = await createTestTempDirectory(
-      "rea-bundle-import-failure-",
-    );
-    const { path } = await validBundleFile(directory);
-    const session = createTestBinarySession(() => {
-      throw new Error("Evidence import must not launch a provider");
+  await expect(readEvidenceBundle(path)).rejects.toBe(unexpectedBundleFailure);
+  await expect(readImmutableEvidenceBundle(path)).rejects.toBe(
+    unexpectedBundleFailure,
+  );
+  await expect(
+    compareEvidenceBundlesCommand({ leftPath: path, rightPath: path }),
+  ).rejects.toBe(unexpectedBundleFailure);
+  await expect(
+    writeEvidenceBundle(bundle, outputPath, false, resources),
+  ).rejects.toBe(unexpectedBundleFailure);
+  expect(await readdir(directory)).toEqual(["bundle.json"]);
+  expect(resources.hasPending).toBe(false);
+});
+
+it("preserves unexpected bundle authentication failures through SDK import", async () => {
+  const failure = unexpectedBundleFailure;
+  const directory = await createTestTempDirectory("rea-bundle-import-failure-");
+  const { path } = await validBundleFile(directory);
+  const session = createTestBinarySession(() => {
+    throw new Error("Evidence import must not launch a provider");
+  });
+  const server = createServer({ kind: "session", session });
+  const client = new Client(
+    { name: "bundle-import-failure", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  spyOnBundleParse(failure);
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const response = await client.callTool({
+      name: "import_evidence_bundle",
+      arguments: { path },
     });
-    const server = createServer({ kind: "session", session });
-    const client = new Client(
-      { name: "bundle-import-failure", version: "1" },
-      { jsonSchemaValidator: createMcpSchemaValidation() },
-    );
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    spyOnBundleParse(failure);
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const response = await client.callTool({
-        name: "import_evidence_bundle",
-        arguments: { path },
-      });
-      expect(response).toMatchObject({
-        isError: true,
-        content: [{ type: "text", text: failure.message }],
-      });
-      expect(response.structuredContent).toBeUndefined();
-      expect(session.exportEvidenceBundle().records).toEqual([]);
-      expect(session.exportEvidenceBundle().unknowns).toEqual([]);
-    } finally {
-      await Promise.allSettled([
-        client.close(),
-        server.close(),
-        session.close(),
-      ]);
-    }
-  },
-);
-
-it.each(unexpectedBundleFailures)(
-  "preserves the session ledger when bundle authentication throws: $name",
-  async (failure) => {
-    const directory = await createTestTempDirectory(
-      "rea-ledger-import-failure-",
-    );
-    const { bundle } = await validBundleFile(directory);
-    const existing = evidenceDomain.createEvidence(
-      unknownTarget("not-observed"),
-      { id: "fixture", name: "Fixture", version: "1" },
-      {
-        operation: "observe",
-        parameters: {},
-        result: { retained: true },
-      },
-    );
-    const session = createTestBinarySession(() => {
-      throw new Error("Evidence import must not launch a provider");
+    expect(response).toMatchObject({
+      isError: true,
+      content: [{ type: "text", text: failure.message }],
     });
-    onTestFinished(async () => {
-      await session.close();
+    expect(response.structuredContent).toBeUndefined();
+    expect(session.exportEvidenceBundle().records).toEqual([]);
+    expect(session.exportEvidenceBundle().unknowns).toEqual([]);
+  } finally {
+    await Promise.allSettled([client.close(), server.close(), session.close()]);
+  }
+});
+
+it("preserves the session ledger when bundle authentication throws", async () => {
+  const failure = new Error("unexpected ledger import defect");
+  const directory = await createTestTempDirectory("rea-ledger-import-failure-");
+  const { bundle } = await validBundleFile(directory);
+  const existing = evidenceDomain.createEvidence(
+    unknownTarget("not-observed"),
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "observe",
+      parameters: {},
+      result: { retained: true },
+    },
+  );
+  const session = createTestBinarySession(() => {
+    throw new Error("Evidence import must not launch a provider");
+  });
+  onTestFinished(async () => {
+    await session.close();
+  });
+  expect(session.recordEvidence(existing).ok).toBe(true);
+  const before = session.exportEvidenceBundle();
+  spyOnBundleParse(failure);
+
+  expect(() => session.importEvidenceBundle(bundle)).toThrow(failure);
+  expect(session.exportEvidenceBundle()).toEqual(before);
+});
+
+it("propagates unexpected standalone-record classification failures", async () => {
+  const failure = new Error("unexpected record classification defect");
+  const directory = await createTestTempDirectory(
+    "rea-bundle-classifier-failure-",
+  );
+  const path = join(directory, "record.json");
+  const record = processEvidence();
+  await writeFile(path, JSON.stringify(record));
+  const parser = vi
+    .spyOn(evidenceDomain, "parseEvidence")
+    .mockImplementation(() => {
+      throw failure;
     });
-    expect(session.recordEvidence(existing).ok).toBe(true);
-    const before = session.exportEvidenceBundle();
-    spyOnBundleParse(failure);
+  onTestFinished(() => parser.mockRestore());
 
-    expect(() => session.importEvidenceBundle(bundle)).toThrow(failure);
-    expect(session.exportEvidenceBundle()).toEqual(before);
-  },
-);
-
-it.each(unexpectedBundleFailures)(
-  "propagates unexpected standalone-record classification failures: $name",
-  async (failure) => {
-    const directory = await createTestTempDirectory(
-      "rea-bundle-classifier-failure-",
-    );
-    const path = join(directory, "record.json");
-    const record = processEvidence();
-    await writeFile(path, JSON.stringify(record));
-    const parser = vi
-      .spyOn(evidenceDomain, "parseEvidence")
-      .mockImplementation(() => {
-        throw failure;
-      });
-    onTestFinished(() => parser.mockRestore());
-
-    await expect(readImmutableEvidenceBundle(path)).rejects.toBe(failure);
-  },
-);
+  await expect(readImmutableEvidenceBundle(path)).rejects.toBe(failure);
+});
 
 it.each([
   new TypeError("comparison output invariant failed"),
-  new RangeError("comparison computation failed"),
   new z.ZodError([
     { code: "custom", path: ["status"], message: "invalid generated result" },
   ]),

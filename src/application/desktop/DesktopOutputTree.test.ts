@@ -1,4 +1,4 @@
-import { chmod, mkdir, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
@@ -32,6 +32,42 @@ it("does not create output parents or invoke the writer after cancellation", asy
     operation: refusal.operation,
     cause: reason,
   });
+});
+
+it("keeps a caller's file when an accepted directory is no longer empty", async () => {
+  const root = await createTestTempDirectory("rea-output-late-file-");
+  const directory = join(root, "output");
+  await mkdir(directory);
+  const refusal = {
+    operation: "export_desktop_application",
+    field: "directory",
+  };
+  const plan = await planOutputTree(directory, refusal);
+  const keep = join(directory, "keep");
+  await writeFile(keep, "existing");
+  let written = false;
+  const failure = await writeOutputTree(
+    plan,
+    async () => {
+      written = true;
+    },
+    refusal,
+    undefined,
+  ).catch((cause: unknown) => cause);
+  expect(written).toBe(false);
+  expect(failure).toMatchObject({
+    _tag: "AnalysisInputError",
+    operation: refusal.operation,
+    userMessage: "Output directory is not empty",
+    issues: [
+      expect.objectContaining({
+        path: [refusal.field],
+        message: "Output directory is not empty",
+      }),
+    ],
+  });
+  expect(await readFile(keep, "utf8")).toBe("existing");
+  expect(await readdir(directory)).toEqual(["keep"]);
 });
 
 it("refuses a regular file in the output parent path instead of failing a host write", async () => {

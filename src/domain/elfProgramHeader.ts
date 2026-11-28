@@ -1,6 +1,11 @@
+import { BinaryReader } from "./binaryContainer.js";
 import { err, ok } from "./result.js";
+import type { FileMapping, ZeroFillMapping } from "./virtualFileMapping.js";
 
 export const PT_INTERP = 3;
+
+export const elfProgramHeaderWidth = (bits: 32 | 64): 32 | 56 =>
+  bits === 64 ? 56 : 32;
 
 export type ElfProgramHeader = Extract<
   ReturnType<typeof readElfProgramHeader>,
@@ -14,25 +19,27 @@ export const readElfProgramHeader = (
   littleEndian: boolean,
 ) => {
   const wide = bits === 64;
-  if (bytes.byteLength < (wide ? 56 : 32))
+  if (bytes.byteLength < elfProgramHeaderWidth(bits))
     return err({
       kind: "malformed" as const,
       message: "ELF program header is truncated",
     });
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const word = (at: number): bigint =>
-    wide
-      ? view.getBigUint64(at, littleEndian)
-      : BigInt(view.getUint32(at, littleEndian));
+  const reader = new BinaryReader(
+    Buffer.isBuffer(bytes)
+      ? bytes
+      : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    littleEndian,
+    "elf",
+  );
   return ok({
-    type: view.getUint32(0, littleEndian),
-    flags: view.getUint32(wide ? 4 : 24, littleEndian),
-    offset: word(wide ? 8 : 4),
-    virtualAddress: word(wide ? 16 : 8),
-    physicalAddress: word(wide ? 24 : 12),
-    fileSize: word(wide ? 32 : 16),
-    memorySize: word(wide ? 40 : 20),
-    alignment: word(wide ? 48 : 28),
+    type: reader.u32(0),
+    flags: reader.u32(wide ? 4 : 24),
+    offset: reader.word(wide ? 8 : 4, bits),
+    virtualAddress: reader.word(wide ? 16 : 8, bits),
+    physicalAddress: reader.word(wide ? 24 : 12, bits),
+    fileSize: reader.word(wide ? 32 : 16, bits),
+    memorySize: reader.word(wide ? 40 : 20, bits),
+    alignment: reader.word(wide ? 48 : 28, bits),
   });
 };
 
@@ -52,3 +59,35 @@ export const admitElfLoadSegment = (
         message: "ELF load segment sizes or addresses are invalid",
       })
     : ok(null);
+
+export interface ElfLoadMappings {
+  readonly fileBacked: readonly FileMapping[];
+  readonly zeroFills: readonly ZeroFillMapping[];
+}
+
+/** Project an admitted PT_LOAD into its file-backed prefix and zero-filled tail. */
+export const elfLoadSpans = ({
+  virtualAddress,
+  offset,
+  fileSize,
+  memorySize,
+}: Pick<
+  ElfProgramHeader,
+  "virtualAddress" | "offset" | "fileSize" | "memorySize"
+>): {
+  readonly fileBacked: FileMapping | undefined;
+  readonly zeroFill: ZeroFillMapping | undefined;
+} => ({
+  fileBacked:
+    fileSize === 0n
+      ? undefined
+      : {
+          address: virtualAddress,
+          offset: Number(offset),
+          size: Number(fileSize),
+        },
+  zeroFill:
+    memorySize > fileSize
+      ? { address: virtualAddress + fileSize, size: memorySize - fileSize }
+      : undefined,
+});

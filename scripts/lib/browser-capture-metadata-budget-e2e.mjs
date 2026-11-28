@@ -4,6 +4,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { artifactCliEvidence, artifactMcpResult } from "./artifact-e2e.mjs";
 import { webSourceMapsSchema } from "../../dist/domain/webBundleAnalysis.js";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 const ANNOTATION_BYTES = 2 * 1024 * 1024;
 const SCRIPT_COUNT = 5;
@@ -112,7 +113,9 @@ export async function verifyBrowserCaptureMetadataBudget(endpoint) {
       },
       stderr: "pipe",
     });
-    const client = new Client({ name: "browser-metadata-e2e", version: "1" });
+    const client = completeEvidenceClient(
+      new Client({ name: "browser-metadata-e2e", version: "1" }),
+    );
     try {
       await client.connect(transport);
       assertMetadataBudget(

@@ -14,6 +14,8 @@ import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { nulFreeStringSchema } from "./localPath.js";
 import {
   binaryTargetIdentity,
+  directoryTargetIdentitySchema,
+  type DirectoryTargetIdentity,
   fileTargetSelectionSchema,
   nonFileTargetIdentitySchema,
   sessionTargetIdentitySchema,
@@ -31,6 +33,8 @@ import {
 } from "./analysisProfile.js";
 import type { BinaryArchitecture, BinaryTarget } from "./binaryTargetTypes.js";
 import {
+  detachedJsonObjectSchema,
+  detachedJsonValueSchema,
   jsonObjectSchema,
   jsonValueSchema,
   jsonValueValidationIssue,
@@ -46,8 +50,8 @@ import {
 } from "./immutableJson.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import {
-  relationshipCoverageSchema,
-  type RelationshipCoverage,
+  evidenceRelationshipCoverageSchema,
+  type EvidenceRelationshipCoverage,
 } from "./relationshipCoverage.js";
 
 /** Predicate shared by ordinary provider analysis observations. */
@@ -91,20 +95,33 @@ const fileSubjectSchema = z.strictObject({
   name: z.string().min(1),
   local_path: nulFreeStringSchema,
 });
+/** A directory named by its complete root digest, with the same display facts as a file. */
+const directorySubjectSchema = z.strictObject({
+  identity: directoryTargetIdentitySchema,
+  name: z.string().min(1),
+  local_path: nulFreeStringSchema,
+});
 /** A debugger session whose launch file is validated like a file subject. */
 const sessionSubjectIdentitySchema = sessionTargetIdentitySchema.extend({
-  target: z.union([subjectIdentitySchema, unknownTargetIdentitySchema]),
+  target: z.discriminatedUnion("kind", [
+    subjectIdentitySchema,
+    unknownTargetIdentitySchema,
+  ]),
 });
-/** A subject that names no file (a URL, process, session, or unknown target) has no file display facts. */
+/** A subject that names no local path (a URL, process, session, or unknown target) has no display facts. */
 const nonFileSubjectSchema = z.strictObject({
-  identity: z.union([
+  identity: z.discriminatedUnion("kind", [
     nonFileTargetIdentitySchema,
     sessionSubjectIdentitySchema,
   ]),
   name: z.null(),
   local_path: z.null(),
 });
-const subjectSchema = z.union([fileSubjectSchema, nonFileSubjectSchema]);
+const subjectSchema = z.union([
+  fileSubjectSchema,
+  directorySubjectSchema,
+  nonFileSubjectSchema,
+]);
 /** The Evidence subject, for persistence formats that embed one. */
 export const evidenceSubjectSchema = subjectSchema;
 /** Source location attached to an evidence observation. */
@@ -143,6 +160,60 @@ const executionEnvironmentSchema = z.strictObject({
   architecture: z.string().min(1),
   isolation: z.enum(["none", "process", "container", "virtual-machine"]),
 });
+
+/**
+ * Where the recording session's provider came from and how the other
+ * candidates fared. Session provenance, not observation identity: the same
+ * result observed under a different selection is the same observation.
+ */
+const providerSelectionProvenanceSchema = z
+  .strictObject({
+    selection_source: z.enum([
+      "request",
+      "environment",
+      "auto-single-candidate",
+    ]),
+    candidates: z
+      .array(
+        z.strictObject({
+          provider: providerSchema,
+          selected: z.boolean(),
+          availability: z.enum(["available", "unavailable", "unknown"]),
+          target_support: z.enum(["supported", "unsupported", "unknown"]),
+          rejection_codes: z.array(z.string().min(1)),
+        }),
+      )
+      // The object carries no separate selected-provider id, so a reader can
+      // only name the recording session's provider when exactly one candidate
+      // claims the selection. An imported bundle with zero or several would
+      // re-export ambiguous provenance under a stable Evidence id.
+      .refine(
+        (candidates) => {
+          const selected = candidates.filter(({ selected }) => selected);
+          if (selected.length !== 1) return false;
+          // Every registry path binds a provider only after its availability
+          // and target support both succeeded, so a selected candidate that
+          // reports either as not-known never came from a recording session.
+          const [candidate] = selected;
+          return (
+            candidate !== undefined &&
+            candidate.availability === "available" &&
+            candidate.target_support === "supported" &&
+            candidate.rejection_codes.length === 0
+          );
+        },
+        {
+          error:
+            "provider selection must mark exactly one available, supported candidate selected",
+        },
+      ),
+  })
+  .describe(
+    "Selected-session provider provenance; excluded from Evidence semantic identity.",
+  );
+export type ProviderSelectionProvenance = z.infer<
+  typeof providerSelectionProvenanceSchema
+>;
 const callerInputPathsSchema = z.record(
   nulFreeStringSchema,
   z.union([nulFreeStringSchema, z.array(nulFreeStringSchema)]),
@@ -172,13 +243,18 @@ const evidenceBaseSchema = z
       .describe(
         "Verbatim auxiliary input paths keyed by argument name; repeated selections retain their order. Caller assertions are outside semantic identity.",
       ),
+    provider_selection: providerSelectionProvenanceSchema
+      .exactOptional()
+      .describe(
+        "Provider selection provenance of the recording session; absent on older records and outside semantic identity.",
+      ),
     raw_result: jsonValueSchema.nullable(),
     normalized_result: jsonValueSchema,
     confidence: z.enum(["observed", "derived", "inferred"]),
     authority: evidenceAuthoritySchema,
     environment: executionEnvironmentSchema.nullable(),
     limitations: z.array(z.string()),
-    relationship_coverage: relationshipCoverageSchema.nullable(),
+    relationship_coverage: evidenceRelationshipCoverageSchema.nullable(),
     locations: z.array(evidenceLocationSchema),
     evidence_links: z.array(prefixedDigestSchema("ev")),
   })
@@ -211,6 +287,15 @@ export const evidenceSchema = evidenceBaseSchema.superRefine(
   validateAnalysisProfileProvider,
 );
 
+/** Strict Evidence parser that detaches sealed JSON payloads for mutable caller exports. */
+export const detachedEvidenceSchema = evidenceBaseSchema
+  .safeExtend({
+    parameters: detachedJsonObjectSchema,
+    raw_result: detachedJsonValueSchema.nullable(),
+    normalized_result: detachedJsonValueSchema,
+  })
+  .superRefine(validateAnalysisProfileProvider);
+
 const authenticatedEvidenceSchema = evidenceSchema.superRefine(
   (evidence, context) => {
     const { evidence_id: evidenceId, ...withoutId } = evidence;
@@ -237,11 +322,15 @@ const immutableResultSchema = z
     if (issue !== undefined)
       context.addIssue({ code: "custom", message: issue });
   });
+const immutableResultEvidenceSchema = evidenceSchema.safeExtend({
+  normalized_result: immutableResultSchema,
+});
 export type EvidenceLocation = z.infer<typeof evidenceLocationSchema>;
 
 /** Candidate local artifact identity validated by the Evidence subject schema. */
 export interface EvidenceSubjectTarget {
   readonly path: string;
+  /** The file's SHA-256, or a directory's complete tree digest. */
   readonly sha256: string;
   readonly format: z.infer<typeof subjectIdentitySchema>["format"];
   readonly architecture?: BinaryArchitecture;
@@ -252,63 +341,102 @@ export interface EvidenceSubjectTarget {
    * naming its open target's bytes to that target's selection.
    */
   readonly selection?: FileTargetSelection | null;
+  /**
+   * Present only for a directory named by its complete tree digest: the
+   * digest's algorithm and version. `sha256` is then that digest and
+   * `format` is `directory`. Absent, the target is a file.
+   */
+  readonly tree?: DirectoryTreeAlgorithm;
   /** Preserve an existing Evidence subject's display name when deriving observations. */
   readonly name?: string;
 }
 
-/** What a producer names as an Evidence subject: a file target, or a non-file identity such as a URL or an explicit unknown. */
+/** The tree digest algorithm a directory subject names. */
+export type DirectoryTreeAlgorithm = Pick<
+  DirectoryTargetIdentity,
+  "algorithm" | "version"
+>;
+
+/** What a producer names as an Evidence subject: a file or directory target, or an identity without a local path such as a URL or an explicit unknown. */
 export type EvidenceSubjectInput =
   | EvidenceSubjectTarget
   | BinaryTarget
   | NonFileTargetIdentity;
 
 type FileEvidenceSubject = z.infer<typeof fileSubjectSchema>;
+type DirectoryEvidenceSubject = z.infer<typeof directorySubjectSchema>;
 
-/** Whether a subject names a file; only a file subject has display facts. */
+/** Whether a subject names a file. */
 const isFileSubject = (
   subject: Evidence["subject"] | undefined,
 ): subject is FileEvidenceSubject => subject?.identity.kind === "file";
 
-/** Preserve the complete file subject when deriving a new Evidence observation. */
+/** Whether a subject names a local file or directory; only those have display facts. */
+const isLocalSubject = (
+  subject: Evidence["subject"] | undefined,
+): subject is FileEvidenceSubject | DirectoryEvidenceSubject =>
+  subject?.identity.kind === "file" || subject?.identity.kind === "directory";
+
+/** Preserve the complete file or directory subject when deriving a new Evidence observation. */
 export const evidenceSubjectTarget = (
   subject: Evidence["subject"] | undefined,
-): EvidenceSubjectTarget | undefined =>
-  !isFileSubject(subject)
-    ? undefined
-    : {
-        path: subject.local_path,
-        sha256: subject.identity.sha256,
-        format: subject.identity.format,
-        name: subject.name,
-        ...(subject.identity.architecture === null
-          ? {}
-          : { architecture: subject.identity.architecture }),
-        ...(subject.identity.selection === null
-          ? {}
-          : { selection: subject.identity.selection }),
-      };
+): EvidenceSubjectTarget | undefined => {
+  if (!isLocalSubject(subject)) return undefined;
+  const { identity } = subject;
+  if (identity.kind === "directory")
+    return {
+      path: subject.local_path,
+      sha256: identity.sha256,
+      format: "directory",
+      tree: { algorithm: identity.algorithm, version: identity.version },
+      name: subject.name,
+    };
+  return {
+    path: subject.local_path,
+    sha256: identity.sha256,
+    format: identity.format,
+    name: subject.name,
+    ...(identity.architecture === null
+      ? {}
+      : { architecture: identity.architecture }),
+    ...(identity.selection === null ? {} : { selection: identity.selection }),
+  };
+};
 
-/** Name the same subject in a derived observation: the file target, or the same non-file identity. */
+/** Name the same subject in a derived observation: the file or directory target, or the same identity without a local path. */
 export const evidenceSubjectInput = (
   subject: Evidence["subject"],
 ): EvidenceSubjectInput =>
-  isFileSubject(subject)
-    ? (evidenceSubjectTarget(subject) as EvidenceSubjectTarget)
-    : (subject.identity as NonFileTargetIdentity);
+  evidenceSubjectTarget(subject) ?? (subject.identity as NonFileTargetIdentity);
 
 /** The one projection of a producer's subject input into its target identity. */
 export const evidenceSubjectTargetIdentity = (
   target: EvidenceSubjectTarget | BinaryTarget,
-): FileTargetIdentity =>
-  "kind" in target
-    ? binaryTargetIdentity(target)
-    : {
-        kind: "file",
-        sha256: target.sha256,
-        format: target.format,
-        architecture: target.architecture ?? null,
-        selection: target.selection ?? null,
-      };
+): FileTargetIdentity | DirectoryTargetIdentity => {
+  if ("kind" in target) return binaryTargetIdentity(target);
+  if (target.tree === undefined)
+    return {
+      kind: "file",
+      sha256: target.sha256,
+      format: target.format,
+      architecture: target.architecture ?? null,
+      selection: target.selection ?? null,
+    };
+  if (
+    target.format !== "directory" ||
+    target.architecture !== undefined ||
+    (target.selection ?? null) !== null
+  )
+    throw new TypeError(
+      "A directory subject names only its tree digest; it has no format other than directory, architecture or selection",
+    );
+  return {
+    kind: "directory",
+    algorithm: target.tree.algorithm,
+    version: target.tree.version,
+    sha256: target.sha256,
+  };
+};
 
 /** Rebind a matching immutable artifact subject to the caller's selected path. */
 export const rebindEvidenceSubjectTargetPath = (
@@ -337,7 +465,6 @@ export const evidenceSubject = (
         }
       : { identity: target, name: null, local_path: null },
   );
-
 /** The target identity an Evidence record commits to; absent only for a partial record. */
 export const evidenceTargetIdentity = (evidence: {
   readonly subject?: Evidence["subject"] | undefined;
@@ -351,12 +478,22 @@ export const evidenceFileTarget = (evidence: {
   return identity?.kind === "file" ? identity : undefined;
 };
 
+/** The content identity a local file or directory subject commits to. */
+export const evidenceLocalTarget = (evidence: {
+  readonly subject?: Evidence["subject"] | undefined;
+}): FileTargetIdentity | DirectoryTargetIdentity | undefined => {
+  const identity = evidenceTargetIdentity(evidence);
+  return identity?.kind === "file" || identity?.kind === "directory"
+    ? identity
+    : undefined;
+};
+
 /** Display facts beside the subject identity; never part of the Evidence ID. */
 export const evidenceSubjectDisplay = (evidence: {
   readonly subject?: Evidence["subject"] | undefined;
 }): { readonly name: string; readonly local_path: string } | undefined => {
   const subject = evidence.subject;
-  return isFileSubject(subject)
+  return isLocalSubject(subject)
     ? { name: subject.name, local_path: subject.local_path }
     : undefined;
 };
@@ -378,7 +515,7 @@ export interface EvidenceObservationInput {
   readonly authority?: EvidenceAuthority;
   readonly environment?: ExecutionEnvironment | null;
   readonly limitations?: readonly string[];
-  readonly relationshipCoverage?: RelationshipCoverage;
+  readonly relationshipCoverage?: EvidenceRelationshipCoverage;
   readonly locations?: readonly EvidenceLocation[];
   readonly evidenceLinks?: readonly string[];
 }
@@ -436,7 +573,80 @@ export const evidenceDisplayMetadataAgree = (
   left.subject?.name === right.subject?.name &&
   left.subject?.local_path === right.subject?.local_path &&
   left.caller_input_path === right.caller_input_path &&
-  isDeepStrictEqual(left.caller_input_paths, right.caller_input_paths);
+  isDeepStrictEqual(left.caller_input_paths, right.caller_input_paths) &&
+  isDeepStrictEqual(left.provider_selection, right.provider_selection);
+
+/**
+ * Adopt the display metadata an incoming copy actually carries, keeping the
+ * retained subject and caller-selected inputs where the copy omits them.
+ *
+ * A copy is produced by a different recording session; it may render the same
+ * semantic record without the caller's selected paths or subject display.
+ * Display metadata is a presentation fact of the session that recorded the
+ * observation, so omission cannot stand for deletion.
+ */
+export const adoptEvidenceDisplayMetadata = (
+  retained: Evidence,
+  incoming: Evidence,
+): Evidence => {
+  const subject = mergedSubjectDisplay(retained.subject, incoming.subject);
+  // Display metadata names the caller's selection for this observation. A
+  // record already held under the semantic ID keeps the selection this ledger
+  // recorded first; a later copy only supplies a fact the retained value lacks.
+  const callerInputPath =
+    retained.caller_input_path ?? incoming.caller_input_path;
+  const callerInputPaths =
+    retained.caller_input_paths ?? incoming.caller_input_paths;
+  const providerSelection =
+    incoming.provider_selection ?? retained.provider_selection;
+  if (
+    subject === retained.subject &&
+    callerInputPath === retained.caller_input_path &&
+    callerInputPaths === retained.caller_input_paths &&
+    isDeepStrictEqual(providerSelection, retained.provider_selection)
+  )
+    return retained;
+  const display: Record<string, unknown> = { ...retained };
+  delete display.subject;
+  delete display.caller_input_path;
+  delete display.caller_input_paths;
+  delete display.provider_selection;
+  if (subject !== undefined) display.subject = subject;
+  if (callerInputPath !== undefined)
+    display.caller_input_path = callerInputPath;
+  if (callerInputPaths !== undefined)
+    display.caller_input_paths = callerInputPaths;
+  if (providerSelection !== undefined)
+    display.provider_selection = providerSelection;
+  return rememberReboundEvidence(retained, display as unknown as Evidence);
+};
+
+/**
+ * Per-field display facts keep the retained value wherever the copy omits one.
+ * The subject is either present or null, so a null copy keeps the retained
+ * subject rather than clearing the display identity.
+ */
+const mergedSubjectDisplay = (
+  retained: Evidence["subject"],
+  incoming: Evidence["subject"],
+): Evidence["subject"] => {
+  if (retained === incoming) return retained;
+  // A copy that carries no subject cannot clear the recording session's one.
+  if (retained === null || incoming === null) return retained;
+  // Only a file subject carries display facts; every other subject is
+  // identity, so the retained one wins rather than being rewritten.
+  if (!isFileSubject(retained) || !isFileSubject(incoming)) return retained;
+  if (
+    incoming.name === retained.name &&
+    incoming.local_path === retained.local_path
+  )
+    return retained;
+  return {
+    ...retained,
+    name: incoming.name,
+    local_path: incoming.local_path || retained.local_path,
+  };
+};
 
 /** Authenticate and seal a ledger-owned snapshot; external mutable values are copied first. */
 export const immutableEvidence = (input: unknown): Evidence => {
@@ -446,13 +656,37 @@ export const immutableEvidence = (input: unknown): Evidence => {
   );
 };
 
+/**
+ * Authenticate a record already validated and exclusively owned by
+ * `evidenceSchema`, avoiding a second schema parse and deep clone.
+ */
+export const authenticateParsedEvidence = (
+  record: Evidence,
+  seal: boolean,
+): Evidence => {
+  const immutable = immutableEvidenceSnapshots.get(record);
+  if (immutable !== undefined) return immutable;
+  admitEvidenceRecordFormat(record);
+  const { evidence_id: evidenceId, ...withoutId } = record;
+  if (computeEvidenceId(withoutId) !== evidenceId)
+    throw new z.ZodError([
+      {
+        code: "custom",
+        path: ["evidence_id"],
+        message: "Evidence semantic identifier does not match its record",
+      },
+    ]);
+  if (!seal) return record;
+  return rememberImmutableEvidence(freezeOwnedJsonTreeSnapshot(record));
+};
+
 /** Rebind display path metadata when an authenticated record names this target. */
 export const rebindEvidenceToTargetPath = (
   evidence: Evidence,
   target: EvidenceSubjectTarget,
 ): Evidence => {
   const subject = evidence.subject;
-  if (!isFileSubject(subject)) return evidence;
+  if (!isLocalSubject(subject)) return evidence;
   if (
     !sameTargetIdentity(subject.identity, evidenceSubjectTargetIdentity(target))
   )
@@ -506,6 +740,19 @@ export const withEvidenceCallerInputPath = (
       : { caller_input_path: callerInputPath }),
     ...(paths === undefined ? {} : { caller_input_paths: paths }),
   };
+  return rememberReboundEvidence(owned, rebound);
+};
+
+/** Bind the recording session's provider selection facts without changing semantic identity. */
+export const withEvidenceProviderSelection = (
+  evidence: Evidence,
+  selection: ProviderSelectionProvenance | undefined,
+): Evidence => {
+  if (selection === undefined) return immutableEvidence(evidence);
+  const provenance = providerSelectionProvenanceSchema.parse(selection);
+  const owned = immutableEvidence(evidence);
+  if (isDeepStrictEqual(owned.provider_selection, provenance)) return owned;
+  const rebound = { ...owned, provider_selection: provenance };
   return rememberReboundEvidence(owned, rebound);
 };
 
@@ -661,7 +908,7 @@ const normalizeEvidenceObservation = (
     observation.result !== null &&
     isImmutableJsonSnapshot(observation.result);
   const selectedSchema = sharedResult
-    ? evidenceSchema.safeExtend({ normalized_result: immutableResultSchema })
+    ? immutableResultEvidenceSchema
     : evidenceSchema;
   const normalized = selectedSchema.parse(envelope);
   // The envelope has already been parsed into an independent snapshot. Only

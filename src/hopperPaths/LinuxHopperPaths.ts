@@ -15,9 +15,10 @@ const systemLinuxHopperLauncherCandidates: readonly string[] = [
 
 /** Probe REA-managed and user-local installs before arbitrary system builds. */
 export const linuxHopperLauncherCandidates = (
-  home: string,
+  home: string | undefined,
 ): readonly string[] => [
   REA_MANAGED_LINUX_HOPPER_LAUNCHER,
-  linuxHopperLauncherPath(home),
-  ...systemLinuxHopperLauncherCandidates,
+  ...(home === undefined
+    ? []
+    : [linuxHopperLauncherPath(home), ...systemLinuxHopperLauncherCandidates]),
 ];

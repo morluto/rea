@@ -2,6 +2,11 @@ import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import {
+  parameterBudgetLimitFor,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const offset = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -12,8 +17,25 @@ const offset = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
  * process; it matches the pinned CPython pyc reader's 64 MiB ceiling.
  */
 export const MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES = 67108864;
-/** Hard ceiling on the V8 code cache container header this reader accepts. */
+/** The 28-byte word area after alignment to an eight-byte pointer. */
 export const V8_CODE_CACHE_HEADER_BYTES = 32;
+/** The same word area with four-byte pointer alignment. */
+export const V8_CODE_CACHE_NARROW_HEADER_BYTES = 28;
+/**
+ * The six-word area V8 8.8 through 11.7 write. It has no read-only snapshot
+ * checksum word, and 24 bytes need no pointer-alignment padding.
+ */
+export const V8_CODE_CACHE_LEGACY_HEADER_BYTES = 24;
+/** Every container header size admitted by the pinned layouts. */
+export const V8_CODE_CACHE_HEADER_SIZES: readonly number[] = [
+  V8_CODE_CACHE_LEGACY_HEADER_BYTES,
+  V8_CODE_CACHE_NARROW_HEADER_BYTES,
+  V8_CODE_CACHE_HEADER_BYTES,
+];
+/** Shortest admitted header, so no selected file is smaller than this. */
+export const V8_CODE_CACHE_MIN_HEADER_BYTES = Math.min(
+  ...V8_CODE_CACHE_HEADER_SIZES,
+);
 /**
  * V8 stamps every serialized code cache with `0xC0DE0000 ^ ExternalReferenceTable::kSize`.
  * Only the high half is stable across builds, so the low half is a build fingerprint and
@@ -52,29 +74,42 @@ export const V8_CODE_CACHE_LEGACY_MODULE_BIT = 0x80000000;
 /** Source length occupies the low bits of that word. */
 export const V8_CODE_CACHE_SOURCE_LENGTH_MASK = 0x1fffffff;
 
+/** Per-call read and observation budgets shared by the input schema and refusal limits. */
+export const V8_CODE_CACHE_BUDGETS = {
+  max_file_bytes: {
+    minimum: 36,
+    maximum: MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES,
+    default_value: 32 * 1024 * 1024,
+    unit: "bytes",
+  },
+  max_strings: {
+    minimum: 1,
+    maximum: MAX_INSPECT_V8_CODE_CACHE_STRINGS,
+    default_value: 4096,
+    unit: "count",
+  },
+} as const satisfies Record<string, ParameterBudget>;
+
+/** Build a structured per-call refusal limit using the input schema's own bounds. */
+export const v8CodeCacheBudgetLimit = parameterBudgetLimitFor(
+  V8_CODE_CACHE_BUDGETS,
+);
+
 /** Bounded inspection of one V8 code cache container. Never executes the payload. */
 export const inspectV8CodeCacheInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to the selected V8 code cache (.jsc) file",
   ),
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(36)
-    .max(MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES)
-    .default(32 * 1024 * 1024)
-    .describe(
-      "Maximum stable artifact bytes to read; exceeding the budget fails without partial success",
-    ),
-  max_strings: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_V8_CODE_CACHE_STRINGS)
-    .default(4096)
-    .describe(
-      "Maximum embedded byte-pattern observations to report; exceeding the budget fails without partial success",
-    ),
+  max_file_bytes: parameterBudgetSchema(
+    V8_CODE_CACHE_BUDGETS.max_file_bytes,
+  ).describe(
+    "Maximum stable artifact bytes to read; exceeding the budget fails without partial success",
+  ),
+  max_strings: parameterBudgetSchema(
+    V8_CODE_CACHE_BUDGETS.max_strings,
+  ).describe(
+    "Maximum embedded byte-pattern observations to report; exceeding the budget fails without partial success",
+  ),
   min_string_bytes: z
     .number()
     .int()
@@ -114,8 +149,8 @@ const headerSchema = z.strictObject({
   magic: uint,
   /** High half of the magic, the only part stable across V8 builds. */
   magic_build_stable: uint,
-  /** Every header word, in container order. */
-  fields: z.array(headerFieldSchema).length(8),
+  /** Every header word this container carries, in container order. */
+  fields: z.array(headerFieldSchema).min(6).max(8),
   /** Bytes this reader treats as header before the payload begins. */
   header_bytes: uint,
   /** Source length in UTF-16 code units, as recorded by the producer, if determinable. */
@@ -178,11 +213,23 @@ export const v8CodeCacheSchema = z
     limitations: z.array(z.string().min(1)).min(1),
   })
   .superRefine((report, context) => {
-    if (report.header.header_bytes !== V8_CODE_CACHE_HEADER_BYTES)
+    if (!V8_CODE_CACHE_HEADER_SIZES.includes(report.header.header_bytes))
       context.addIssue({
         code: "custom",
         path: ["header", "header_bytes"],
-        message: "This reader only accepts its pinned container header size.",
+        message:
+          "This reader only accepts the container header sizes it admits.",
+      });
+    // The word table describes the container's own header, so it cannot disagree with it.
+    if (
+      report.header.fields.length * 4 !== report.header.header_bytes ||
+      report.header.fields.some(({ offset }, index) => offset !== index * 4)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["header", "fields"],
+        message:
+          "The reported words must cover the declared header in byte order.",
       });
     if (report.header.magic_build_stable !== V8_CODE_CACHE_MAGIC_HIGH)
       context.addIssue({
@@ -190,6 +237,12 @@ export const v8CodeCacheSchema = z
         path: ["header", "magic_build_stable"],
         message:
           "The admitted magic must carry the stable V8 code cache high half.",
+      });
+    if (report.payload.offset !== report.header.header_bytes)
+      context.addIssue({
+        code: "custom",
+        path: ["payload", "offset"],
+        message: "The payload must start at the end of the declared header.",
       });
     if (report.payload.offset + report.payload.bytes !== report.artifact.bytes)
       context.addIssue({

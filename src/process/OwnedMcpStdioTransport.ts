@@ -69,13 +69,20 @@ export class OwnedMcpStdioTransport implements Transport {
   readonly #bytes: Budget | undefined;
   #started = false;
   #closed = false;
+  #inputEnded = false;
+  #onCloseNotified = false;
   readonly #cleanup = new AnalysisCleanupLease(
     () => this.#stop(),
     [this.runId],
   );
   #starting: Promise<void> | undefined;
-  /** Preparation cleanup owners a failed launch transferred and that closed. */
-  readonly #releasedPreparations = new Set<unknown>();
+  #preparations:
+    | readonly {
+        readonly failure: ProcessInspectionCleanupFailure;
+        readonly resource: string;
+        readonly lease: AnalysisCleanupLease;
+      }[]
+    | undefined;
   /** Ends a launch still resolving or spawning when the transport closes. */
   readonly #acquisition = new AbortController();
   #failure: OwnedMcpTransportFailure | undefined;
@@ -264,7 +271,13 @@ export class OwnedMcpStdioTransport implements Transport {
             () => undefined,
           );
     const gracefulInputCloseMs = this.settings.gracefulInputCloseMs ?? 0;
-    if (input !== undefined && input !== null && gracefulInputCloseMs > 0) {
+    if (
+      !this.#inputEnded &&
+      input !== undefined &&
+      input !== null &&
+      gracefulInputCloseMs > 0
+    ) {
+      this.#inputEnded = true;
       input.end();
       await this.#supervisor?.waitForExit(gracefulInputCloseMs);
     }
@@ -276,7 +289,7 @@ export class OwnedMcpStdioTransport implements Transport {
     // settled, so shutdown diagnostics still reach the caller's report.
     if (this.settings.onStderr !== undefined)
       process?.stderr?.off("data", this.settings.onStderr);
-    this.onclose?.();
+    this.#notifyClosed();
     if (stopped?.status === "incomplete") {
       const failure = new ProviderCleanupError(
         this.settings.provider,
@@ -297,46 +310,58 @@ export class OwnedMcpStdioTransport implements Transport {
       new AnalysisCleanupLeaseGroup(failure, [this.#cleanup]);
       throw failure;
     }
-    for (const preparation of processInspectionCleanupFailures(startFailure))
-      await this.#releasePreparation(preparation);
+    await this.#releasePreparations(startFailure);
   }
 
-  /**
-   * Close one transferred preparation owner. Until it closes (or when the
-   * launch reported a failure without an owner) the close fails and a later
-   * close retries it.
-   */
-  async #releasePreparation(
-    preparation: ProcessInspectionCleanupFailure,
-  ): Promise<void> {
-    const darwin = preparation instanceof DarwinProcessOwnershipInspectionError;
-    const owner = darwin ? preparation.cleanupOwner : preparation.owner;
-    if (owner !== undefined && this.#releasedPreparations.has(owner)) return;
-    let reason = preparation.message;
-    if (owner !== undefined)
+  /** A refused close retains its lease while independent owners still get a turn. */
+  async #releasePreparations(startFailure: unknown): Promise<void> {
+    this.#preparations ??= processInspectionCleanupFailures(startFailure).map(
+      (failure) => {
+        const darwin = failure instanceof DarwinProcessOwnershipInspectionError;
+        const owner = darwin ? failure.cleanupOwner : failure.owner;
+        const resource = darwin ? "process ownership inspection" : failure.path;
+        return {
+          failure,
+          resource,
+          lease: new AnalysisCleanupLease(async () => {
+            if (owner === undefined) throw failure;
+            await owner.close();
+          }, [resource]),
+        };
+      },
+    );
+    const pending = [];
+    for (const preparation of this.#preparations) {
       try {
-        await owner.close();
-        this.#releasedPreparations.add(owner);
-        return;
+        await preparation.lease.release();
       } catch (cause: unknown) {
-        reason = errorMessage(cause);
+        pending.push({ ...preparation, reason: errorMessage(cause) });
       }
+    }
+    const first = pending[0];
+    if (first === undefined) return;
     const failure = new ProviderCleanupError(
       this.settings.provider,
-      [darwin ? "process ownership inspection" : preparation.path],
-      { reason },
+      pending.map(({ resource }) => resource),
       {
-        cause: preparation,
+        reason:
+          pending.length === 1
+            ? first.reason
+            : pending
+                .map(({ resource, reason }) => `${resource}: ${reason}`)
+                .join("\n"),
+      },
+      {
+        cause: pending.length === 1 ? first.failure : startFailure,
         ...(this.settings.operation === undefined
           ? {}
           : { operation: this.settings.operation }),
       },
     );
-    // The transport's close retries the owner; the failure keeps naming the
-    // preparation resource rather than the process run.
-    new AnalysisCleanupLeaseGroup(failure, [this.#cleanup], {
-      preserveResourceAttribution: true,
-    });
+    new AnalysisCleanupLeaseGroup(
+      failure,
+      pending.map(({ lease }) => lease),
+    );
     throw failure;
   }
 
@@ -348,14 +373,21 @@ export class OwnedMcpStdioTransport implements Transport {
       this.onerror?.(cause instanceof Error ? cause : new Error(String(cause))),
     );
   };
+  /** One close notification for exit, output close, and explicit close. */
+  #notifyClosed(): void {
+    if (this.#onCloseNotified) return;
+    this.#onCloseNotified = true;
+    this.onclose?.();
+  }
   readonly #exit = (): void => {
     this.#failure ??= { kind: "exit" };
-    if (this.settings.notifyOnExit === true) this.onclose?.();
+    if (this.settings.notifyOnExit === true) this.#notifyClosed();
   };
   readonly #outputClosed = (): void => {
-    if (this.settings.notifyOnExit !== true) this.onclose?.();
+    if (this.settings.notifyOnExit !== true) this.#notifyClosed();
   };
   readonly #countStderr = (chunk: Buffer | string): void => {
+    if (this.#closed) return;
     this.#countOperationBytes(Buffer.byteLength(chunk));
   };
   /** Charge output to the operation budget; false once it is exceeded. */
@@ -379,6 +411,7 @@ export class OwnedMcpStdioTransport implements Transport {
     try {
       let offset = 0;
       while (offset < bytes.length) {
+        if (this.#closed) return;
         const newline = bytes.indexOf(10, offset);
         const end = newline === -1 ? bytes.length : newline;
         const fragment = bytes.subarray(offset, end);
@@ -390,6 +423,13 @@ export class OwnedMcpStdioTransport implements Transport {
             `${this.settings.label} MCP frame exceeds ${this.settings.maxFrameBytes} bytes`,
           );
           return;
+        }
+        if (this.#frameLength === 0 && newline !== -1) {
+          // Preserve a leading BOM so the JSON-RPC parser can reject it.
+          const line = decodeStrictUtf8(fragment, "preserve");
+          this.onmessage?.(deserializeMessage(line));
+          offset = newline + 1;
+          continue;
         }
         this.#appendFrame(fragment, frameBytes);
         if (newline === -1) return;

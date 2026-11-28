@@ -21,7 +21,10 @@ export const GUIDED_WORKFLOWS_OPERATION = "guided_workflows";
 /** Validate and perform a provider-free list or render request. */
 export const accessGuidedWorkflows = (
   input: unknown,
-  contracts: readonly PromptContract[] = PROMPT_CONTRACTS,
+  options: {
+    readonly contracts?: readonly PromptContract[];
+    readonly listRemediation?: string;
+  } = {},
 ): Result<GuidedWorkflowsResult, AnalysisInputError> => {
   const parsed = guidedWorkflowsInputSchema.safeParse(input);
   if (!parsed.success)
@@ -33,17 +36,22 @@ export const accessGuidedWorkflows = (
       ),
     );
 
+  const contracts = options.contracts ?? PROMPT_CONTRACTS;
   if (parsed.data.action === "list")
     return ok({ action: "list", workflows: guidedPromptInventory(contracts) });
 
+  const listRemediation =
+    options.listRemediation ??
+    'Call `guided_workflows` with `{"action":"list"}` to see workflow identifiers and argument requirements in this connection.';
   const id = parsed.data.workflow_id;
   const contract = contracts.find(({ name }) => name === id);
   if (contract === undefined)
-    return invalidInput(
+    return invalidWorkflowSelection(
       PROMPT_CONTRACTS.some(({ name }) => name === id)
-        ? `Workflow '${id}' is not available in the selected tool-family scope. Use action=list to see the available identifiers.`
-        : `Unknown workflow_id '${id}'. Use action=list to see the available identifiers.`,
+        ? `Workflow '${id}' is not available in the selected tool-family scope.`
+        : `Unknown workflow_id '${id}'.`,
       [{ path: ["workflow_id"], reason: "invalid_value" }],
+      listRemediation,
     );
 
   const arguments_ = parsed.data.arguments ?? {};
@@ -59,11 +67,12 @@ export const accessGuidedWorkflows = (
     const missing = issues
       .filter(({ reason }) => reason === "missing_argument")
       .map(({ path }) => String(path.at(-1)));
-    return invalidInput(
+    return invalidWorkflowSelection(
       missing.length === 0
-        ? "Correct the named guided workflow arguments and retry."
+        ? "The selected workflow does not accept the supplied arguments."
         : `Missing required arguments for ${id}: ${missing.join(", ")}.`,
       issues,
+      listRemediation,
     );
   }
 
@@ -81,14 +90,19 @@ export const accessGuidedWorkflows = (
   });
 };
 
-const invalidInput = (
+const invalidWorkflowSelection = (
   userMessage: string,
   additionalIssues: ConstructorParameters<typeof AnalysisInputError>[2],
+  remediationAction: string,
 ): Result<never, AnalysisInputError> =>
   err(
     new AnalysisInputError(
       GUIDED_WORKFLOWS_OPERATION,
-      { userMessage },
+      {
+        userMessage,
+        conformsToInputContract: true,
+        remediationAction,
+      },
       additionalIssues,
     ),
   );

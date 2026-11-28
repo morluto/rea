@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
 
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { downloadHopperPackage } from "./HopperDownload.js";
 
@@ -23,17 +23,12 @@ it.each(["physical", "caller", "node-wrapper", "default-abort"] as const)(
         code: "ABORT_ERR",
       },
     );
-    let thrown: unknown;
-    vi.stubGlobal("fetch", async () => {
+    vi.stubGlobal("fetch", async (_url: string, options: RequestInit) => {
       if (kind === "default-abort") controller.abort();
       else controller.abort(reason);
-      thrown =
-        kind === "physical"
-          ? physical
-          : kind === "node-wrapper"
-            ? wrapped
-            : controller.signal.reason;
-      throw thrown;
+      if (kind === "physical") throw physical;
+      if (kind === "node-wrapper") throw wrapped;
+      throw options.signal?.reason;
     });
     const download = downloadHopperPackage("https://fixture.invalid/archive", {
       signal: controller.signal,
@@ -43,7 +38,10 @@ it.each(["physical", "caller", "node-wrapper", "default-abort"] as const)(
         ok: false,
         error: { kind: "network", detail: physical.message },
       });
-    else await expect(download).rejects.toBe(thrown);
+    else
+      await expect(download).rejects.toBe(
+        kind === "node-wrapper" ? wrapped : controller.signal.reason,
+      );
   },
 );
 
@@ -178,3 +176,89 @@ it.each([null, false, { caller: "cancel" }] as const)(
     }
   },
 );
+
+describe("downloadHopperPackage redirect origin", () => {
+  const redirectResponse = (location: string): Response =>
+    new Response(null, { status: 302, headers: { location } });
+
+  it("returns the bytes for a direct response", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(new Response("payload", { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await downloadHopperPackage(
+      "https://www.hopperapp.com/download",
+    );
+    expect(result).toEqual({ ok: true, value: Buffer.from("payload") });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns the bytes when redirects stay on the requested origin", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(redirectResponse("/releases/pkg.deb"))
+      .mockResolvedValueOnce(
+        redirectResponse("https://www.hopperapp.com/final/pkg.deb"),
+      )
+      .mockResolvedValueOnce(new Response("payload", { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await downloadHopperPackage(
+      "https://www.hopperapp.com/download",
+    );
+    expect(result).toEqual({ ok: true, value: Buffer.from("payload") });
+    expect(fetch.mock.calls.map(([input]) => input)).toEqual([
+      "https://www.hopperapp.com/download",
+      "https://www.hopperapp.com/releases/pkg.deb",
+      "https://www.hopperapp.com/final/pkg.deb",
+    ]);
+  });
+
+  it("refuses a redirect to another origin without requesting it", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(
+        redirectResponse("https://cdn.example.net/pkg.deb"),
+      )
+      .mockResolvedValueOnce(new Response("payload", { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await downloadHopperPackage(
+      "https://www.hopperapp.com/download",
+    );
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        url: "https://www.hopperapp.com/download",
+        kind: "url_refused",
+        refusal: "redirect_cross_origin",
+      },
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a later hop that leaves the requested origin", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(redirectResponse("/releases/pkg.deb"))
+      .mockResolvedValueOnce(
+        redirectResponse("https://cdn.example.net/pkg.deb"),
+      )
+      .mockResolvedValueOnce(new Response("payload", { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await downloadHopperPackage(
+      "https://www.hopperapp.com/download",
+    );
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        url: "https://www.hopperapp.com/download",
+        kind: "url_refused",
+        refusal: "redirect_cross_origin",
+      },
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+});

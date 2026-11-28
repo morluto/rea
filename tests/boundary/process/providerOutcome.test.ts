@@ -6,7 +6,7 @@ import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { runPcapCommand } from "../../../src/pcap/PcapCommand.js";
 import { runOwnedCommand } from "../../../src/process/OwnedCommand.js";
@@ -191,7 +191,7 @@ it("leaves an exit's meaning to the provider dialect", async () => {
   const failure = await readCapture(
     'process.stderr.write("The file is not a capture file"); process.exitCode = 2',
   );
-  expect(failure).toBeInstanceOf(AnalysisUnsupportedTargetError);
+  expect(failure).toBeInstanceOf(AnalysisTargetFailureError);
   expect(failure).toMatchObject({
     capturedOutput: { stderr: expect.stringContaining("not a capture file") },
   });

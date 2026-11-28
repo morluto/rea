@@ -1,82 +1,159 @@
-import { open, writeFile } from "node:fs/promises";
+import { mkdir, open, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
+import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   MAX_FIRMWARE_STAGING_BYTES,
   MAX_FIRMWARE_STAGING_ENTRIES,
 } from "../../../src/domain/firmware/firmwareAnalysis.js";
 import { inventoryFirmwareOutput } from "../../../src/firmware/FirmwareFiles.js";
+import { checkFirmwareStagingBudget } from "../../../src/firmware/FirmwareStagingBudget.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-it("refuses staging bytes at the schema ceiling with the ceiling recovery", async () => {
+it("reports the cumulative staging-byte limit and only offers supported increases", async () => {
   const root = await createTestTempDirectory("rea-firmware-ceiling-bytes-");
-  // A sparse file reports its declared size without storing the bytes, so the
-  // refusal is exercised at the real schema ceiling rather than a toy budget.
-  const sparse = await open(join(root, "oversized.bin"), "w");
+  // Each file fits either budget. Together they exceed even the ceiling.
+  await writeFile(join(root, "first.bin"), "12");
+  const sparse = await open(join(root, "second.bin"), "w");
   try {
-    await sparse.truncate(MAX_FIRMWARE_STAGING_BYTES + 1);
+    await sparse.truncate(MAX_FIRMWARE_STAGING_BYTES - 1);
   } finally {
     await sparse.close();
   }
 
-  const rejected = await inventoryFirmwareOutput(
-    root,
-    MAX_FIRMWARE_STAGING_BYTES,
-    MAX_FIRMWARE_STAGING_ENTRIES,
-    Number.MAX_SAFE_INTEGER,
-    "extract_firmware",
-  ).catch((cause: unknown) => cause);
+  for (const [limit, adjustable] of [
+    [MAX_FIRMWARE_STAGING_BYTES - 1, true],
+    [MAX_FIRMWARE_STAGING_BYTES, false],
+  ] as const) {
+    const failure: unknown = await inventoryFirmwareOutput(
+      root,
+      limit,
+      MAX_FIRMWARE_STAGING_ENTRIES,
+      Number.MAX_SAFE_INTEGER,
+      "extract_firmware",
+    ).catch((cause: unknown) => cause);
+    if (!(failure instanceof AnalysisResourceConstraintError))
+      throw new Error("Expected a staging capacity failure", {
+        cause: failure,
+      });
 
-  expect(rejected).toMatchObject({
-    _tag: "AnalysisResourceConstraintError",
-    resource: "capacity",
-    retryable: false,
+    const projected = projectAnalysisError(failure);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        resource: "capacity",
+        reported_limits: { max_output_bytes: limit },
+      },
+    });
+    const action = projected.remediation.action;
+    expect(projected.details?.limit).toMatchObject({
+      parameter: "max_output_bytes",
+      effective_value: limit,
+      maximum: MAX_FIRMWARE_STAGING_BYTES,
+    });
+    expect(action.includes("Pass a larger max_output_bytes")).toBe(adjustable);
+    expect(action.includes("already at its maximum")).toBe(!adjustable);
+  }
+});
+
+describe("checkFirmwareStagingBudget", () => {
+  it("counts files, directories, symlinks, and raw non-UTF8 names within budgets", async () => {
+    const root = await createTestTempDirectory("rea-staging-budget-fast-");
+    await mkdir(join(root, "sub"));
+    await writeFile(join(root, "sub", "a.bin"), "abcd");
+    await writeFile(join(root, "b.bin"), "ef");
+    if (process.platform !== "win32")
+      await symlink("dangling-target", join(root, "sub", "dangling"));
+    const usage = await checkFirmwareStagingBudget({
+      root,
+      maxBytes: 6,
+      maxEntries: process.platform === "win32" ? 3 : 4,
+      fileSizeBytes: 5,
+      operation: "extract_firmware",
+    });
+    expect(usage).toEqual({
+      bytes: 6,
+      entries: process.platform === "win32" ? 3 : 4,
+    });
+    await expect(
+      checkFirmwareStagingBudget({
+        root,
+        maxBytes: 5,
+        maxEntries: 10,
+        fileSizeBytes: 10,
+        operation: "extract_firmware",
+      }),
+    ).rejects.toMatchObject({ _tag: "AnalysisResourceConstraintError" });
+    await expect(
+      checkFirmwareStagingBudget({
+        root,
+        maxBytes: 100,
+        maxEntries: 10,
+        fileSizeBytes: 4,
+        operation: "extract_firmware",
+      }),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "file-size",
+    });
   });
-  const projected = projectAnalysisError(rejected as never);
-  expect(projected).toMatchObject({
-    code: "resource_constraint",
-    retryable: false,
-    details: {
-      reported_limits: { max_output_bytes: MAX_FIRMWARE_STAGING_BYTES },
+
+  it.skipIf(process.platform !== "linux")(
+    "counts raw non-UTF8 filenames using raw path buffers on POSIX hosts",
+    async () => {
+      const root = await createTestTempDirectory("rea-staging-raw-name-");
+      const rawName = Buffer.from([
+        0x62, 0x61, 0x64, 0xff, 0x2e, 0x62, 0x69, 0x6e,
+      ]);
+      await writeFile(Buffer.concat([Buffer.from(`${root}/`), rawName]), "abc");
+      await writeFile(join(root, "good.bin"), "12345");
+      const usage = await checkFirmwareStagingBudget({
+        root,
+        maxBytes: 100,
+        maxEntries: 10,
+        fileSizeBytes: 100,
+        operation: "extract_firmware",
+      });
+      expect(usage).toEqual({ bytes: 8, entries: 2 });
     },
-  });
-  const action = projected.remediation.action;
-  expect(action).toContain(`max_output_bytes=${MAX_FIRMWARE_STAGING_BYTES}`);
-  expect(action).toMatch(/raising max_output_bytes further is not supported/iu);
-  expect(action).toMatch(/smaller firmware byte range.*smaller image/iu);
-  expect(action).toMatch(/analysis_timeout_ms does not raise/iu);
-});
-
-it("still offers a raise for a budget below the schema ceiling", async () => {
-  const root = await createTestTempDirectory("rea-firmware-below-ceiling-");
-  await writeFile(join(root, "one.bin"), "12");
-
-  const rejected = await inventoryFirmwareOutput(
-    root,
-    1,
-    MAX_FIRMWARE_STAGING_ENTRIES,
-    Number.MAX_SAFE_INTEGER,
-    "extract_firmware",
-  ).catch((cause: unknown) => cause);
-
-  const projected = projectAnalysisError(rejected as never);
-  expect(projected).toMatchObject({
-    code: "resource_constraint",
-    details: { reported_limits: { max_output_bytes: 1 } },
-  });
-  const action = projected.remediation.action;
-  expect(action).toContain("max_output_bytes=1");
-  expect(action).toContain(
-    `Increase max_output_bytes up to ${MAX_FIRMWARE_STAGING_BYTES}`,
   );
-  expect(action).toMatch(/narrower firmware byte range/iu);
-  expect(action).toMatch(/analysis_timeout_ms does not raise/iu);
-});
 
-// The entry ceiling needs more staged entries than the schema permits, so the
-// at-ceiling entry wording stays covered by
-// src/firmware/FirmwareStagingBudget.test.ts and the below-ceiling entry wiring
-// by firmwareReportFiles.test.ts.
+  it("stops directory enumeration when maxEntries is exceeded or cancellation arrives", async () => {
+    const root = await createTestTempDirectory("rea-staging-early-stop-");
+    await writeFile(join(root, "one.bin"), "1");
+    await writeFile(join(root, "two.bin"), "2");
+    await writeFile(join(root, "three.bin"), "3");
+
+    await expect(
+      checkFirmwareStagingBudget({
+        root,
+        maxBytes: 100,
+        maxEntries: 2,
+        fileSizeBytes: 100,
+        operation: "extract_firmware",
+      }),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "capacity",
+    });
+
+    const controller = new AbortController();
+    controller.abort(new Error("stop enumeration"));
+    await expect(
+      checkFirmwareStagingBudget({
+        root,
+        maxBytes: 100,
+        maxEntries: 10,
+        fileSizeBytes: 100,
+        operation: "extract_firmware",
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisCancelledError",
+    });
+  });
+});

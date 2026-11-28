@@ -1,9 +1,9 @@
+import { stringValue } from "./javascriptAstValues.js";
 import type { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import {
   failedJavaScriptStaticAnalysis,
   detectVendors,
   registrationKey,
-  stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptMemberMutationAllowance } from "./javascriptSemanticWorkAllowance.js";
 import {
@@ -19,8 +19,7 @@ import { RETURNED_REFERENCE_WIDENING_LIMITATION } from "./javascriptSemanticCove
 import { collectElectronWrappedCallPathsSteps } from "./electronWrappedCallPaths.js";
 import {
   ELECTRON_IDENTITY_LIMITATION,
-  ELECTRON_MODULE,
-  ELECTRON_REFERENCE_KINDS,
+  referencesElectronModule,
 } from "./javascriptElectronMemberWrites.js";
 
 import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
@@ -31,6 +30,7 @@ import {
 } from "./electronStaticRenderer.js";
 import { finishElectronNativeBindingsSteps } from "./electronStaticAnalysisNative.js";
 import { finishElectronDynamicCodeSteps } from "./electronStaticAnalysisDynamicCode.js";
+import { finishElectronIpcChannels } from "./electronStaticAnalysisIpc.js";
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
 import {
   hasPossibleCommonJsDelegateWrite,
@@ -72,6 +72,7 @@ import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.
 import {
   indexJavaScriptElectronIdentitySteps,
   indexJavaScriptBindingsWithReceiversSteps,
+  type JavaScriptReceiverIndex,
 } from "./javascriptSemanticAnalysis.js";
 import {
   commonJsWrapperRedeclarationCount,
@@ -155,21 +156,29 @@ export const memberMutationRefusedJavaScriptStaticAnalysis = (
   };
 };
 
-/** Static analysis that yields during its source traversal; results are unchanged. */
+/**
+ * Static analysis that yields during its source traversal; results are
+ * unchanged. A caller that also runs the semantic phase on this file passes
+ * the `lexicalIndex` it built for `file.program` with this precision and
+ * allowance, so both phases read one index.
+ */
 export function* analyzeParsedJavaScriptStaticSourceSteps(
   source: string,
   file: ParsedJavaScriptSource,
   precision?: JavaScriptSemanticPrecisionInput,
   memberMutationAllowance?: JavaScriptMemberMutationAllowance,
+  lexicalIndex?: JavaScriptReceiverIndex,
 ): Generator<void, JavaScriptStaticAnalysis> {
   const accumulator = createJavaScriptAnalysisAccumulator(source.length);
   // One definitions pass serves receiver classification and binding lookup.
-  const index = yield* indexJavaScriptBindingsWithReceiversSteps(
-    file.program,
-    undefined,
-    precision,
-    memberMutationAllowance,
-  );
+  const index =
+    lexicalIndex ??
+    (yield* indexJavaScriptBindingsWithReceiversSteps(
+      file.program,
+      undefined,
+      precision,
+      memberMutationAllowance,
+    ));
   const { bindings, receivers } = index;
   yield* index.indexAmbientWritesSteps();
   if (hasPossibleCommonJsDelegateWrite(bindings))
@@ -233,7 +242,12 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     source,
     accumulator,
     electronIdentity,
+    () => index.indexMemberMutationFactsSteps(),
   );
+  if (accumulator.pendingIpcChannels.size > 0) {
+    yield* index.indexMemberMutationFactsSteps();
+    finishElectronIpcChannels(accumulator, bindings);
+  }
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
   return finalizeStaticAnalysis(source, file, accumulator, bindings, routes);
 }
@@ -268,25 +282,8 @@ const finalizeStaticAnalysis = (
   const parserErrors = recoveredJavaScriptSyntaxErrorCount(file.errors);
   const wrapperRedeclarations = commonJsWrapperRedeclarationCount(file.errors);
   const typeOnlySideEffect = hasUncertainTypeOnlyModuleSideEffect(file.program);
-  // A `worker` or `service-worker` reference records a URL relative to the
-  // importing source, so `new Worker(new URL("electron", import.meta.url))` is
-  // not an Electron module. Read the same kinds the Electron boundary owner uses.
-  // Only a loaded module establishes Electron applicability: `require.resolve`
-  // locates the module without loading it, so no boundary fact is expected.
-  const electronObserved = accumulator.references.some(
-    ({ value }) =>
-      value.specifier !== null &&
-      value.operation === "load" &&
-      ELECTRON_REFERENCE_KINDS.has(value.kind) &&
-      ELECTRON_MODULE.test(value.specifier) &&
-      value.loader_authority !== "candidate" &&
-      // A `factory-loader` reference names a recovered bundle module, so its
-      // specifier is a module key inside the artifact rather than a package. A
-      // real external load in the same file keeps its `commonjs-loader`
-      // identity, so it is still counted.
-      value.loader !== "factory-loader",
-  );
-  const resourceLimits = [...bindings.valueResourceLimits].sort();
+  const electronObserved = referencesElectronModule(accumulator.references);
+  const resourceLimits = [...bindings.observations.valueResourceLimits].sort();
   const controls = semanticPrecisionControls(
     resourceLimits,
     accumulator.electronCallPathLimits ?? [],
@@ -315,7 +312,7 @@ const finalizeStaticAnalysis = (
         ...(accumulator.unknownFindings > 0
           ? ["dynamic-findings" as const]
           : []),
-        ...(bindings.returnedReferenceWidenings.size > 0
+        ...(bindings.observations.returnedReferenceWidenings.size > 0
           ? ["returned-reference-widening" as const]
           : []),
         ...(typeOnlySideEffect
@@ -344,10 +341,10 @@ const finalizeStaticAnalysis = (
   };
   const limitations = [
     ...(loaderCondition === undefined ? [] : [loaderCondition]),
-    ...(bindings.valueResourceLimits.has("alias-selections")
+    ...(bindings.observations.valueResourceLimits.has("alias-selections")
       ? [semanticResourceLimitReason("alias-selections", bindings.precision)]
       : []),
-    ...(bindings.returnedReferenceWidenings.size > 0
+    ...(bindings.observations.returnedReferenceWidenings.size > 0
       ? [RETURNED_REFERENCE_WIDENING_LIMITATION]
       : []),
     ...(accumulator.electronCallPaths?.length

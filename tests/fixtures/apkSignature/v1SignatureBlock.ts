@@ -6,6 +6,7 @@
  * producer may emit but OpenSSL does not (reordered or missing certificates,
  * several SignerInfos, BER indefinite lengths, malformed fields).
  */
+import { u32, u64 } from "./integers.js";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { apkSchemeValue } from "./signingScheme.js";
 
@@ -360,13 +361,6 @@ export const zipWith = async (
   return writer.close();
 };
 
-const u32 = (v: number): number[] => [
-  v & 0xff,
-  (v >> 8) & 0xff,
-  (v >> 16) & 0xff,
-  (v >>> 24) & 0xff,
-];
-const u64 = (v: number): number[] => [...u32(v), ...u32(0)];
 const lp = (b: Uint8Array): Buffer =>
   Buffer.concat([Buffer.from(u32(b.length)), b]);
 

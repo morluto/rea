@@ -536,13 +536,18 @@ describe("MCP JSON Schema validity", () => {
     const comparison = byName.get("compare_web_captures")?.inputSchema;
     for (const side of ["before", "after"])
       expect(comparison).toHaveProperty(
-        ["properties", side, "properties", "inspection"],
-        {
-          type: "object",
-          description: expect.stringContaining(
-            "complete canonical observation",
-          ),
-        },
+        ["properties", side, "properties", "inspection", "anyOf"],
+        [
+          expect.objectContaining({
+            required: ["kind", "evidence_id"],
+          }),
+          {
+            type: "object",
+            description: expect.stringContaining(
+              "complete canonical observation",
+            ),
+          },
+        ],
       );
     for (const contract of TOOL_CONTRACTS) {
       const tool = byName.get(contract.name);
@@ -786,19 +791,7 @@ describe("MCP process input JSON Schema", () => {
   });
 });
 
-it("rejects unresolved output-schema references even for uncalled tools", () => {
-  const errors = advertisedSchemaErrors([
-    {
-      name: "dangling",
-      inputSchema: { type: "object" },
-      outputSchema: { $ref: "#/$defs/missing" },
-    },
-  ]);
-  expect(errors).toHaveLength(1);
-  expect(errors[0]).toContain("dangling.outputSchema");
-});
-
-it("validates each tool independently when output schema IDs repeat", () => {
+it("compiles every output schema independently when IDs repeat, including uncalled tools", () => {
   const outputSchema = { $id: "urn:rea:test:shared-output", type: "string" };
   const errors = advertisedSchemaErrors([
     { name: "first", inputSchema: { type: "object" }, outputSchema },
@@ -918,7 +911,7 @@ it.each([false, true])(
   },
 );
 
-it("distinguishes recursive references from shared definitions", () => {
+it("finds recursion through schema-valued keywords and ignores literal metadata", () => {
   const diamond = {
     type: "object",
     properties: {
@@ -926,18 +919,26 @@ it("distinguishes recursive references from shared definitions", () => {
       right: { $ref: "#/$defs/shared" },
     },
     $defs: { shared: { type: "string" } },
+    default: { $ref: "#" },
+    "x-fixture": { $ref: "#" },
   };
-  expect(
-    recursiveReferences([{ name: "diamond", inputSchema: diamond }]),
-  ).toEqual([]);
-  expect(
-    recursiveReferences([{ name: "root", inputSchema: { $ref: "#" } }]),
-  ).toEqual(["root.inputSchema: #"]);
   const escaped = {
-    $ref: "#/$defs/a~1b",
-    $defs: { "a/b": { $ref: "#/$defs/a~1b" } },
+    $ref: "#/$defs/a%20~1b",
+    $defs: { "a /b": { $ref: "#/$defs/a%20~1b" } },
   };
   expect(
-    recursiveReferences([{ name: "escaped", inputSchema: escaped }]),
-  ).toEqual(["escaped.inputSchema: #/$defs/a~1b"]);
+    recursiveReferences([
+      { name: "diamond", inputSchema: diamond },
+      { name: "root", inputSchema: { $ref: "#" } },
+      { name: "escaped", inputSchema: escaped },
+      {
+        name: "property",
+        inputSchema: { properties: { default: { $ref: "#" } } },
+      },
+    ]),
+  ).toEqual([
+    "root.inputSchema: #",
+    "escaped.inputSchema: #/$defs/a%20~1b",
+    "property.inputSchema: #",
+  ]);
 });

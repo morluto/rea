@@ -15,10 +15,7 @@ import { ok, type Result } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { readGhidraExecutableHeader } from "./GhidraExecutableHeader.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import {
-  absoluteCallerPath,
-  appendCallerPath,
-} from "../filesystem/callerPath.js";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import {
   posixPathCandidates,
   windowsPathCandidates,
@@ -28,14 +25,9 @@ import {
   readGhidraInstallationProperties,
   type GhidraInstallationFileOptions,
 } from "./GhidraInstallationProperties.js";
-import {
-  constants,
-  accessSync,
-  readdirSync,
-  realpathSync,
-  statSync,
-} from "node:fs";
+import { readdirSync, realpathSync, statSync } from "node:fs";
 import { dirname, posix, win32 } from "node:path";
+import { isExecutableFileSync } from "../filesystem/regularFileProbe.js";
 
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import {
@@ -569,11 +561,20 @@ const installationCoordinates = async (
           platform,
         ),
       };
-    if (platform !== "darwin")
-      return {
-        source: "default",
-        command: platform === "win32" ? "java.exe" : "java",
-      };
+    if (platform === "win32") {
+      // The owned-process launcher admits only absolute executable paths, so a
+      // JDK that is on PATH without JAVA_HOME must resolve to its launcher here
+      // instead of passing a bare java.exe. Relative PATH entries stay out: the
+      // caller's working directory cannot select the runtime.
+      const search = windowsPathCandidates("java.exe", options.environment, {
+        relativeEntries: "skip",
+      });
+      for (const { path: javaOnPath } of search.ok ? search.value : [])
+        if (host.executable(javaOnPath))
+          return { source: "path", command: javaOnPath };
+      return { source: "default", command: "java.exe" };
+    }
+    if (platform !== "darwin") return { source: "default", command: "java" };
     // Check the caller's PATH, never a file named java in the working directory.
     for (const { path: javaOnPath } of posixPathCandidates(
       "java",
@@ -980,9 +981,28 @@ const nativeDecompilerCheck = ({
     remediation:
       compatibility?.status === "incompatible"
         ? compatibility.remediation
-        : `Provide an executable Ghidra/Features/Decompiler/os/${NATIVE_PLATFORMS[platform]?.[architecture] ?? "<platform>"}/${platform === "win32" ? "decompile.exe" : "decompile"}, or its build/os equivalent. REA does not build or install native tools.`,
+        : `Provide an executable Ghidra/Features/Decompiler/os/${NATIVE_PLATFORMS[platform]?.[architecture] ?? "<platform>"}/${platform === "win32" ? "decompile.exe" : "decompile"}, or its build/os equivalent.${nativeDecompilerBuildHint(platform, architecture)} REA does not build or install native tools.`,
   });
 };
+
+/** The published installation guide; the npm package does not ship `docs/`. */
+const INSTALLATION_GUIDE =
+  "https://github.com/morluto/rea/blob/main/docs/getting-started/installation.md";
+
+/**
+ * Where to get a decompiler that official release archives omit. Ghidra's
+ * official archives ship native binaries only for Windows and Linux x64; the
+ * archive's decompiler source builds the others.
+ */
+const nativeDecompilerBuildHint = (
+  platform: NodeJS.Platform,
+  architecture: NodeJS.Architecture,
+): string =>
+  platform === "darwin" && (architecture === "x64" || architecture === "arm64")
+    ? ` Official Ghidra release archives include no macOS decompiler; build it from the archive's decompiler source as described in ${INSTALLATION_GUIDE}#${architecture === "arm64" ? "macos-arm64-native-decompiler" : "missing-macos-native-decompiler"}.`
+    : platform === "linux" && architecture === "arm64"
+      ? ` Official Ghidra release archives include no Linux arm64 decompiler; build Ghidra's native components for this host as described in ${INSTALLATION_GUIDE}#ghidra.`
+      : "";
 
 /**
  * Whether a JVM os.name value selects the host platform's native OS directory.
@@ -1115,16 +1135,7 @@ export const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
     }
   },
   executableHeader: readGhidraExecutableHeader,
-  executable(path) {
-    try {
-      accessSync(path, constants.X_OK);
-      return statSync(path).isFile();
-    } catch (cause: unknown) {
-      // best-effort cleanup: optional executable probing; failure means missing.
-      void cause;
-      return false;
-    }
-  },
+  executable: isExecutableFileSync,
   probeJava: probeGhidraJava,
   discoverInstallDirOnPath: discoverGhidraInstallationOnPath,
 });
@@ -1158,7 +1169,7 @@ export const discoverGhidraInstallationOnPath = (
   for (const { path: candidate } of candidates) {
     let resolved: string;
     try {
-      if (!executablePath(candidate)) continue;
+      if (!isExecutableFileSync(candidate)) continue;
       resolved = realpathSync.native(candidate);
     } catch (cause: unknown) {
       void cause;
@@ -1172,7 +1183,7 @@ export const discoverGhidraInstallationOnPath = (
       platform === "win32" ? "analyzeHeadless.bat" : "analyzeHeadless",
     );
     try {
-      if (statSync(properties).isFile() && executablePath(headless))
+      if (statSync(properties).isFile() && isExecutableFileSync(headless))
         return stableGhidraInstallationRoot(root, platform);
     } catch (cause: unknown) {
       void cause;
@@ -1263,15 +1274,4 @@ const stableJavaHome = (
     "libexec/openjdk.jdk/Contents/Home",
   );
   return sameHome(candidate) ? candidate : observedHome;
-};
-
-const executablePath = (path: string): boolean => {
-  try {
-    accessSync(path, constants.X_OK);
-    return statSync(path).isFile();
-  } catch (cause: unknown) {
-    // best-effort cleanup: optional executable probing; failure means missing.
-    void cause;
-    return false;
-  }
 };

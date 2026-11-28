@@ -1,7 +1,5 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import { join } from "node:path";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { PROCEDURES, inventory, jsonResult } from "./enhancedToolsHarness.js";
 
@@ -12,31 +10,26 @@ import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContra
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import type {} from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { observed as ok } from "../../fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  observed as ok,
+} from "../../fixtures/analysisExecution.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { ok as resultOk, err } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { nativeDispatchMetadataResultSchema } from "../../../src/domain/native/objcSwiftMetadata.js";
-import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const targetObservation = (value: unknown) =>
   resultOk(
-    createAnalysisExecution(
-      value,
-      {
-        id: "fixture",
-        name: "Fixture analysis provider",
-        version: "1",
+    createAnalysisExecution(value, createFixtureProviderIdentity(), {
+      subject: {
+        path: "/fixture.app",
+        sha256: "a".repeat(64),
+        format: "mach-o",
+        architecture: "arm64",
       },
-      {
-        subject: {
-          path: "/fixture.app",
-          sha256: "a".repeat(64),
-          format: "mach-o",
-          architecture: "arm64",
-        },
-      },
-    ),
+    }),
   );
 
 const functionDossier = {
@@ -218,30 +211,19 @@ const fixturePort = (): AnalysisOperationPort => ({
 });
 
 const resources: Array<{ close(): Promise<void> }> = [];
-let decompileOutput: string | undefined;
-
 afterEach(async () => {
   await Promise.all(
     resources.splice(0).map(async (resource) => resource.close()),
   );
-  if (decompileOutput !== undefined) {
-    await rm(decompileOutput, { recursive: true, force: true });
-    decompileOutput = undefined;
-  }
 });
 
 const connect = async (analysis: AnalysisOperationPort = fixturePort()) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client(
+  return connectFixtureClient(
+    server,
     { name: "enhanced-test", version: "1.0.0" },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
+    resources,
   );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
 };
 
 // oxlint-disable-next-line max-lines-per-function -- keep the complete production registration checks together.
@@ -268,8 +250,7 @@ describe("enhanced MCP tools", () => {
   // oxlint-disable-next-line max-lines-per-function -- one exhaustive registration test guards the public tool catalog.
   it("executes all enhanced tools through production registration", async () => {
     const client = await connect();
-    const outputParent = await mkdtemp(join(tmpdir(), "rea-decompile-all-"));
-    decompileOutput = outputParent;
+    const outputParent = await createTestTempDirectory("rea-decompile-all-");
     const calls = [
       ["get_objc_classes", { pattern: "Fixture" }],
       ["get_objc_protocols", {}],
@@ -288,11 +269,31 @@ describe("enhanced MCP tools", () => {
       ["trace_native_values", { procedure: "0x1" }],
       ["decompile_all", { output_directory: join(outputParent, "out") }],
     ] as const;
+    const functionProgress: {
+      progress: number;
+      message?: string | undefined;
+    }[] = [];
     const results = await Promise.all(
       calls.map(async ([name, arguments_]) =>
-        jsonResult(await client.callTool({ name, arguments: arguments_ })),
+        jsonResult(
+          await client.callTool(
+            { name, arguments: arguments_ },
+            name === "analyze_function"
+              ? { onprogress: (update) => functionProgress.push(update) }
+              : undefined,
+          ),
+        ),
       ),
     );
+    expect(functionProgress[0]?.message).toBe("analyze_function: started");
+    expect(functionProgress.at(-1)?.message).toBe(
+      "analyze_function: completed",
+    );
+    functionProgress.forEach(({ progress }, index) => {
+      expect(progress).toBeGreaterThan(
+        functionProgress[index - 1]?.progress ?? 0,
+      );
+    });
     expect(results[0]).toMatchObject({
       count: 2,
       classes: [
@@ -337,6 +338,7 @@ describe("enhanced MCP tools", () => {
             relationship_coverage: {
               status: "unknown",
               reason: "Provider did not report relationship coverage.",
+              limited_directions: ["callees"],
             },
           },
         ],
@@ -349,6 +351,7 @@ describe("enhanced MCP tools", () => {
             relationship_coverage: {
               status: "unknown",
               reason: "Provider did not report relationship coverage.",
+              limited_directions: ["callees"],
             },
           },
           {
@@ -359,6 +362,7 @@ describe("enhanced MCP tools", () => {
             relationship_coverage: {
               status: "unknown",
               reason: "Provider did not report relationship coverage.",
+              limited_directions: ["callees"],
             },
           },
         ],

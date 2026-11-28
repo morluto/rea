@@ -144,12 +144,11 @@ it("decodes a single selected type to completion on a game-scale assembly", () =
       operand: "0x0a000001",
     }),
   );
-  // Member references stay assembly-wide: the selection narrows declaring
-  // types, not the reference inventory behind call edges.
-  expect(result.member_refs).toHaveLength(11442);
-  expect(
-    result.member_refs.find((ref) => ref.token === "0x0a000001"),
-  ).toMatchObject({ name: "Member0" });
+  // The selection narrows member references to the rows its bodies use: the
+  // one call target, out of 11442 in the assembly.
+  expect(result.member_refs).toEqual([
+    expect.objectContaining({ token: "0x0a000001", name: "Member0" }),
+  ]);
 });
 
 it("preserves explicit type selection when its selected body exhausts capacity", () => {
@@ -192,8 +191,19 @@ it("explains capacity exhaustion after a single-type selection", () => {
 
 it("retains types when a field signature exceeds the decoding bound", () => {
   const bytes = buildManagedPeFixture({
+    additionalEmptyTypes: 1,
     fieldSignature: Buffer.alloc(270_001, 0x06),
   });
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("Fixture omitted CLI metadata");
+  const { rva, size } = pe.cli.metadata;
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(rva, size, "fixture"),
+    size,
+  );
+  const rowOffset = metadataRowOffset(layout, 2, 1);
+  bytes.writeUInt16LE(0, rowOffset + 4);
   const result = inspectManagedMembersBytes(
     bytes,
     managedPeFixtureTarget(bytes),
@@ -204,6 +214,24 @@ it("retains types when a field signature exceeds the decoding bound", () => {
     expect.objectContaining({ code: "resource-limit" }),
   );
   expect(result.fields).toEqual([]);
+  expect(result.unresolved_definitions).toEqual({
+    rows: [
+      {
+        kind: "TypeDef",
+        token: "0x02000001",
+        row_offset: rowOffset,
+        failed_fields: [
+          {
+            field: "Name",
+            field_offset: rowOffset + 4,
+            heap_index: 0,
+            reason: "empty-required-name",
+          },
+        ],
+      },
+    ],
+    method_names_examined: false,
+  });
 });
 
 it("keeps metadata admission failures unavailable rather than inventing an inventory", () => {

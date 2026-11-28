@@ -23,6 +23,10 @@ import { verifyGhidraBoundaries } from "./real-ghidra-boundaries.mjs";
 import { verifyLegacyValueScopeSnapshot } from "./ghidra-value-scope-snapshot-e2e.mjs";
 import { verifyGhidraProjectIdentity } from "./real-ghidra-project-identity.mjs";
 import { verifyGhidraSocketBoundary } from "./real-ghidra-socket-boundary.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./complete-evidence.mjs";
 
 const defaultEntrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
 const environment = () => ({
@@ -48,9 +52,22 @@ const environment = () => ({
   ...(process.env._JAVA_OPTIONS === undefined
     ? {}
     : { _JAVA_OPTIONS: process.env._JAVA_OPTIONS }),
+  // Linux JVMs encode file names from the locale; without one they replace
+  // the non-ASCII runtime paths the socket boundary control selects.
+  ...Object.fromEntries(
+    ["LANG", "LC_ALL", "LC_CTYPE"]
+      .filter((name) => process.env[name] !== undefined)
+      .map((name) => [name, process.env[name]]),
+  ),
 });
 
-const verifyGraph = (input, target, procedure, globalAddress) => {
+const verifyGraph = (
+  input,
+  evidenceLinks,
+  target,
+  procedure,
+  globalAddress,
+) => {
   const graph = nativeValueTraceSchema.parse(input);
   assert.equal(graph.target_sha256, target.sha256);
   assert.equal(graph.seed, procedure);
@@ -84,13 +101,53 @@ const verifyGraph = (input, target, procedure, globalAddress) => {
     ),
     "Source-owned global operand is absent from the real dependency graph",
   );
-  for (const node of graph.nodes)
-    assert.match(node.evidence_id, /^ev_[a-f0-9]{64}$/u);
   for (const procedure of graph.procedures) {
     assert.equal(procedure.provider, "ghidra");
     assert.match(procedure.analysis_profile_digest, /^[a-f0-9]{64}$/u);
+    assert.ok(
+      evidenceLinks.includes(procedure.evidence_id),
+      `Trace Evidence does not link procedure Evidence ${procedure.evidence_id}`,
+    );
   }
+  const procedureEvidence = new Set(
+    graph.procedures.map(({ evidence_id }) => evidence_id),
+  );
+  for (const evidenceId of graphEvidenceIds(graph))
+    assert.ok(
+      procedureEvidence.has(evidenceId),
+      `Graph fact cites Evidence ${evidenceId} outside its procedures`,
+    );
   return graph;
+};
+
+/** Every evidence_id a dependency graph cites, at any depth. */
+const graphEvidenceIds = (graph) => {
+  const ids = [];
+  JSON.stringify(graph, (key, value) => {
+    if (key === "evidence_id") ids.push(value);
+    return value;
+  });
+  return ids;
+};
+
+/**
+ * Replace each cited upstream Evidence ID with the procedure it records. The
+ * CLI and an MCP session record the same analysis with different envelopes
+ * (caller input path, session limitations stated once), so their record IDs
+ * differ while the graphs must cite the same procedures.
+ */
+const graphByProcedureEvidence = (graph) => {
+  const procedures = new Map(
+    graph.procedures.map(({ evidence_id, address }) => [
+      evidence_id,
+      `procedure:${address}`,
+    ]),
+  );
+  return JSON.parse(
+    JSON.stringify(graph, (key, value) =>
+      key === "evidence_id" ? procedures.get(value) : value,
+    ),
+  );
 };
 
 /** Verify real Ghidra dependency composition through production CLI and stdio MCP. */
@@ -199,18 +256,20 @@ async function verifyNativeValueAdapters(
     process.execPath,
     [
       entrypoint,
-      "trace-native-values",
-      target.path,
-      procedure,
-      "--provider",
-      "ghidra",
-      "--max-depth",
-      "2",
-      "--max-functions",
-      "8",
-      "--limit",
-      "5000",
-      "--json",
+      ...(await completeEvidenceCliArguments([
+        "trace-native-values",
+        target.path,
+        procedure,
+        "--provider",
+        "ghidra",
+        "--max-depth",
+        "2",
+        "--max-functions",
+        "8",
+        "--limit",
+        "5000",
+        "--json",
+      ])),
     ],
     { env, timeout: 240000, maxBuffer: 72 * 1024 * 1024 },
   );
@@ -227,6 +286,7 @@ async function verifyNativeValueAdapters(
   assert.equal(upstreamProfile.provider.id, "ghidra");
   const cliGraph = verifyGraph(
     evidence.normalized_result,
+    evidence.evidence_links,
     target,
     procedure,
     globalAddress,
@@ -241,7 +301,9 @@ async function verifyNativeValueAdapters(
     expectedCommand: null,
     sweepTokenOwnedProcesses: true,
   });
-  const client = new Client({ name: "native-values-real-e2e", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "native-values-real-e2e", version: "1" }),
+  );
   for (const [resource, owner] of [
     ["native value MCP client", client],
     ["native value MCP transport", transport],
@@ -289,6 +351,7 @@ async function verifyNativeValueAdapters(
   assert.deepEqual(mcpEvidence.analysis_profile, workflowProfile);
   const mcpGraph = verifyGraph(
     mcpEvidence.normalized_result,
+    mcpEvidence.evidence_links,
     target,
     procedure,
     globalAddress,
@@ -302,7 +365,10 @@ async function verifyNativeValueAdapters(
     ),
   );
   assert.deepEqual(mcpEvidence.normalized_result, mcpGraph);
-  assert.deepEqual(mcpGraph, cliGraph);
+  assert.deepEqual(
+    graphByProcedureEvidence(mcpGraph),
+    graphByProcedureEvidence(cliGraph),
+  );
   const warmReply = await client.callTool(
     {
       name: "trace_native_values",
@@ -473,7 +539,7 @@ async function verifyNativeValueAdapters(
 async function verifyUnresolvedCallEvidence(client) {
   const inventory = await client.callTool({
     name: "list_procedures",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
   assert.notEqual(inventory.isError, true, JSON.stringify(inventory));
   assert.notEqual(inventory.structuredContent, undefined);

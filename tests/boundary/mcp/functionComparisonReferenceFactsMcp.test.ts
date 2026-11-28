@@ -48,7 +48,6 @@ const createHarness = async () => {
       throw new Error("Function comparison must not launch a provider");
     }),
   });
-  onTestFinished(harness.close);
   return harness;
 };
 

@@ -8,14 +8,14 @@
 // `--compare-ghidra` runs the same functions through a bring-your-own Ghidra
 // and reports latency, CPU, memory, output size and simple quality signals.
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseArgs, promisify } from "node:util";
+import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { inspectKunaInstallation } from "../dist/kuna/KunaInstallation.js";
 import { HOST_PLATFORM } from "../dist/platform/HostPlatform.js";
 import {
@@ -44,9 +44,9 @@ import {
   completeVerifierRun,
   createVerifierRun,
 } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
-
-const exec = promisify(execFile);
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 const { values } = parseArgs({
   options: {
     targets: { type: "string" },
@@ -87,10 +87,21 @@ const resourceScope = {
     }),
   run: (operation) => inspectionResources.run(operation),
 };
+// nm, ps, cc and strip share one owner, created before the workspace. If
+// allocation fails, the owner is still closed and no root is left behind.
+const commands = await createVerifierCommands();
 // Kuna children cache under the root; a plain root admits them on every host.
 const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-kuna-lane-",
   private: false,
+}).catch(async (cause) => {
+  await commands.close().catch((closeCause) => {
+    throw new AggregateError(
+      [cause, closeCause],
+      "Kuna workspace allocation and command cleanup both failed",
+    );
+  });
+  throw cause;
 });
 const workspace = workspaceFixture.path;
 const cacheRoot = join(workspace, "cache");
@@ -135,7 +146,7 @@ int main(int argc, char **argv) {
 
 /** Resolve function entry addresses from a symbol-bearing build. */
 const symbolAddresses = async (binary, names) => {
-  const { stdout } = await exec(process.env.REA_NM ?? "nm", [binary]);
+  const { stdout } = await commands.exec(process.env.REA_NM ?? "nm", [binary]);
   const found = new Map();
   for (const line of stdout.split("\n")) {
     const [address, type, symbol] = line.trim().split(/\s+/u);
@@ -150,7 +161,11 @@ const symbolAddresses = async (binary, names) => {
 
 /** Sum the resident memory and CPU time of a process and its descendants. */
 const sampleTree = async (root) => {
-  const { stdout } = await exec("ps", ["-A", "-o", "pid=,ppid=,rss=,time="]);
+  const { stdout } = await commands.exec("ps", [
+    "-A",
+    "-o",
+    "pid=,ppid=,rss=,time=",
+  ]);
   const rows = stdout
     .trim()
     .split("\n")
@@ -204,7 +219,9 @@ const openServer = async (provider, kunaSettings = {}) => {
     },
     stderr: "ignore",
   });
-  const client = new Client({ name: "rea-real-kuna", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-real-kuna", version: "1" }),
+  );
   let peakKiB = 0;
   const cpu = new Map();
   const sampleOnce = async () => {
@@ -324,9 +341,7 @@ const openServer = async (provider, kunaSettings = {}) => {
 
 /** Verify a forced inventory timeout can be retried without changing jobs. */
 const verifyProjectTimeoutRecovery = async (path, address) => {
-  const before = createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
+  const before = await sha256File(path);
   const settings = {
     REA_KUNA_JOBS: "2",
     REA_KUNA_TIMEOUT_MS: "60000",
@@ -365,9 +380,7 @@ const verifyProjectTimeoutRecovery = async (path, address) => {
     await retry.close(retryFailure);
   }
   assert.equal(
-    createHash("sha256")
-      .update(await readFile(path))
-      .digest("hex"),
+    await sha256File(path),
     before,
     "Kuna timeout recovery changed the target",
   );
@@ -393,9 +406,7 @@ const verifyKuna = async (
     minimumTraceReferences = {},
   } = {},
 ) => {
-  const sha256 = createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
+  const sha256 = await sha256File(path);
   const cold = await openServer({ path, id: "kuna" });
   const answers = [];
   let coldFailure;
@@ -465,6 +476,7 @@ const verifyKuna = async (
       assert.ok(missing.message.includes("rea_missing_xref_inventory_name"));
       assert.equal(missing.recovery, undefined);
       const procedure = await cold.callError("procedure_address", {
+        detail: "complete",
         procedure: "rea_missing_procedure_name",
       });
       assert.equal(procedure.code, "invalid_request");
@@ -476,6 +488,7 @@ const verifyKuna = async (
         ),
       );
       const missingAddress = await cold.callError("procedure_address", {
+        detail: "complete",
         procedure: "0x00000001",
       });
       assert.equal(missingAddress.code, "invalid_request");
@@ -512,6 +525,7 @@ const verifyKuna = async (
           }),
       });
       const pseudocode = await cold.call("procedure_pseudo_code", {
+        detail: "complete",
         procedure: address,
       });
       assert.equal(pseudocode.structured.subject.identity.sha256, sha256);
@@ -533,6 +547,7 @@ const verifyKuna = async (
       );
       assert.match(assembly.value, new RegExp(`:  ; ${address}\\n`, "u"));
       const exported = await cold.call("procedure_pseudo_code", {
+        detail: "complete",
         procedure: address,
       });
       const recorded = exported.structured.raw_result.source;
@@ -627,6 +642,7 @@ const verifyKuna = async (
     for (const answer of answers)
       if (answer.address !== undefined) {
         const reread = await warm.call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: answer.address,
         });
         assert.equal(
@@ -651,9 +667,11 @@ const measureGhidra = async (path, functions) => {
   try {
     for (const [name, address] of functions) {
       const cold = await server.call("procedure_pseudo_code", {
+        detail: "complete",
         procedure: address,
       });
       const warm = await server.call("procedure_pseudo_code", {
+        detail: "complete",
         procedure: address,
       });
       answers.push({
@@ -778,10 +796,10 @@ try {
   const source = join(fixtureDir, "fixture.c");
   await writeFile(source, FIXTURE_SOURCE);
   const built = join(fixtureDir, "rea-kuna-fixture");
-  await exec(process.env.REA_CC ?? "cc", ["-O2", "-o", built, source]);
+  await commands.exec(process.env.REA_CC ?? "cc", ["-O2", "-o", built, source]);
   const stripped = `${built}.stripped`;
   await writeFile(stripped, await readFile(built));
-  await exec(process.env.REA_STRIP ?? "strip", [stripped]);
+  await commands.exec(process.env.REA_STRIP ?? "strip", [stripped]);
   const fixtureFunctions = await symbolAddresses(built, [
     "rea_checksum",
     "rea_classify",
@@ -829,24 +847,43 @@ try {
   inspectionResourcesClean = false;
   failures.push(cause);
 }
+let commandCleanupFailure;
+try {
+  await workspaceFixture.closeEarly([() => commands.close()]);
+} catch (cause) {
+  commandCleanupFailure = cause;
+  failures.push(cause);
+}
 const lifecycle = await completeVerifierRun(run);
 let cleanupComplete =
   pendingServers.size === 0 &&
   retainedNative.size === 0 &&
-  inspectionResourcesClean;
+  inspectionResourcesClean &&
+  commandCleanupFailure === undefined;
 try {
   assertVerifierCleanupComplete(lifecycle.process_lineage);
 } catch (cause) {
   cleanupComplete = false;
   failures.push(cause);
 }
+let workspaceReleased = false;
+// A verification failure with successful provider, command, and lineage
+// cleanup still releases the root. Only an unconfirmed close retains it.
+// release() closes cleanup registration before it removes the root, so a
+// failed release already keeps the workspace and retain() would throw
+// before this report is written.
 if (cleanupComplete)
   try {
     await workspaceFixture.release();
+    workspaceReleased = true;
   } catch (cause) {
     cleanupComplete = false;
     failures.push(cause);
   }
+else
+  workspaceFixture.retain(
+    `Kuna cleanup was not confirmed; retained diagnostic workspace: ${workspace}`,
+  );
 const report = {
   lane: "kuna",
   status: failures.length === 0 ? "passed" : "failed",
@@ -867,7 +904,7 @@ const report = {
     "Response bytes are UTF-8 serialization sizes. Model token usage, tool schema costs and agent task completion were not measured.",
   ],
   cleanup: cleanupComplete ? "complete" : "incomplete",
-  ...(cleanupComplete ? {} : { retained_workspace: workspace }),
+  ...(workspaceReleased ? {} : { retained_workspace: workspace }),
   ...(failures.length === 0 ? {} : { failures: failures.map(describeFailure) }),
 };
 if (values.report !== undefined)

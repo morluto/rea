@@ -1,8 +1,7 @@
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
-  cliCompletionShell,
-  productionMcpDoctorArguments,
+  classifyCliEntrypoint,
   parseCliGlobalArguments,
 } from "../../../src/cliBuiltinArguments.js";
 import { DEFAULT_INFO_LOGGING_COMMANDS } from "../../../src/contracts/cliCommandNames.js";
@@ -13,25 +12,28 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../workspace/workspaceFixture.js";
-import {
-  processTest,
-  type ProcessResult,
-  type TestProcesses,
-} from "../process/processFixture.js";
+import { processTest, type TestProcesses } from "../process/processFixture.js";
 import {
   createCliCommandSession,
   type CliCommandSession,
 } from "./cliCommandSession.js";
+import { withParsedStdout, type CliResult } from "./cliResult.js";
 import {
   createSharedMcpSession,
   type SharedMcpSession as GenericSharedMcpSession,
 } from "../mcp/sharedMcpSession.js";
 import { REGISTRATION_GUARD_NODE_OPTIONS_ENV } from "./registrationEnvironment.js";
 import { terminalStdoutInvocation } from "./terminalStdout.js";
+import {
+  completeEvidenceCliArguments,
+  type TestDelivery,
+} from "../completeEvidenceByDefault.js";
 
 /** Caller-controlled values for one compiled REA CLI invocation. */
 export interface CliInvocation {
   readonly arguments: readonly string[];
+  /** The harness requests complete Evidence unless this is `"budgeted"`. */
+  readonly delivery?: TestDelivery;
   readonly cwd?: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly input?: string | Uint8Array;
@@ -47,11 +49,6 @@ export interface CliInvocation {
    * fresh process.
    */
   readonly terminal?: boolean;
-}
-
-/** Normalized result from the compiled REA CLI. */
-export interface CliResult extends ProcessResult {
-  readonly json: unknown | undefined;
 }
 
 /** One compiled stdio MCP tool call. */
@@ -80,6 +77,7 @@ export interface TestCli {
 export type SharedMcpSession<T = SharedMcpCall> = GenericSharedMcpSession<T>;
 
 export { createSharedMcpSession };
+export type { CliResult } from "./cliResult.js";
 
 const sharedMcpSessionClosed = (): Error =>
   new Error("Shared MCP session is closed");
@@ -100,16 +98,6 @@ const createFileMcpSession = (
     );
     return mcp.call;
   });
-
-const parseJson = (stdout: string): unknown | undefined => {
-  const document = stdout.trim();
-  if (document.length === 0) return undefined;
-  try {
-    return JSON.parse(document) as unknown;
-  } catch {
-    return undefined;
-  }
-};
 
 /** Child environment for one compiled CLI process, without the parent environment. */
 export const cliProcessEnvironment = (
@@ -151,26 +139,6 @@ export const cliCompileCacheEnvironment = (
 });
 
 /**
- * Mirror `scripts/rea.mjs` entry routing for invocations handled outside
- * `runOneShotCli` (`rea mcp` / `rea --mcp`, `rea mcp ... --http`, and
- * production `rea mcp doctor ...`). Subcommands such as `rea mcp add` and
- * `rea mcp --help` still dispatch through `runOneShotCli`.
- */
-const isDirectMcpLauncherEntry = (
-  arguments_: readonly string[],
-  environment: NodeJS.ProcessEnv | undefined,
-): boolean => {
-  if (cliCompletionShell(environment ?? {}) !== undefined) return false;
-  if (productionMcpDoctorArguments([...arguments_]) !== undefined) return true;
-  if (arguments_[0] !== "mcp" && arguments_[0] !== "--mcp") return false;
-  return (
-    arguments_.length === 1 ||
-    ((arguments_[1]?.startsWith("-") ?? false) &&
-      arguments_.slice(1).includes("--http"))
-  );
-};
-
-/**
  * Whether the file's shared process reports this command exactly as a fresh
  * `rea` process would. Stdin and deadlines belong to a process; the launcher
  * routes MCP and its doctor before the shared one-shot path; Node options
@@ -190,7 +158,7 @@ const sharedProcessCanServe = ({
   terminal !== true &&
   input === undefined &&
   timeoutMs === undefined &&
-  !isDirectMcpLauncherEntry(arguments_, environment) &&
+  classifyCliEntrypoint(arguments_, environment ?? {}).kind === "cli" &&
   (environment?.NODE_OPTIONS === undefined ||
     environment.NODE_OPTIONS ===
       environment[REGISTRATION_GUARD_NODE_OPTIONS_ENV]) &&
@@ -220,7 +188,8 @@ export const createTestCli = (
   compileCache?: string,
 ): TestCli => ({
   run: async ({
-    arguments: arguments_,
+    arguments: written,
+    delivery,
     cwd,
     environment,
     input,
@@ -229,6 +198,10 @@ export const createTestCli = (
   }) => {
     if (terminal === true && input !== undefined)
       throw new Error("A terminal run has an empty stdin.");
+    const arguments_ =
+      delivery === "budgeted"
+        ? written
+        : await completeEvidenceCliArguments(written, cwd);
     const rea = [resolve("scripts/rea.mjs"), ...arguments_];
     const { command, arguments: commandArguments } =
       terminal === true
@@ -240,7 +213,7 @@ export const createTestCli = (
       ...(input === undefined ? {} : { input }),
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
     });
-    return { ...result, json: parseJson(result.stdout) };
+    return withParsedStdout(result);
   },
 });
 
@@ -295,6 +268,9 @@ export const cliTest = processTest.extend<{
         sharedProcessCanServe(invocation)
           ? cliCommandSession.run({
               arguments: invocation.arguments,
+              ...(invocation.delivery === undefined
+                ? {}
+                : { delivery: invocation.delivery }),
               cwd: invocation.cwd ?? process.cwd(),
               environment: definedCliEnvironment(
                 cliProcessEnvironment(invocation.environment, cliCompileCache),

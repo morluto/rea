@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { access, writeFile } from "node:fs/promises";
-import { expect, onTestFinished } from "vitest";
+import { writeFile } from "node:fs/promises";
+import { onTestFinished } from "vitest";
 import { createFirmwareAnalysisProvider } from "../../../src/composition/firmware.js";
 import { FirmwareAnalysisService } from "../../../src/application/firmware/FirmwareAnalysisService.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
@@ -92,21 +92,4 @@ export const firmwareFixture = async (mode = "normal", banner?: string) => {
       cleanupUnverified = false;
     },
   };
-};
-
-/** Verify only the acquired process groups and private runtime directories. */
-export const assertFirmwareCleanup = async (
-  launches: Awaited<ReturnType<typeof firmwareFixture>>["launches"],
-): Promise<void> => {
-  for (const launch of launches) {
-    const pid = launch.pid;
-    if (pid !== undefined)
-      expect(() => process.kill(-pid, 0)).toThrowError(
-        expect.objectContaining({ code: "ESRCH" }),
-      );
-    if (launch.cwd !== undefined)
-      await expect(access(launch.cwd)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-  }
 };

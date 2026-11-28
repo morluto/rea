@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   appendFile,
   copyFile,
   mkdtemp,
-  readFile,
   readdir,
   rm,
   writeFile,
@@ -14,7 +12,12 @@ import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./verifier-file-sha256.mjs";
 import { requireMcpToolError } from "./mcp-verifier-results.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./complete-evidence.mjs";
 
 const exec = promisify(execFile);
 
@@ -44,14 +47,11 @@ export async function verifyGhidraProjectIdentity({ target, entrypoint, env }) {
   const runtimeRootsBefore = (await readdir(env.TMPDIR))
     .filter((name) => name.startsWith("rea-ghidra-"))
     .sort();
-  const sha = async (path) =>
-    createHash("sha256")
-      .update(await readFile(path))
-      .digest("hex");
+
   try {
     await copyFile(targetPath, different);
     await appendFile(different, "\nREA_IDENTITY_VERIFIER\n");
-    assert.notEqual(await sha(different), await sha(targetPath));
+    assert.notEqual(await sha256File(different), await sha256File(targetPath));
     await writeFile(
       join(root, "ClearImportDigest.java"),
       `import ghidra.app.script.GhidraScript;
@@ -118,13 +118,15 @@ public class ClearImportDigest extends GhidraScript {
           process.execPath,
           [
             entrypoint,
-            "decompile",
-            input,
-            "0x0",
-            "--provider",
-            "ghidra",
-            "--format",
-            "json",
+            ...(await completeEvidenceCliArguments([
+              "decompile",
+              input,
+              "0x0",
+              "--provider",
+              "ghidra",
+              "--format",
+              "json",
+            ])),
           ],
           { env: selectedEnv, timeout: 180000, maxBuffer: 8 * 1024 * 1024 },
         );
@@ -166,10 +168,12 @@ async function selectedProjectMcp({
   matching,
   expected,
 }) {
-  const client = new Client({
-    name: "rea-project-identity-verifier",
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "rea-project-identity-verifier",
+      version: "1",
+    }),
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
@@ -238,12 +242,5 @@ async function projectState(paths) {
     if (path.endsWith(".gpr")) await walk(`${path.slice(0, -4)}.rep`);
   }
   files.sort();
-  return Promise.all(
-    files.map(async (path) => [
-      path,
-      createHash("sha256")
-        .update(await readFile(path))
-        .digest("hex"),
-    ]),
-  );
+  return Promise.all(files.map(async (path) => [path, await sha256File(path)]));
 }

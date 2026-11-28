@@ -9,9 +9,12 @@ import { digestSchema } from "./digests.js";
 import { localPathStringSchema } from "./localPath.js";
 import {
   binaryArchitectureSchema,
+  rawBinaryBaseAddressSchema,
   rawBinaryEntryPointSchema,
+  rawBinaryVectorTableAddressSchema,
 } from "./rawBinary.js";
-import { ZIP_PACKAGE_FORMATS } from "./zipPackageFormat.js";
+import { architectureVariantSchema } from "./architectureVariant.js";
+import { targetFormatsOfKind } from "./targetFormats.js";
 
 const architectureSchema = z.enum(BINARY_ARCHITECTURES);
 const headerArchitectureSchema = architectureSchema.exclude(
@@ -53,8 +56,19 @@ export const liveBinaryTargetSummaryVariants = [
     format: z.literal("raw-binary"),
     architecture: binaryArchitectureSchema,
     entry_point: rawBinaryEntryPointSchema.describe(
-      "Canonical caller-selected address where raw file offset 0 is mapped and execution is seeded.",
+      "Canonical code entry where execution is seeded. Raw file offset 0 is also mapped here unless base_address is present.",
     ),
+    base_address: rawBinaryBaseAddressSchema
+      .exactOptional()
+      .describe(
+        "Canonical address of raw file offset 0. Present when the load names a separate base or an architecture_variant.",
+      ),
+    architecture_variant: architectureVariantSchema.exactOptional(),
+    vector_table_address: rawBinaryVectorTableAddressSchema
+      .exactOptional()
+      .describe(
+        "Canonical address of the vector table whose Reset word gave entry_point. Present only when entry_point was omitted.",
+      ),
   }),
   z.object({
     ...executable,
@@ -73,26 +87,11 @@ export const liveBinaryTargetSummaryVariants = [
   z.object({
     ...identity,
     kind: z.literal("archive"),
-    format: z.enum([
-      ...ZIP_PACKAGE_FORMATS,
-      "asar",
-      "ines",
-      "godot-pck",
-      "unityfs",
-      "wxapkg",
-      "uimage",
-      "android-boot-image",
-      "android-ota-payload",
-      "dmg",
-      "pkg",
-      "intel-hex",
-      "srec",
-      "esp-image",
-      "uf2",
-      "dfuse",
-      "fit",
-      "ntfs-mft",
-    ]),
+    format: z.enum(
+      targetFormatsOfKind("archive").filter(
+        (format) => format !== "esp-flash-image",
+      ),
+    ),
     architecture: z.null(),
   }),
   z.object({
@@ -122,7 +121,7 @@ export const liveBinaryTargetSummaryVariants = [
   z.object({
     ...identity,
     kind: z.literal("artifact"),
-    format: z.enum(["plist", "javascript", "source-map"]),
+    format: z.enum(targetFormatsOfKind("artifact")),
     architecture: z.null(),
   }),
 ] as const;

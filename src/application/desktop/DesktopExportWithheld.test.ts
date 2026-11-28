@@ -4,7 +4,6 @@ import {
   readdir,
   readFile,
   symlink,
-  unlink,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -229,22 +228,27 @@ it("retains the bundle cleanup owner when a later withheld copy fails", async ()
   expect(result.partialObservation).toMatchObject({
     normalized_result: { directory },
   });
-  expect(result.cleanupPrimary).toBeInstanceOf(Error);
+  expect(result.cleanupPrimary).toMatchObject({
+    _tag: "AnalysisInputError",
+    userMessage: "Output directory is not empty",
+    issues: [
+      expect.objectContaining({
+        path: ["withheld_copy"],
+        message: "Output directory is not empty",
+      }),
+    ],
+  });
   expect(result.secondaryFailures).toEqual([
     expect.objectContaining({ cleanupIncomplete: true }),
   ]);
-  expect(failures.length).toBeGreaterThan(0);
   const bundle = failures.find(({ owner }) => owner.resource === directory);
   const copy = failures.find(({ owner }) => owner.resource === occupied);
   expect(bundle).toBeDefined();
-  expect(copy).toBeDefined();
-  await bundle?.lease.release();
-  expect(result.cleanupIncomplete).toBe(true);
-  await expect(copy?.lease.release()).rejects.toThrow();
+  expect(copy).toBeUndefined();
   expect(await readFile(join(occupied, "keep"), "utf8")).toBe("existing");
-  await unlink(join(occupied, "keep"));
-  await copy?.lease.release();
+  await bundle?.lease.release();
   expect(result.cleanupIncomplete).toBe(false);
+  expect(await readFile(join(occupied, "keep"), "utf8")).toBe("existing");
   expect(projectAnalysisError(result)).toMatchObject({
     details: { partial_observation: { normalized_result: { directory } } },
   });
@@ -570,7 +574,15 @@ describe("exportDesktopApplication of withheld sign-in state", () => {
 
     const { root } = refused;
     const consent = join(root, "consent.json");
-    await writeFile(consent, JSON.stringify(CONSENT));
+    const consents = {
+      consents: Array.from({ length: 8_192 }, (_, index) => ({
+        ...CONSENT.consents[0]!,
+        subject: `record ${String(index)}`,
+      })),
+    };
+    const bytes = JSON.stringify(consents);
+    expect(Buffer.byteLength(bytes)).toBeGreaterThan(1024 * 1024);
+    await writeFile(consent, bytes);
     const { result, directory } = await exportWithheld({
       withhold: { paths: [SETTINGS] },
       seedWithheld: true,
@@ -583,7 +595,7 @@ describe("exportDesktopApplication of withheld sign-in state", () => {
     });
     expect(
       JSON.parse(await readFile(join(directory, "consent.json"), "utf8")),
-    ).toEqual(CONSENT);
+    ).toEqual(consents);
     expect(
       await readFile(join(directory, "envs/notes/env.toml"), "utf8"),
     ).not.toContain("[settings]");

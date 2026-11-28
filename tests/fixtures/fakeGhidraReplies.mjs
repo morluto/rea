@@ -29,6 +29,7 @@ const hex = (value) => `0x${value.toString(16)}`;
 /** Methods the bridge drops from a read-only (loopback TCP) handshake. */
 const MUTATING_METHODS = [
   "annotate_native_function",
+  "define_native_data_types",
   "set_address_name",
   "set_addresses_names",
 ];
@@ -55,6 +56,7 @@ export const FAKE_GHIDRA_CAPABILITIES = Object.freeze([
   "set_address_name",
   "set_addresses_names",
   "annotate_native_function",
+  "define_native_data_types",
   "inspect_native_data_type",
   "inspect_native_instruction",
   "resolve_native_call_targets",

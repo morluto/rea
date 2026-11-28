@@ -16,6 +16,8 @@ import {
   androidJniReportSchema,
 } from "./androidJniBindings.js";
 import { androidJniViewRequestSchema } from "./androidJniQuery.js";
+import { androidReferencesViewSchema } from "./androidReferencesQuery.js";
+import { androidClassViewRequestSchema } from "./androidClassQuery.js";
 
 const target = {
   path: localPathStringSchema.describe(
@@ -34,6 +36,12 @@ const mappingPath = {
     ),
 };
 
+/**
+ * Default page of class-name matches: an empty query lists every class, and
+ * a large APK has tens of thousands.
+ */
+export const ANDROID_CLASS_SEARCH_PAGE = 256;
+
 /** Caller intent for static Android inspection, independent of its engine. */
 export const androidInputSchemas = {
   inspect_android_package: z.strictObject(target),
@@ -43,6 +51,18 @@ export const androidInputSchemas = {
     query: z
       .string()
       .describe("Case-sensitive class-name substring; empty lists all classes"),
+    limit: z
+      .int()
+      .positive()
+      .default(ANDROID_CLASS_SEARCH_PAGE)
+      .describe(
+        `Maximum number of matching class names to return (default ${String(ANDROID_CLASS_SEARCH_PAGE)}); next_offset starts the next page`,
+      ),
+    offset: z
+      .int()
+      .nonnegative()
+      .optional()
+      .describe("Zero-based starting match index; defaults to 0"),
   }),
   inspect_android_class: z.strictObject({ ...classTarget, ...mappingPath }),
   inspect_android_method: z.strictObject({
@@ -90,13 +110,25 @@ export const androidPackageInspectionInputSchema =
 
 /** Delivery is an adapter/application choice, never a provider analysis option. */
 export const androidSymbolInspectionInputSchemas = {
-  inspect_android_class: androidInputSchemas.inspect_android_class.extend({
-    detail: z.enum(["complete", "summary"]).optional(),
-  }),
+  inspect_android_class: androidInputSchemas.inspect_android_class
+    .extend({
+      detail: z.enum(["complete", "summary"]).optional(),
+      view: androidClassViewRequestSchema.optional(),
+    })
+    .superRefine(validateAndroidPackageDelivery),
   inspect_android_method: androidInputSchemas.inspect_android_method.extend({
     detail: z.enum(["complete", "summary"]).optional(),
   }),
 } as const;
+
+/** Reference delivery and its view never reach the engine. */
+export const androidReferencesInspectionInputSchema =
+  androidInputSchemas.trace_android_references
+    .extend({
+      detail: z.enum(["complete", "summary"]).optional(),
+      view: androidReferencesViewSchema.optional(),
+    })
+    .superRefine(validateAndroidPackageDelivery);
 
 /** JNI selection changes analysis; delivery only selects retained views. */
 export const androidJniInspectionInputSchema =
@@ -252,13 +284,20 @@ export const androidResultSchemas = {
     query: z.string(),
     total_classes: z.int().nonnegative(),
     matches: z.array(z.string()),
+    next_offset: z
+      .int()
+      .nonnegative()
+      .nullable()
+      .describe(
+        "Offset of the next page of matches; null when no match follows this page",
+      ),
     duplicate_names: z.array(
       z.strictObject({
         name: z.string(),
         occurrences: z.int().min(2),
       }),
     ),
-    coverage: z.literal("complete"),
+    coverage: knownCoverageStatusSchema,
   }),
   inspect_android_class: z.strictObject({
     ...common,

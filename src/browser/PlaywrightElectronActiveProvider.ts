@@ -5,11 +5,9 @@ import {
 } from "../providers/OwnedCommandCleanup.js";
 import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 import {
-  ArtifactReaderFailure,
-  bindArtifactFileCleanup,
+  artifactFileCleanupError,
   ArtifactResourceScope,
 } from "../resources/index.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ElectronCaptureCleanup } from "./ElectronCaptureCleanup.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
@@ -261,9 +259,26 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       actions = actionOutcome.actions;
       if (actionOutcome.cleanupError !== undefined)
         throw actionOutcome.cleanupError;
-      const state = await readFinalApplicationState(
-        application,
-        options.signal,
+      const signal = options.signal;
+      const actionCancellation = actionOutcome.actionCancellation;
+      const cancelledInAction =
+        signal?.aborted === true &&
+        actionCancellation !== undefined &&
+        Object.is(actionCancellation.cause, signal.reason);
+      const state = await readFinalApplicationState(application, signal).catch(
+        (cause: unknown) => {
+          const failure = providerError(cause);
+          // A cancellation already recorded for an action precedes the
+          // best-effort final read, which can lose its Inspector transport.
+          if (
+            cancelledInAction &&
+            !failure.cleanupIncomplete &&
+            !(failure instanceof AnalysisCancelledError) &&
+            failure.userCategory !== "cancelled"
+          )
+            throw actionCancellation.retainSecondaryFailure(failure);
+          throw failure;
+        },
       );
       const finalCapture = projectElectronActiveCapture(paths, actions, state);
       retained = { stage: "final", state };
@@ -567,16 +582,12 @@ const containLaunchRejections = async <T>(
 
 const providerError = (cause: unknown): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
-    const failure = new ProviderCleanupError(
-      PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY.id,
-      cause.cleanup.resources,
-      { reason: cause.cleanup.reason },
-      { operation: OPERATION, cause },
-    );
-    bindArtifactFileCleanup(cause, failure);
-    return failure;
-  }
+  const fileCleanup = artifactFileCleanupError(
+    cause,
+    PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY.id,
+    OPERATION,
+  );
+  if (fileCleanup !== undefined) return fileCleanup;
   return new ProviderAdapterError(
     PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY.id,
     OPERATION,

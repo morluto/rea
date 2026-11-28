@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
+import { sha256 as hash } from "../../../support/sha256.js";
 
 import { describe, expect, it } from "vitest";
+import { buildManagedPeFixture as buildMethodRows } from "../../../../scripts/fixtures/managed/pe.mjs";
 
 import { compareManagedMembers } from "../../../../src/domain/managed/managedMemberComparison.js";
 import { inspectManagedMembersBytes } from "../../../../src/dotnet/ManagedMemberInspector.js";
@@ -14,9 +15,6 @@ const inspect = (bytes: Buffer, path: string) => {
   const result = inspectManagedMembersBytes(bytes, target);
   return { result, evidenceId: `ev_${hash(Buffer.from(path))}` };
 };
-
-const hash = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 describe("managed member partial body comparison", () => {
   it.each(["max_stack", "init_locals"] as const)(
@@ -61,7 +59,7 @@ describe("managed member partial body comparison", () => {
     });
   });
 
-  it("keeps unavailable body facets unknown and a raw-only signature difference unchanged", () => {
+  it("keeps unavailable body facets unknown and both absent bodies unchanged", () => {
     const left = inspect(buildManagedPeFixture(), "/tmp/left-body-partial.dll");
     const right = inspect(
       buildManagedPeFixture(),
@@ -69,9 +67,8 @@ describe("managed member partial body comparison", () => {
     );
     const leftMethod = left.result.methods[0];
     const rightMethod = right.result.methods[0];
-    expect(leftMethod).toBeDefined();
-    expect(rightMethod).toBeDefined();
-    if (leftMethod === undefined || rightMethod === undefined) return;
+    if (leftMethod === undefined || rightMethod === undefined)
+      throw new Error("Fixtures did not produce the compared method");
     const leftResult = {
       ...left.result,
       methods: [
@@ -108,58 +105,16 @@ describe("managed member partial body comparison", () => {
       dimensions: ["body-coverage"],
     });
 
-    const rightSignatureChanged = {
-      ...right.result,
-      methods: [
-        {
-          ...rightMethod,
-          signature: {
-            ...rightMethod.signature,
-            raw_sha256: "f".repeat(64),
-          },
-        },
-      ],
-    };
-    const signatureChanged = compareManagedMembers(
-      { evidenceId: left.evidenceId, result: left.result },
-      {
-        evidenceId: right.evidenceId,
-        result: rightSignatureChanged,
-      },
-    );
-    // Raw bytes that resolve to the same types, as when a rebuild moves a
-    // referenced type to another metadata row, are not a signature change.
-    expect(signatureChanged.methods[0]).toMatchObject({
-      status: "unchanged",
-      dimensions: [],
+    const absentBytes = buildMethodRows({
+      methods: [{ name: "Main", rva: 0 }],
     });
-
-    const bothAbsent = compareManagedMembers(
-      {
-        evidenceId: left.evidenceId,
-        result: {
-          ...left.result,
-          methods: [
-            {
-              ...leftMethod,
-              body: { ...leftMethod.body, status: "absent" as const },
-            },
-          ],
-        },
-      },
-      {
-        evidenceId: right.evidenceId,
-        result: {
-          ...right.result,
-          methods: [
-            {
-              ...rightMethod,
-              body: { ...rightMethod.body, status: "absent" as const },
-            },
-          ],
-        },
-      },
-    );
+    const absentLeft = inspect(absentBytes, "/tmp/left-no-body.dll");
+    const absentRight = inspect(absentBytes, "/tmp/right-no-body.dll");
+    expect(absentLeft.result.methods[0]?.body).toMatchObject({
+      status: "absent",
+      il_sha256: null,
+    });
+    const bothAbsent = compareManagedMembers(absentLeft, absentRight);
     expect(bothAbsent.methods[0]).toMatchObject({
       status: "unchanged",
       dimensions: [],

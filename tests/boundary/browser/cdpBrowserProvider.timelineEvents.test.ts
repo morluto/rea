@@ -330,22 +330,43 @@ describe("CdpBrowserProvider navigation timeline", () => {
       );
       if (sessionTimeline === "outside_policy") {
         expect(result.value.target.final_url).toBeNull();
-        expect(result.value.timeline).toContainEqual(
-          expect.objectContaining({
-            type: "redirect",
-            request_id: "document-request",
-            url: null,
-            destination_scope: "outside_policy",
-          }),
+        expect(result.value.timeline.at(-1)).toMatchObject({
+          type: "redirect",
+          request_id: "document-request",
+          url: null,
+          destination_scope: "outside_policy",
+          redirect_response: {
+            url: `${browser.allowedOrigin}/reloaded?token=session-secret`,
+            status: 302,
+            scope: "approved",
+          },
+        });
+        expect(result.value.completeness).toMatchObject({
+          status: "policy_filtered",
+          policy_filtered_sections: ["timeline"],
+          excluded: [
+            { section: "timeline", reason: "out_of_target_scope", count: 1 },
+          ],
+        });
+        expect(JSON.stringify(result.value)).not.toContain(
+          "private.example.test",
         );
       } else {
-        expect(result.value.timeline).toContainEqual(
-          expect.objectContaining({ type: "session_detached" }),
-        );
+        expect(result.value.timeline.at(-1)).toMatchObject({
+          type: "session_detached",
+          detail: "session_detached",
+          timestamp: null,
+        });
         expect(result.value.timeline).not.toContainEqual(
           expect.objectContaining({ type: "target_terminated" }),
         );
+        expect(result.value.limitations).toContainEqual(
+          expect.stringMatching(
+            /Buffered events.*unknown timing.*context only.*do not establish.*observation window/iu,
+          ),
+        );
       }
+      await expect.poll(() => browser.activeConnectionCount()).toBe(0);
     },
   );
   // Event count has no ceiling; only a dropped event truncates the timeline.
@@ -389,4 +410,71 @@ describe("CdpBrowserProvider navigation timeline", () => {
       "timeline",
     );
   });
+});
+
+it("reports a termination observed while the final state is read after the window", async () => {
+  const browser = await startFakeCdpBrowser({
+    eventsBeforeReply: ["Page.getFrameTree"],
+    commandEvents: ({ method, sessionId }) =>
+      method === "Page.getFrameTree"
+        ? [
+            {
+              method: "Inspector.targetCrashed",
+              ...(sessionId === undefined ? {} : { sessionId }),
+              params: {},
+            },
+          ]
+        : undefined,
+  });
+  trackBrowser(browser);
+  const provider = new CdpBrowserProvider();
+  try {
+    const result = await provider.observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 1,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.window.end_reason).toBe("target_terminated");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("does not enable lifecycle events for a capture that ended before arming", async () => {
+  const browser = await startFakeCdpBrowser({
+    eventsBeforeReply: ["Performance.getMetrics"],
+    commandEvents: ({ method, sessionId }) =>
+      method === "Performance.getMetrics"
+        ? [
+            {
+              method: "Inspector.targetCrashed",
+              ...(sessionId === undefined ? {} : { sessionId }),
+              params: {},
+            },
+          ]
+        : undefined,
+  });
+  trackBrowser(browser);
+  const provider = new CdpBrowserProvider();
+  try {
+    const result = await provider.observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 3_000_000_000,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.window.end_reason).toBe("target_terminated");
+    expect(browser.commands.map(({ method }) => method)).not.toContain(
+      "Page.setLifecycleEventsEnabled",
+    );
+  } finally {
+    await provider.close();
+  }
 });

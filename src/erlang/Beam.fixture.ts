@@ -110,17 +110,6 @@ export const erlangBeamRowsFixture = (
     }),
   );
 
-/** BEAM form whose atom table exceeds a caller-selected atom budget. */
-export const erlangBeamManyAtomsFixture = (count: number): Buffer => {
-  const names = Array.from(
-    { length: count },
-    (_, index) => `a${String(index)}`,
-  );
-  const chunks = atoms(names);
-  const form = concat(Buffer.from("BEAM", "latin1"), chunks);
-  return concat(Buffer.from("FOR1", "latin1"), u32(form.length), form);
-};
-
 /**
  * Compiler-produced BEAM: `erlc +deterministic` from Erlang/OTP 29 (compiler
  * 10.0.2), which writes the OTP 28+ compact AtU8 layout. Source:

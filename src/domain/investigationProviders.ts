@@ -227,9 +227,28 @@ export const RECONSTRUCTION_PROVIDER = {
   version: "1",
 } as const;
 
+export const PE_UNWIND_RANGES_PROVIDER = Object.freeze({
+  id: "rea-pe-unwind-ranges",
+  name: "REA PE x64 exception-directory parser",
+  version: "1",
+} as const);
+
+export const MACHO_FUNCTION_STARTS_PROVIDER = Object.freeze({
+  id: "rea-macho-function-starts",
+  name: "REA Mach-O function-start parser",
+  version: "1",
+} as const);
+
 export const PE_LOAD_CONFIG_PROVIDER = Object.freeze({
   id: "rea-pe-load-config",
   name: "REA PE TLS/load-config parser",
+  version: "1",
+} as const);
+
+/** Provider identity for bytes appended after a PE image. */
+export const PE_OVERLAY_PROVIDER = Object.freeze({
+  id: "rea-pe-overlay",
+  name: "REA PE overlay parser",
   version: "1",
 } as const);
 
@@ -244,5 +263,17 @@ export const RELEASE_EXPOSURE_PROVIDER = Object.freeze({
 export const BINARY_HARDENING_PROVIDER = Object.freeze({
   id: "rea-binary-hardening",
   name: "REA binary hardening parser",
+  version: "1",
+} as const);
+
+export const ESP_NVS_PROVIDER = Object.freeze({
+  id: "rea-esp-nvs",
+  name: "REA ESP-IDF NVS partition decoder",
+  version: "1",
+} as const);
+
+export const FIRMWARE_VECTOR_TABLE_PROVIDER = Object.freeze({
+  id: "rea-firmware-vector-table",
+  name: "REA firmware vector table decoder",
   version: "1",
 } as const);

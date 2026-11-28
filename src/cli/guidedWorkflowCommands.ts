@@ -1,8 +1,7 @@
 import type { Logger } from "pino";
 
-import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
+import { GUIDED_WORKFLOWS_TOOL_CONTRACT } from "../contracts/guidedWorkflowToolContract.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { contractNamed } from "./contractCliDescription.js";
 import { registerContractCommand } from "./contractCommand.js";
 import type { CliInstance } from "./types.js";
 
@@ -14,7 +13,7 @@ export const registerGuidedWorkflowCommands = (
   registerContractCommand(
     cli,
     logger,
-    contractNamed(APPLICATION_TOOL_CONTRACTS, "guided_workflows"),
+    GUIDED_WORKFLOWS_TOOL_CONTRACT,
     {
       description: "List or render REA's existing guided workflows",
       runtimeJson: {
@@ -39,7 +38,10 @@ export const registerGuidedWorkflowCommands = (
     async (input) => {
       const { accessGuidedWorkflows } =
         await import("../application/GuidedWorkflowAccess.js");
-      const result = accessGuidedWorkflows(input);
+      const result = accessGuidedWorkflows(input, {
+        listRemediation:
+          "Run `rea guided-workflows` to list workflow identifiers and their argument requirements.",
+      });
       return result.ok ? result.value : projectAnalysisError(result.error);
     },
   );

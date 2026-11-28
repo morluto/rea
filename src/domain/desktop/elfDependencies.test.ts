@@ -50,6 +50,34 @@ describe("readElfDependencies", () => {
     });
   });
 
+  it.each([
+    ["DT_STRTAB", 5, 4],
+    ["DT_STRSZ", 10, 5],
+    ["DT_RPATH", 15, 0],
+    ["DT_RUNPATH", 29, 3],
+  ] as const)("refuses a repeated %s singleton", async (_label, tag, row) => {
+    const image = elfImage({
+      needed: ["libc.so.6"],
+      repeatNeeded: 1,
+      rpath: "/opt/old",
+      runpath: "$ORIGIN",
+    });
+    expect(await dependencies(image)).toMatchObject({
+      ok: true,
+      value: { needed: ["libc.so.6"], runpath: ["$ORIGIN"], rpath: [] },
+    });
+
+    const offset = Number(image.readBigUInt64LE(64 + 56 + 8));
+    const duplicate = offset + row * 16;
+    image.copy(image, offset + 2 * 16, duplicate, duplicate + 16);
+    expect(await dependencies(image)).toMatchObject({
+      ok: false,
+      error: {
+        reason: `Duplicate dynamic tag 0x${tag.toString(16)}`,
+      },
+    });
+  });
+
   it("decodes each needed string once and refuses a table naming more libraries than the walk takes", async () => {
     const repeated = await dependencies(
       elfImage({ needed: ["libc.so.6"], repeatNeeded: 60_000 }),
@@ -120,6 +148,40 @@ describe("readElfDependencies", () => {
     });
   });
 });
+
+it.each([
+  { table: "program header", allowance: 111, offsetField: 32 },
+  { table: "dynamic", allowance: 112, offsetField: 64 + 56 + 8 },
+])(
+  "validates the declared ELF $table extent before its table budget",
+  async ({ table, allowance, offsetField }) => {
+    const needed = Array.from(
+      { length: 8 },
+      (_, index) => `lib${String(index)}.so`,
+    );
+    const image = elfImage({ needed });
+    const policy = desktopLibraryPolicy({ table_bytes: allowance });
+    const read = () =>
+      readElfDependencies(readImage(image), image.length, policy);
+    expect(await read()).toMatchObject({
+      ok: false,
+      error: {
+        reason: expect.stringContaining(
+          `ELF ${table} table reached library-policy.table_bytes=${String(allowance)} bytes`,
+        ),
+      },
+    });
+    image.writeBigUInt64LE(BigInt(image.length), offsetField);
+    expect(await read()).toEqual({
+      ok: false,
+      error: {
+        kind: "unreadable",
+        identity: { machine: 183, bits: 64, byte_order: "little" },
+        reason: `ELF ${table} table is truncated`,
+      },
+    });
+  },
+);
 
 describe("ELF filesystem string admission", () => {
   it.each(["libé.so", "lib选择.so", "\uFEFFlib.so", "lib\uFFFD.so"])(

@@ -1,5 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
+import { collectEntries } from "../../../tests/fixtures/artifactEntries.js";
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
 import {
   controlledCleanup,
@@ -54,8 +55,7 @@ it("accepts the private-image capacity and retires all image owners", async () =
   const spool = vi.spyOn(PyInstallerPyzStore.prototype, "spool");
   try {
     await withPyInstallerReader(compressedImages(128), async (reader, root) => {
-      const listed: ArtifactEntry[] = [];
-      for await (const entry of reader.entries()) listed.push(entry);
+      const listed = await collectEntries(reader);
       expect(listed).toHaveLength(128);
       expect(spool).toHaveBeenCalledTimes(128);
       await reader.close();

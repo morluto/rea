@@ -3,21 +3,21 @@ import {
   pythonPycSchema,
   type PythonPycCodeObject,
 } from "../python/pythonPyc.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { filterSet, selectViewRows } from "./selectViewRows.js";
 
 const code = pythonPycSchema.shape.code_objects.element;
 
@@ -64,14 +64,8 @@ export const projectPythonPycView = (
     SummaryAnalysisView | z.output<typeof pythonPycViewRequestSchema>
   >(admitted, "summary", "python-pyc");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Python pyc Evidence supports summary and python-pyc views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Python pyc Evidence supports summary and python-pyc views.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
@@ -85,11 +79,7 @@ export const projectPythonPycView = (
       path: identity.artifact.path,
       sha256: identity.artifact.sha256,
     },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns: [],
   };
   if (view.kind === "summary")
@@ -100,9 +90,8 @@ export const projectPythonPycView = (
       summary,
       coverage: completeWithinViewCoverage(code_objects.length),
     });
-  const names = view.names === undefined ? undefined : new Set(view.names);
-  const indices =
-    view.indices === undefined ? undefined : new Set(view.indices);
+  const names = filterSet(view.names);
+  const indices = filterSet(view.indices);
   const fields = new Set<string>(view.fields ?? code.keyof().options);
   const projectRow = (row: PythonPycCodeObject, source_index: number) => ({
     ...Object.fromEntries(
@@ -110,32 +99,22 @@ export const projectPythonPycView = (
     ),
     source_index,
   });
-  const selected =
-    names === undefined && indices === undefined
-      ? {
-          rows: code_objects
-            .slice(view.offset, view.offset + view.limit)
-            .map((row, index) => projectRow(row, view.offset + index)),
-          total: code_objects.length,
-        }
-      : selectViewRows(
-          code_objects,
-          view,
-          (row, index) =>
-            (names === undefined || names.has(row.name)) &&
-            (indices === undefined || indices.has(index)),
-          projectRow,
-        );
+  const matches =
+    names === undefined
+      ? undefined
+      : (row: PythonPycCodeObject) => names.has(row.name);
+  const selected = selectViewRows(
+    code_objects,
+    view,
+    matches,
+    projectRow,
+    indices,
+  );
   return ok({
     ...shared,
     kind: "python-pyc" as const,
     view,
     pyc: summary,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };

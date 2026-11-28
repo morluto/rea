@@ -1,7 +1,7 @@
 $ rea inspect-byte-entropy <workspace>/sample.bin --no-such-flag  # stdout is a terminal
 exit: 1
 --- stdout
-Error: Unknown flag: --no-such-flag
+Error (PARSE_ERROR): Unknown flag: --no-such-flag
 <end>
 --- stderr
 <end>

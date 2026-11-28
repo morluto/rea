@@ -10,8 +10,7 @@ import {
   type GraphqlContract,
 } from "../apiContract/graphqlContract.js";
 import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
-import type { JsonValue } from "../jsonValue.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
@@ -19,12 +18,12 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
+import { pickFields, selectViewRows, filterSet } from "./selectViewRows.js";
 
 export const graphqlContractViewContextSchema = graphqlContractSchema.omit({
   types: true,
@@ -76,9 +75,6 @@ export const graphqlContractViewItemsSchema = z.union([
   ),
 ]);
 type View = z.output<typeof graphqlContractViewRequestSchema>;
-const values = (selected: readonly string[] | undefined) =>
-  selected === undefined ? undefined : new Set(selected);
-
 /** Scan retained facts once; allocate projections only for the selected page. */
 const select = <Row extends object, Key extends keyof Row>(
   rows: readonly Row[],
@@ -90,31 +86,33 @@ const select = <Row extends object, Key extends keyof Row>(
   },
 ) => {
   const keys = [
-    ...new Set<string | keyof Row>([
+    ...new Set<string>([
       ...(view.fields ?? columns.defaults),
-      ...columns.required,
+      ...(columns.required as readonly string[]),
     ]),
   ];
+  const activeFilters = Object.entries(filters).filter(
+    (entry): entry is [keyof Row & string, ReadonlySet<string>] =>
+      entry[1] !== undefined,
+  );
+  const matches =
+    activeFilters.length === 0
+      ? undefined
+      : (row: Row) => {
+          for (let i = 0; i < activeFilters.length; i += 1) {
+            const [key, selected] = activeFilters[i]!;
+            const value = row[key];
+            if (typeof value !== "string" || !selected.has(value)) return false;
+          }
+          return true;
+        };
   return selectViewRows(
     rows,
     view,
-    (row) => {
-      for (const key in filters) {
-        const selected = filters[key];
-        if (
-          selected !== undefined &&
-          (typeof row[key] !== "string" || !selected.has(row[key] as string))
-        )
-          return false;
-      }
-      return true;
-    },
-    (row) => {
-      const source = row as Record<keyof Row, JsonValue>;
-      return Object.fromEntries(
-        keys.map((key) => [key, source[key as keyof Row]]),
-      ) as Partial<Row> & Pick<Row, Key>;
-    },
+    matches,
+    (row) =>
+      pickFields(row as Record<string, unknown>, keys) as Partial<Row> &
+        Pick<Row, Key>,
   );
 };
 const referenceColumns = {
@@ -136,8 +134,8 @@ const selectRows = (report: GraphqlContract, view: View) => {
         report.types,
         view,
         {
-          type_id: values(view.type_ids),
-          name: values(view.names),
+          type_id: filterSet(view.type_ids),
+          name: filterSet(view.names),
         },
         {
           defaults: ["name", "kind", "extension"],
@@ -149,9 +147,9 @@ const selectRows = (report: GraphqlContract, view: View) => {
         report.fields,
         view,
         {
-          field_id: values(view.field_ids),
-          field_key: values(view.field_keys),
-          owner_type_name: values(view.owner_type_names),
+          field_id: filterSet(view.field_ids),
+          field_key: filterSet(view.field_keys),
+          owner_type_name: filterSet(view.owner_type_names),
         },
         {
           defaults: ["field_key", "kind", "type_ref"],
@@ -163,9 +161,9 @@ const selectRows = (report: GraphqlContract, view: View) => {
         report.definitions,
         view,
         {
-          definition_id: values(view.definition_ids),
-          name: values(view.names),
-          kind: values(view.kinds),
+          definition_id: filterSet(view.definition_ids),
+          name: filterSet(view.names),
+          kind: filterSet(view.kinds),
         },
         {
           defaults: ["name", "kind", "type_condition"],
@@ -177,10 +175,10 @@ const selectRows = (report: GraphqlContract, view: View) => {
         report.references,
         view,
         {
-          reference_id: values(view.reference_ids),
-          definition_id: values(view.definition_ids),
-          schema_field_id: values(view.schema_field_ids),
-          state: values(view.states),
+          reference_id: filterSet(view.reference_ids),
+          definition_id: filterSet(view.definition_ids),
+          schema_field_id: filterSet(view.schema_field_ids),
+          state: filterSet(view.states),
         },
         referenceColumns,
       );
@@ -189,9 +187,9 @@ const selectRows = (report: GraphqlContract, view: View) => {
         report.fragment_spreads,
         view,
         {
-          definition_id: values(view.definition_ids),
-          name: values(view.names),
-          state: values(view.states),
+          definition_id: filterSet(view.definition_ids),
+          name: filterSet(view.names),
+          state: filterSet(view.states),
         },
         {
           defaults: [
@@ -208,7 +206,7 @@ const selectRows = (report: GraphqlContract, view: View) => {
         report.diagnostics,
         view,
         {
-          code: values(view.codes),
+          code: filterSet(view.codes),
         },
         {
           defaults: ["message"],
@@ -230,15 +228,8 @@ export const projectGraphqlContractView = (
     "graphql-contract",
   );
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "GraphQL inventories support summary and graphql-contract pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "GraphQL inventories support summary and graphql-contract pages.",
     );
   const {
     types: _types,
@@ -254,11 +245,7 @@ export const projectGraphqlContractView = (
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_api_contract" as const,
     parent_digest: parent.evidenceId.slice(3),
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns:
       context.source_coverage.status === "partial"
         ? [
@@ -283,11 +270,6 @@ export const projectGraphqlContractView = (
     ...shared,
     ...context,
     view,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };

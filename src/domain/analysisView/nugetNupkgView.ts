@@ -1,16 +1,16 @@
 import { z } from "zod";
 import { nugetNupkgSchema } from "../nuget/nupkg.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
 } from "./analysisViewCoverage.js";
 
@@ -40,14 +40,8 @@ export const projectNugetNupkgView = (
 ) => {
   const view = ownedView<SummaryAnalysisView>(admitted, "summary");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "NuGet package Evidence supports the summary view.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "NuGet package Evidence supports the summary view.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
@@ -60,11 +54,7 @@ export const projectNugetNupkgView = (
       path: report.artifact.path,
       sha256: report.artifact.sha256,
     },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: [],
     kind: "summary" as const,
     view,

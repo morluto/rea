@@ -22,13 +22,14 @@ const transientChildren = [
 ];
 
 it.each([
-  { phase: "initial", recover: false },
-  { phase: "initial", recover: true },
-  { phase: "event", recover: false },
-  { phase: "event", recover: true },
+  { phase: "initial", replay: "absent" },
+  { phase: "initial", replay: "valid" },
+  { phase: "initial", replay: "malformed" },
+  { phase: "event", replay: "absent" },
+  { phase: "event", replay: "valid" },
 ] as const)(
-  "keeps temporary document policy independent of URL encoding: $phase/$recover",
-  async ({ phase, recover }) => {
+  "keeps temporary document policy independent of URL encoding: $phase/$replay",
+  async ({ phase, replay }) => {
     let document = phase === "initial" ? "transient" : "old";
     const frames = (origin: string) =>
       transientChildren.map(({ id, location }) => ({
@@ -47,13 +48,6 @@ it.each([
         name: `read-${id}`,
         description,
         frameId: id,
-        inputSchema: {},
-        annotations: {
-          readOnly: true,
-          untrustedContent: true,
-          consequential: false,
-          autosubmit: false,
-        },
       }));
     const browser = await startFakeCdpBrowser({
       eventsBeforeReply: ["WebMCP.enable"],
@@ -87,12 +81,17 @@ it.each([
         ];
         document = "transient";
         if (phase === "event") events.push(...navigationEvents());
-        if (recover) {
+        if (replay !== "absent") {
           document = "fresh";
           events.push(...navigationEvents(), {
             method: "WebMCP.toolsAdded",
             sessionId,
-            params: { tools: registrations("Current registration") },
+            params: {
+              tools:
+                replay === "valid"
+                  ? registrations("Current registration")
+                  : transientChildren.map(({ id }) => ({ frameId: id })),
+            },
           });
         }
         return events;
@@ -115,7 +114,7 @@ it.each([
         left.name.localeCompare(right.name),
       ),
     ).toMatchObject(
-      recover
+      replay === "valid"
         ? transientChildren.map(({ id }) => ({
             name: `read-${id}`,
             frame_id: id,
@@ -127,12 +126,21 @@ it.each([
     expect(result.value.completeness.policy_filtered_sections).not.toContain(
       "webmcp_tools",
     );
-    const complete = recover && phase === "initial";
+    if (replay === "malformed")
+      expect(result.value.completeness.excluded).toEqual([
+        {
+          section: "webmcp_tools",
+          reason: "invalid_protocol_value",
+          count: transientChildren.length,
+        },
+      ]);
+    const complete = replay === "valid" && phase === "initial";
     expect(
       result.value.completeness.attach_limited_sections.includes(
         "webmcp_tools",
       ),
     ).toBe(!complete);
+    if (phase !== "initial" || replay === "malformed") return;
     const inspection = await provider.inspectPage(
       inspectWebPageInputSchema.parse(input),
     );
@@ -343,32 +351,46 @@ it("rejects discovery when a child commits as a new root", async () => {
   });
 });
 
-it("retains the child ancestry on same-document navigation so a parent detach removes its tools", async () => {
-  const { result } = await discoverWithChildEvents(
-    ["child"],
-    (origin, sessionId) => [
+it("retires registered and transient descendants when their parent detaches", async () => {
+  const { result } = await discoverWithChildEvents([], (origin, sessionId) => {
+    const navigate = (id: string, parentId: string, url: string): CdpEvent => ({
+      method: "Page.frameNavigated",
+      sessionId,
+      params: { frame: { id, parentId, url, loaderId: `loader-${id}` } },
+    });
+    return [
+      navigate("parent", "frame-main", origin + "/parent"),
+      navigate("child", "parent", origin + "/child"),
+      navigate("transient", "parent", "about:blank"),
       {
         method: "WebMCP.toolsAdded",
         sessionId,
         params: {
-          tools: [{ name: "current", frameId: "child", inputSchema: {} }],
+          tools: [
+            { name: "current", frameId: "child" },
+            { name: "root", frameId: "frame-main" },
+          ],
         },
       },
       {
         method: "Page.navigatedWithinDocument",
         sessionId,
-        params: { frameId: "child", url: origin + "/child" },
+        params: { frameId: "child", url: origin + "/child#current" },
       },
       {
         method: "Page.frameDetached",
         sessionId,
-        params: { frameId: "frame-main" },
+        params: { frameId: "parent" },
       },
-    ],
-  );
+    ];
+  });
   if (!result.ok) throw result.error;
-  expect(result.value.tools.items).toEqual([]);
-  expect(result.value.completeness.excluded).toEqual([]);
+  expect(result.value.tools.items).toMatchObject([{ name: "root" }]);
+  expect(result.value.completeness).toMatchObject({
+    status: "complete_within_window",
+    attach_limited_sections: [],
+    excluded: [],
+  });
 });
 
 it("retains the committed loader through same-document updates before a replacement", async () => {

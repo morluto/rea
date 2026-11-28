@@ -10,8 +10,7 @@ import {
   type ApiContract,
 } from "../apiContract/apiContract.js";
 import { apiContractViewRequestSchema } from "../apiContract/apiContractQuery.js";
-import type { JsonValue } from "../jsonValue.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -22,12 +21,12 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
-import { selectViewRows } from "./selectViewRows.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { pickFields, selectViewRows, filterSet } from "./selectViewRows.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 
 export const apiContractViewContextSchema = apiContractSchema.omit({
   operations: true,
@@ -62,18 +61,8 @@ export const apiContractViewItemsSchema = z.union([
 const readReport = createAnalysisViewResultReader(
   z.union([apiContractSchema, graphqlContractSchema]),
 );
-const values = (selected: readonly string[] | undefined) =>
-  selected === undefined ? undefined : new Set(selected);
 const admits = (selection: ReadonlySet<string> | undefined, value: string) =>
   selection === undefined || selection.has(value);
-const fieldsOf = (
-  row: object,
-  fields: readonly string[],
-): Record<string, JsonValue> => {
-  const source = row as Record<string, JsonValue>;
-  return Object.fromEntries(fields.map((field) => [field, source[field]!]));
-};
-
 const selectOperations = (
   report: ApiContract,
   view: Extract<
@@ -81,25 +70,35 @@ const selectOperations = (
     { collection: "operations" }
   >,
 ) => {
-  const ids = values(view.operation_ids),
-    keys = values(view.operation_keys),
-    methods = values(view.methods),
-    paths = values(view.paths),
-    declared = values(view.declared_ids),
-    states = values(view.states);
+  const ids = filterSet(view.operation_ids),
+    keys = filterSet(view.operation_keys),
+    methods = filterSet(view.methods),
+    paths = filterSet(view.paths),
+    declared = filterSet(view.declared_ids),
+    states = filterSet(view.states);
+  const filtered =
+    ids !== undefined ||
+    keys !== undefined ||
+    methods !== undefined ||
+    paths !== undefined ||
+    declared !== undefined ||
+    states !== undefined;
+  const fields = view.fields ?? ["method", "path", "declared_id"];
   return selectViewRows(
     report.operations,
     view,
-    (row) =>
-      admits(ids, row.operation_id) &&
-      admits(keys, row.operation_key) &&
-      admits(methods, row.method) &&
-      admits(paths, row.path) &&
-      admits(states, row.state) &&
-      (declared === undefined ||
-        (row.declared_id !== null && declared.has(row.declared_id))),
+    filtered
+      ? (row) =>
+          admits(ids, row.operation_id) &&
+          admits(keys, row.operation_key) &&
+          admits(methods, row.method) &&
+          admits(paths, row.path) &&
+          admits(states, row.state) &&
+          (declared === undefined ||
+            (row.declared_id !== null && declared.has(row.declared_id)))
+      : undefined,
     (row) => ({
-      ...fieldsOf(row, view.fields ?? ["method", "path", "declared_id"]),
+      ...pickFields(row, fields),
       operation_id: row.operation_id,
       operation_key: row.operation_key,
       source_pointer: row.source_pointer,
@@ -115,13 +114,14 @@ const selectRows = (
 ) => {
   if (view.collection === "operations") return selectOperations(report, view);
   if (view.collection === "path-item-references") {
-    const ids = values(view.reference_ids);
+    const ids = filterSet(view.reference_ids);
+    const fields = view.fields ?? ["path", "reference"];
     return selectViewRows(
       report.path_item_references,
       view,
-      (row) => admits(ids, row.reference_id),
+      ids === undefined ? undefined : (row) => ids.has(row.reference_id),
       (row) => ({
-        ...fieldsOf(row, view.fields ?? ["path", "reference"]),
+        ...pickFields(row, fields),
         reference_id: row.reference_id,
         source_pointer: row.source_pointer,
         state: row.state,
@@ -129,13 +129,14 @@ const selectRows = (
       }),
     );
   }
-  const codes = values(view.codes);
+  const codes = filterSet(view.codes);
+  const fields = view.fields ?? ["message"];
   return selectViewRows(
     report.diagnostics,
     view,
-    (row) => admits(codes, row.code),
+    codes === undefined ? undefined : (row) => codes.has(row.code),
     (row) => ({
-      ...fieldsOf(row, view.fields ?? ["message"]),
+      ...pickFields(row, fields),
       diagnostic_id: row.diagnostic_id,
       source_pointer: row.source_pointer,
       code: row.code,
@@ -156,15 +157,8 @@ export const projectApiContractView = (
     SummaryAnalysisView | z.output<typeof apiContractViewRequestSchema>
   >(admitted, "summary", "api-contract");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "API contract inventories support summary and api-contract pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "API contract inventories support summary and api-contract pages.",
     );
   const {
     operations: _operations,
@@ -177,11 +171,7 @@ export const projectApiContractView = (
     parent_evidence_id: parent.evidenceId,
     parent_operation: API_CONTRACT_OPERATION,
     parent_digest: parent.evidenceId.slice(3),
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns:
       context.source_coverage.status === "partial"
         ? [
@@ -207,11 +197,6 @@ export const projectApiContractView = (
     ...context,
     kind: "api-contract" as const,
     view,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };

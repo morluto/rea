@@ -72,25 +72,9 @@ it("rejects forbidden trailer controls while retaining valid earlier trailers", 
   }
 });
 
-it("retains allowed whitespace, visible text, and valid UTF-8 obs-text", async () => {
-  const text = "grpc-message: alpha\tbeta \u00e9\r\n";
-  const result = await decodeProtobufBody(
-    trailerFrame(text),
-    "grpc-web",
-    source,
-    same,
-    new ProtobufBudget(),
-  );
-  expect(result.status).toBe("complete");
-  expect(result.frames[0]?.trailers).toEqual([
-    { name: "grpc-message", value: "alpha\tbeta \u00e9" },
-  ]);
-  expect(result.examined_bytes).toBe(5 + Buffer.byteLength(text));
-});
-
-it("excludes trailing whitespace from trailer field values", async () => {
+it("keeps internal whitespace and UTF-8 while trimming trailer field boundaries", async () => {
   const text =
-    "grpc-status: 0 \r\ngrpc-message: alpha\tbeta \t\r\nx-empty: \t\r\n";
+    "grpc-status: 0 \r\ngrpc-message: alpha\tbeta \u00e9 \t\r\nx-empty: \t\r\n";
   const result = await decodeProtobufBody(
     trailerFrame(text),
     "grpc-web",
@@ -101,7 +85,7 @@ it("excludes trailing whitespace from trailer field values", async () => {
   expect(result.status).toBe("complete");
   expect(result.frames[0]?.trailers).toEqual([
     { name: "grpc-status", value: "0" },
-    { name: "grpc-message", value: "alpha\tbeta" },
+    { name: "grpc-message", value: "alpha\tbeta \u00e9" },
     { name: "x-empty", value: "" },
   ]);
   expect(result.examined_bytes).toBe(5 + Buffer.byteLength(text));

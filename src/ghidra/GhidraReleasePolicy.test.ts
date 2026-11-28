@@ -13,6 +13,7 @@ import {
   ghidraKnownProviderDefectLimitations,
   ghidraVersionDetail,
   unverifiedGhidraBuildLimitation,
+  type GhidraDefectApplicability,
 } from "./GhidraReleasePolicy.js";
 
 describe("Ghidra release admission", () => {
@@ -121,5 +122,37 @@ describe("Ghidra release admission", () => {
     expect(ghidraVersionDetail("latest")).toBe("latest");
     expect(ghidraKnownProviderDefects("latest")).toEqual([]);
     expect(ghidraKnownProviderDefectLimitations("latest")).toEqual([]);
+  });
+});
+
+describe("Ghidra known-defect applicability", () => {
+  const ids = (
+    architecture: GhidraDefectApplicability["architecture"],
+    operation: string,
+  ) =>
+    ghidraKnownProviderDefectLimitations("12.2", { architecture, operation })
+      .map((limitation) => /ghidra-\d+/u.exec(limitation)?.[0])
+      .filter((id) => id !== undefined);
+
+  it.each([
+    ["x86_64", "procedure_pseudo_code", ["ghidra-9996"]],
+    ["x86_64", "procedure_references", ["ghidra-9996"]],
+    ["arm64", "procedure_pseudo_code", ["ghidra-10154"]],
+    ["arm64_32", "analyze_function", ["ghidra-10154"]],
+    ["x86", "procedure_pseudo_code", []],
+    ["mips", "xrefs", []],
+    [undefined, "procedure_pseudo_code", ["ghidra-9996", "ghidra-10154"]],
+    ["x86_64", "read_bytes", []],
+    ["x86_64", "search_bytes", ["ghidra-9996"]],
+    ["x86_64", "search_strings", []],
+    ["x86_64", "list_names", []],
+    ["x86_64", "health", []],
+    [undefined, "read_bytes", []],
+  ] as const)("on %s for %s keeps %j", (architecture, operation, expected) => {
+    expect(ids(architecture, operation)).toEqual(expected);
+  });
+
+  it("keeps every version-matched record when no applicability is given", () => {
+    expect(ghidraKnownProviderDefectLimitations("12.2")).toHaveLength(2);
   });
 });

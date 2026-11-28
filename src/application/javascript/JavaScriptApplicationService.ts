@@ -183,9 +183,11 @@ export const analyzeJavaScriptApplicationValidated = async (
             result,
           );
         return err(
-          translateArtifactFailure(OPERATION, cause).retainPartialObservation(
-            evidence,
-          ),
+          translateArtifactFailure(
+            OPERATION,
+            input.input_path,
+            cause,
+          ).retainPartialObservation(evidence),
         );
       } catch (completionCause: unknown) {
         // A validation or Evidence failure while finishing the partial result
@@ -196,7 +198,7 @@ export const analyzeJavaScriptApplicationValidated = async (
     // Preserve execution constraints and their completed partial Evidence.
     if (cause instanceof AnalysisError) return err(cause);
     if (cause instanceof ArtifactReaderFailure)
-      return err(translateArtifactFailure(OPERATION, cause));
+      return err(translateArtifactFailure(OPERATION, input.input_path, cause));
     if (cause instanceof z.ZodError)
       return err(
         new AnalysisOutputError(OPERATION, describeResultSchemaFailure(cause), {

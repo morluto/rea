@@ -2,7 +2,7 @@ import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createGhApiRequest } from "./github-api.mjs";
+import { createGhApiRequest, validateRepository } from "./github-api.mjs";
 
 const OUTPUT_DIRECTORY = join(".cache", "ci-pr-health");
 const PAGE_SIZE = 100;
@@ -172,6 +172,11 @@ async function resolveMergeability({ candidates, requestGet, identity }) {
       continue;
     }
     const { detail } = result;
+    if (detail.closed || detail.draft) {
+      pull.eligibilityChangedDuringScan = true;
+      errors.add("pull_request_eligibility_changed_during_scan");
+      continue;
+    }
     const identityChanged =
       detail.headSha !== pull.head.sha ||
       detail.headRef !== pull.head.ref ||
@@ -225,6 +230,12 @@ export function classifyPrCi({
   if (!pull.identityValid)
     return result("unknown", "pull_request_head_identity_invalid", []);
   const evidence = [...runs, ...ambiguousRuns];
+  if (pull.eligibilityChangedDuringScan)
+    return result(
+      "unknown",
+      "pull_request_eligibility_changed_during_scan",
+      evidence,
+    );
   if (pull.mergeable === false)
     return result("merge_conflict", "github_reports_merge_conflict", evidence);
   // The newest collected run is not proven current until pagination completes:
@@ -451,17 +462,21 @@ function compareRunEvidence(left, right) {
       ? 0
       : null;
   }
-  // A retry may start long after its original creation; without an attempt
-  // clock, creation dates only order first attempts from different runs.
-  if (
-    positiveInteger(leftRun.run_attempt) !== 1 ||
-    positiveInteger(rightRun.run_attempt) !== 1
-  )
-    return null;
-  const time =
-    Date.parse(leftRun.created_at ?? "") -
-    Date.parse(rightRun.created_at ?? "");
+  const time = attemptTime(leftRun) - attemptTime(rightRun);
   return Number.isFinite(time) && time !== 0 ? time : null;
+}
+
+function attemptTime(run) {
+  const attempt = positiveInteger(run.run_attempt);
+  const created = Date.parse(run.created_at ?? "");
+  if (attempt === 1) return created;
+  // Retried runs retain their original creation time. Use the newer start
+  // only after the retry has begun, otherwise the API may still describe
+  // the previous execution.
+  if (attempt === null || !["in_progress", "completed"].includes(run.status))
+    return NaN;
+  const started = Date.parse(run.run_started_at ?? "");
+  return started > created ? started : NaN;
 }
 
 function result(category, reason, runs) {
@@ -475,6 +490,8 @@ function result(category, reason, runs) {
       conclusion: typeof run.conclusion === "string" ? run.conclusion : null,
       headSha: isSha(run.head_sha) ? run.head_sha.toLowerCase() : null,
       createdAt: typeof run.created_at === "string" ? run.created_at : null,
+      startedAt:
+        typeof run.run_started_at === "string" ? run.run_started_at : null,
       url: typeof run.html_url === "string" ? run.html_url : null,
       identityBasis: basis,
     })),
@@ -554,6 +571,8 @@ async function getPullRequestDetails({ requestGet, identity, pull }) {
       return { detail: null, error: "pull_request_detail_malformed" };
     return {
       detail: {
+        closed: response.state === "closed",
+        draft: response.draft === true,
         mergeable:
           typeof response.mergeable === "boolean"
             ? response.mergeable
@@ -583,13 +602,7 @@ function validateInputs({
   lookbackHours,
   now,
 }) {
-  if (
-    typeof repository !== "string" ||
-    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)
-  )
-    throw new Error(
-      "CI_REPOSITORY must be an owner/name repository identifier",
-    );
+  validateRepository(repository);
   if (
     typeof defaultBranch !== "string" ||
     defaultBranch.length === 0 ||

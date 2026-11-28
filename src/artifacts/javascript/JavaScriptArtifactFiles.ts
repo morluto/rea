@@ -54,6 +54,7 @@ interface ReadContext {
   readonly signal: AbortSignal | undefined;
   readonly asarHeaderAdmission: AsarHeaderAdmission | undefined;
   readonly selectedPaths: ReadonlyMap<string, number> | undefined;
+  readonly verifiedAsarReaders: ReadonlySet<AsarArtifactReader>;
   textBytes: number;
   invalidUtf8: number;
 }
@@ -114,6 +115,7 @@ export const readJavaScriptArtifactFiles = async (
       undefined,
       issues,
     );
+  const verifiedAsarReaders = new Set<AsarArtifactReader>();
   if (reader instanceof AsarArtifactReader) {
     const root = snapshot.nodes.find(
       ({ artifact_id }) => artifact_id === snapshot.manifest.root_artifact_id,
@@ -124,11 +126,8 @@ export const readJavaScriptArtifactFiles = async (
         "Root artifact node is missing",
         { integrityCheck: "inventory-node" },
       );
-    await verifyEntryBytes(
-      await reader.openContainer(signal),
-      { path: ".", sha256: root.sha256, bytes: root.size },
-      signal,
-    );
+    await reader.prepareContainer(root.sha256, signal, root.size);
+    verifiedAsarReaders.add(reader);
   }
   if (inventory.ambiguousPath !== undefined)
     throw new ArtifactReaderFailure(
@@ -159,6 +158,7 @@ export const readJavaScriptArtifactFiles = async (
     signal,
     asarHeaderAdmission,
     selectedPaths,
+    verifiedAsarReaders,
     textBytes: 0,
     invalidUtf8: 0,
   };
@@ -237,7 +237,7 @@ const visitReader = async (
         continue;
       }
       const entry = next.value;
-      abortIfNeeded(context.signal);
+      assertReconstructionActive(context.signal);
       const path = normalizeArtifactPath(
         frame.prefix === "" ? entry.path : `${frame.prefix}/${entry.path}`,
       );
@@ -285,13 +285,19 @@ const visitReader = async (
             : { headerAdmission: context.asarHeaderAdmission },
         );
         ownedReaders.push({ reader: nested, path });
+        await nested.prepareContainer(
+          inventory.sha256,
+          context.signal,
+          inventory.bytes,
+        );
+        // Safe to mutate local Set initialized in readJavaScriptArtifactFiles.
+        (context.verifiedAsarReaders as Set<AsarArtifactReader>).add(nested);
         stack.push({
           reader: nested,
           prefix: path,
           containerSha256: inventory.sha256,
           iterator: nested.entries(context.signal)[Symbol.asyncIterator](),
         });
-        await nested.prepareContainer(inventory.sha256, context.signal);
         continue;
       }
       const expected = context.expected.get(path);
@@ -362,19 +368,11 @@ const readText = async (
   ) {
     // Keep the inventory/acquisition identity check without allocating or
     // decoding an unrelated source's text.
-    await verifyEntryBytes(
-      await input.reader.open(input.entry, context.signal),
-      input.expected,
-      context.signal,
-    );
+    await verifyUnselectedOrBinaryEntry(context, input);
     return { included: false, reason: "outside-analysis-scope" };
   }
   if (input.expected.kind === "native-addon") {
-    await verifyEntryBytes(
-      await input.reader.open(input.entry, context.signal),
-      input.expected,
-      context.signal,
-    );
+    await verifyUnselectedOrBinaryEntry(context, input);
     return { included: false, reason: "not-applicable" };
   }
   const bytes = await readAll(
@@ -406,6 +404,31 @@ const readText = async (
   }
 };
 
+const verifyUnselectedOrBinaryEntry = async (
+  context: ReadContext,
+  input: ReadTextInput,
+): Promise<void> => {
+  assertReconstructionActive(context.signal);
+  if (
+    input.reader instanceof AsarArtifactReader &&
+    context.verifiedAsarReaders.has(input.reader) &&
+    !input.entry.unpacked
+  ) {
+    if (input.entry.declaredSize !== input.expected.bytes)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Artifact entry changed after inventory: ${input.expected.path}`,
+        { integrityCheck: "member-identity" },
+      );
+    return;
+  }
+  await verifyEntryBytes(
+    await input.reader.open(input.entry, context.signal),
+    input.expected,
+    context.signal,
+  );
+};
+
 const verifyEntryBytes = async (
   stream: Readable,
   expected: Pick<ExpectedFile, "path" | "sha256" | "bytes">,
@@ -418,7 +441,7 @@ const verifyEntryBytes = async (
       `Artifact entry changed after inventory: ${expected.path}`,
       { integrityCheck: "member-identity" },
     );
-  abortIfNeeded(signal);
+  assertReconstructionActive(signal);
 };
 
 const expectedInventory = (
@@ -549,6 +572,22 @@ const createUnanalyzedArtifactLookup = (
     occurrence.entry_kind === "file" &&
     occurrence.artifact_id === null &&
     relevantKind(occurrence.logical_path) !== undefined;
+  function* filesBelow(path: string): Iterable<ArtifactOccurrence> {
+    const prefix = `${path}/`;
+    for (
+      let index = lowerBound(
+        snapshot.occurrences,
+        prefix,
+        (entry) => entry.logical_path,
+      );
+      index < snapshot.occurrences.length;
+      index += 1
+    ) {
+      const entry = snapshot.occurrences[index];
+      if (entry === undefined || !entry.logical_path.startsWith(prefix)) break;
+      if (entry.entry_kind === "file") yield entry;
+    }
+  }
   return {
     coverage: snapshot.coverage,
     get(path) {
@@ -611,24 +650,15 @@ const createUnanalyzedArtifactLookup = (
       requested.set(path, file);
       return file;
     },
+    *filePathsBelow(path) {
+      for (const entry of filesBelow(path)) yield entry.logical_path;
+    },
     hasDirectory(path, containerSha256) {
       let results = directories.get(path);
       const previous = results?.get(containerSha256);
       if (previous !== undefined) return previous;
-      const prefix = `${path}/`;
       let present = false;
-      for (
-        let index = lowerBound(
-          snapshot.occurrences,
-          prefix,
-          (entry) => entry.logical_path,
-        );
-        index < snapshot.occurrences.length;
-        index += 1
-      ) {
-        const entry = snapshot.occurrences[index];
-        if (entry === undefined || !entry.logical_path.startsWith(prefix))
-          break;
+      for (const entry of filesBelow(path)) {
         if (
           (isOpaque(entry) || isUnavailableRelevant(entry)) &&
           (containerSha256 === undefined ||
@@ -655,11 +685,14 @@ const readAll = async (
   const chunks: Buffer[] = [];
   let bytes = 0;
   for await (const raw of stream) {
-    abortIfNeeded(signal);
+    assertReconstructionActive(signal);
     const chunk = streamChunkToBuffer(raw);
     bytes += chunk.length;
     chunks.push(chunk);
   }
+  if (chunks.length === 0) return Buffer.alloc(0);
+  const first = chunks[0];
+  if (chunks.length === 1 && first !== undefined) return first;
   return Buffer.concat(chunks, bytes);
 };
 
@@ -694,7 +727,8 @@ const isFilesystemAsar = (entry: ArtifactEntry, path: string): boolean =>
   path.toLowerCase().endsWith(".asar") &&
   isAbsolute(entry.adapterKey);
 
-const abortIfNeeded = (signal?: AbortSignal): void => {
+/** Stop reconstruction at the current stage with the original caller reason. */
+export const assertReconstructionActive = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)
     throw new ArtifactReaderFailure(
       "cancelled",
