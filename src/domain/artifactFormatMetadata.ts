@@ -23,6 +23,8 @@ import {
   tarEntryMetadataSchema,
   switchExecutableMetadataSchema,
   switchExecutableEntryMetadataSchema,
+  megaDriveRomMetadataSchema,
+  megaDriveRomEntryMetadataSchema,
   n64RomEntryMetadataSchema,
   n64RomMetadataSchema,
 } from "./formatMetadata/packageAndGameMetadata.js";
@@ -40,6 +42,8 @@ import {
   fitMetadataSchema,
   hexRecordRegionMetadataSchema,
   hexRecordsMetadataSchema,
+  image4EntryMetadataSchema,
+  image4MetadataSchema,
   qualcommMbnMetadataSchema,
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
@@ -128,6 +132,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   espFlashPartitionMetadataSchema,
   fitMetadataSchema,
   fitImageMetadataSchema,
+  image4EntryMetadataSchema,
+  image4MetadataSchema,
   qualcommMbnMetadataSchema,
   androidBootImageMetadataSchema,
   androidBootImageEntryMetadataSchema,
@@ -150,6 +156,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   mediaAssetRegionMetadataSchema,
   ndsMetadataSchema,
   ndsEntryMetadataSchema,
+  megaDriveRomMetadataSchema,
+  megaDriveRomEntryMetadataSchema,
   n64RomMetadataSchema,
   n64RomEntryMetadataSchema,
 ]);
@@ -527,6 +535,14 @@ const declarationsByKind: {
                   },
           },
   },
+  "mega-drive-rom": {
+    notCompared:
+      "Its header and vector facts come from the ROM's own bytes, which content comparison covers.",
+  },
+  "mega-drive-rom-entry": {
+    notCompared:
+      "Its role is in its path and its image offset is layout; content comparison covers its bytes.",
+  },
   fit: {
     notCompared:
       "Its fields come from the FIT's own bytes, which content comparison covers.",
@@ -534,6 +550,14 @@ const declarationsByKind: {
   "qualcomm-mbn": {
     notCompared:
       "Its header and hash-segment facts come from the image's own bytes, which content comparison covers. Signatures are located, not verified.",
+  },
+  "apple-img4": {
+    notCompared:
+      "Its fields come from the container's own DER, which content comparison covers. Keybag values are not recorded.",
+  },
+  "apple-img4-entry": {
+    notCompared:
+      "Role, encryption and compression restate the entry path and the root facts; decoded is always false.",
   },
   /**
    * Payload interpretation and sharing declarations, independent of FIT

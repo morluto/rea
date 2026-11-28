@@ -73,6 +73,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "asar",
   "ines",
   "nds",
+  "mega-drive-rom",
   "n64-rom",
   "godot-pck",
   "unityfs",
@@ -125,6 +126,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "esp-flash-image",
   "fit",
   "qualcomm-mbn",
+  "apple-img4",
   "ntfs-mft",
   "systemd-journal",
   "auditd-log",
@@ -134,6 +136,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "devicetree",
   "esp-nvs",
   "deb",
+  "labview-rsrc",
   "unknown",
 ] as const;
 
@@ -145,6 +148,7 @@ const artifactFormatSchema = z.enum(ARTIFACT_FORMAT_IDS);
 const artifactContentFormatSchema = artifactFormatSchema.extract([
   "ines",
   "nds",
+  "mega-drive-rom",
   "n64-rom",
   "zip",
   "godot-pck",
@@ -178,6 +182,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "bflt",
   "fit",
   "qualcomm-mbn",
+  "apple-img4",
   "ntfs-mft",
   "systemd-journal",
   "auditd-log",
@@ -193,6 +198,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "devicetree",
   "esp-nvs",
   "deb",
+  "labview-rsrc",
   "directory",
   "file",
   "unknown",

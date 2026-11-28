@@ -209,6 +209,11 @@ export const documentationSections = [
         route: "/rust-binaries",
       },
       {
+        text: "LabVIEW RSRC containers",
+        source: "guides/native/labview-analysis.md",
+        route: "/labview-analysis",
+      },
+      {
         text: "Static CUDA and HIP code objects",
         source: "gpu-code-objects.md",
         route: "/gpu-code-objects",
@@ -429,6 +434,11 @@ export const documentationSections = [
         route: "/firmware-analysis",
       },
       {
+        text: "Firmware interrupt and trap vector tables",
+        source: "guides/firmware/firmware-vector-tables.md",
+        route: "/firmware-vector-tables",
+      },
+      {
         text: "Android OTA update payloads",
         source: "guides/firmware/android-ota-payload.md",
         route: "/android-ota-payload",
@@ -477,6 +487,11 @@ export const documentationSections = [
         text: "Qualcomm MBN images",
         source: "guides/firmware/qualcomm-mbn-images.md",
         route: "/qualcomm-mbn-images",
+      },
+      {
+        text: "Image4 containers",
+        source: "guides/apple/image4-containers.md",
+        route: "/image4-containers",
       },
       {
         text: "Intel HEX and S-record images",
@@ -587,6 +602,11 @@ export const documentationSections = [
         text: "Nintendo DS ROMs",
         source: "guides/firmware/nds-roms.md",
         route: "/nds-roms",
+      },
+      {
+        text: "Sega Mega Drive ROMs",
+        source: "guides/firmware/mega-drive-roms.md",
+        route: "/mega-drive-roms",
       },
       {
         text: "Nintendo 64 ROMs",

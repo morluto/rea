@@ -52,6 +52,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [PE overlay](guides/native/pe-overlay.md)
 - [Match native functions across builds](native-function-matching.md)
 - [Rust binary dependency metadata](rust-binaries.md)
+- [LabVIEW RSRC containers](guides/native/labview-analysis.md)
 - [Static CUDA and HIP code objects](gpu-code-objects.md)
 
 ## JavaScript and Electron
@@ -108,6 +109,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 ## Firmware
 
 - [Firmware analysis](guides/firmware/firmware-analysis.md)
+- [Firmware interrupt and trap vector tables](guides/firmware/firmware-vector-tables.md)
 - [Android OTA update payloads](guides/firmware/android-ota-payload.md)
 - [Android Verified Boot vbmeta images](guides/firmware/android-vbmeta.md)
 - [Android sparse images](guides/firmware/android-sparse-image.md)
@@ -118,6 +120,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [ESP images](esp-image.md)
 - [U-Boot FIT images](fit-images.md)
 - [Qualcomm MBN images](guides/firmware/qualcomm-mbn-images.md)
+- [Image4 containers](guides/apple/image4-containers.md)
 - [Intel HEX and S-record images](hex-records.md)
 - [UF2 and DfuSe images](uf2-dfuse.md)
 - [U-Boot legacy uImage containers](uimage.md)
@@ -145,6 +148,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [UnityFS AssetBundle archives](unityfs.md)
 - [iNES containers](ines-containers.md)
 - [Nintendo DS ROMs](guides/firmware/nds-roms.md)
+- [Sega Mega Drive ROMs](guides/firmware/mega-drive-roms.md)
 - [Nintendo 64 ROMs](guides/firmware/n64-roms.md)
 - [WeChat mini-program wxapkg archives](wxapkg.md)
 - [macOS flat installer packages](macos-pkg.md)

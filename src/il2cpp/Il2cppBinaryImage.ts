@@ -3,6 +3,7 @@ import { binaryMetadataArchitecture } from "../domain/binaryMetadataArchitecture
 import {
   IL2CPP_SLICE_SELECTORS,
   type Il2cppBinaryArchitecture,
+  DEFAULT_IL2CPP_NATIVE_INDEX_BYTES,
 } from "../domain/il2cpp/il2cppMetadata.js";
 import {
   BinaryFormatFailure,
@@ -34,7 +35,6 @@ import {
   ElfPointerRelocationFailure,
   type ElfVirtualPointerWrites,
 } from "../domain/native/elfPointerRelocations.js";
-import { DEFAULT_IL2CPP_NATIVE_INDEX_BYTES } from "../domain/il2cpp/il2cppMetadata.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 
 /** Selection failures name the binary's architecture input and IL2CPP's public spellings. */
@@ -95,9 +95,12 @@ const rejectContainer = (cause: unknown): never => {
       cause.failure.limit.maximum,
       "bytes",
     );
+  // Bytes the native readers do not recognize, or recognize in a form they do
+  // not decode, are outside IL2CPP's binary coverage; only a recognized
+  // container that breaks its format is malformed.
   if (cause instanceof BinaryFormatFailure)
     throw new Il2cppBinaryFormatFailure(
-      cause.kind === "unsupported"
+      cause.kind === "unsupported" || cause.kind === "unrecognized"
         ? "unsupported-container"
         : "malformed-container",
       cause.message,

@@ -586,6 +586,13 @@ JSON values stop at `MAX_JSON_DEPTH` (1000) in
 "JSON value exceeds maximum nesting depth of 1000. This release has no runtime
 override."
 
+Image4 DER parsing refuses four representation allowances. The Image4 DER depth
+allowance is 32 levels. The Image4 DER element allowance is 4096 elements. The
+Image4 property allowance is 256 properties. The Image4 string allowance is
+4096 bytes. This release has no runtime override for them. A payload octet
+string counts as one element and is not loaded to measure it. See
+[Image4 containers](../guides/apple/image4-containers.md).
+
 ## Typed refusals
 
 A producer that refuses a request types the refusal instead of leaving
@@ -801,6 +808,13 @@ fixed 128 MiB in-memory inflation ceiling), including repeated readable logical
 occurrences. Omission retains each archive's encoded-size-derived default. The
 .NET bundle group's own `expanded_bytes` controls its independently enforced
 bundle expansion.
+
+Mega Drive and Genesis ROM inventory admits a linear image of at most 8 MiB
+(`The Mega Drive ROM byte ceiling`, 8388608 bytes) and an SMD copier dump of
+at most 512 blocks of 16 KiB plus the 512-byte copier header (`The Mega Drive
+SMD block ceiling`). Both are fixed format ceilings. This release has no
+runtime override. See
+[Sega Mega Drive ROMs](../guides/firmware/mega-drive-roms.md).
 
 `artifact.member_count` (launch seed `REA_ARTIFACT_MEMBER_COUNT`, default
 100,000, range 1 to 2,147,483,647) is the session default for the per-call

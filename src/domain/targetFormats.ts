@@ -20,6 +20,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   asar: "archive",
   ines: "archive",
   nds: "archive",
+  "mega-drive-rom": "archive",
   "n64-rom": "archive",
   "godot-pck": "archive",
   unityfs: "archive",
@@ -44,6 +45,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   "ubi-image": "archive",
   iso9660: "archive",
   "qualcomm-mbn": "archive",
+  "apple-img4": "archive",
   dmg: "archive",
   pkg: "archive",
   "intel-hex": "archive",
@@ -66,6 +68,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   devicetree: "artifact",
   "esp-nvs": "artifact",
   deb: "artifact",
+  "labview-rsrc": "artifact",
   "source-map": "artifact",
 } as const;
 

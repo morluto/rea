@@ -94,11 +94,19 @@ export const readBinaryContainerFromReader = async (
     if (readMachoHeaderPrefixFacts(prefix).format !== null)
       return readMachoImageFromReader(source, structureBytes);
   }
-  throw new BinaryFormatFailure(
-    "unsupported",
+  throw unrecognizedNativeImage();
+};
+
+/**
+ * No ELF, PE or Mach-O magic: these readers do not recognize the bytes, so
+ * another reader may own them. A recognized format in a form these readers do
+ * not decode, such as a universal container, stays `unsupported`.
+ */
+const unrecognizedNativeImage = (): BinaryFormatFailure =>
+  new BinaryFormatFailure(
+    "unrecognized",
     "Only ELF, PE, and thin Mach-O native images are supported",
   );
-};
 
 const readNonElfContainer = (bytes: Buffer): BinaryContainer => {
   if (bytes.subarray(0, 2).equals(Buffer.from("MZ"))) return readPeImage(bytes);
@@ -131,8 +139,5 @@ const readNonElfContainer = (bytes: Buffer): BinaryContainer => {
     if (readMachoHeaderPrefixFacts(bytes).format !== null)
       return readMachoImage(bytes);
   }
-  throw new BinaryFormatFailure(
-    "unsupported",
-    "Only ELF, PE, and thin Mach-O native images are supported",
-  );
+  throw unrecognizedNativeImage();
 };

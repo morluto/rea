@@ -72,6 +72,16 @@ import {
   espNvsViewRequestSchema,
 } from "./espNvsView.js";
 import {
+  firmwareVectorTablePageContextSchema,
+  firmwareVectorTableViewItemsSchema,
+  firmwareVectorTableViewRequestSchema,
+} from "./firmwareVectorTableView.js";
+import {
+  labviewArtifactPageContextSchema,
+  labviewArtifactViewItemsSchema,
+  labviewArtifactViewRequestSchema,
+} from "./labviewArtifactView.js";
+import {
   elfDependenciesSummarySchema,
   elfDependenciesViewItemsSchema,
   elfDependenciesViewRequestSchema,
@@ -230,6 +240,8 @@ import { desktopApplicationSummaryViewResultSchema } from "./summarySchemas/desk
 import { devicetreeSummaryViewResultSchema } from "./summarySchemas/devicetreeSummarySchema.js";
 import { evtxArchiveSummaryViewResultSchema } from "./summarySchemas/evtxArchiveSummarySchema.js";
 import { espNvsSummaryViewResultSchema } from "./summarySchemas/espNvsSummarySchema.js";
+import { firmwareVectorTableSummaryViewResultSchema } from "./summarySchemas/firmwareVectorTableSummarySchema.js";
+import { labviewArtifactSummaryViewResultSchema } from "./summarySchemas/labviewArtifactSummarySchema.js";
 import {
   uefiExtractionPageViewResultSchema,
   uefiExtractionSummaryViewResultSchema,
@@ -359,6 +371,8 @@ export {
   desktopApplicationSummaryViewResultSchema,
   devicetreeSummaryViewResultSchema,
   espNvsSummaryViewResultSchema,
+  firmwareVectorTableSummaryViewResultSchema,
+  labviewArtifactSummaryViewResultSchema,
   elfDependenciesSummaryViewResultSchema,
   endpointComparisonPageViewResultSchema,
   endpointComparisonSummaryViewResultSchema,
@@ -439,6 +453,8 @@ const viewResultBase = {
     "inspect_erlang_beam",
     "inspect_devicetree",
     "inspect_esp_nvs",
+    "inspect_firmware_vector_table",
+    "inspect_labview_artifact",
     "inspect_byte_entropy",
     "inspect_native_exports",
     "inspect_elf_dependencies",
@@ -803,6 +819,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     devicetreeSummaryViewResultSchema,
     evtxArchiveSummaryViewResultSchema,
     espNvsSummaryViewResultSchema,
+    firmwareVectorTableSummaryViewResultSchema,
+    labviewArtifactSummaryViewResultSchema,
     uefiFirmwareSummaryViewResultSchema,
     uefiExtractionSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
@@ -874,6 +892,22 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: espNvsViewRequestSchema,
     nvs: espNvsPageContextSchema,
     items: espNvsViewItemsSchema,
+  }),
+  z.strictObject({
+    ...viewResultBase,
+    kind: z.literal("firmware-vector-table"),
+    parent_operation: z.literal("inspect_firmware_vector_table"),
+    view: firmwareVectorTableViewRequestSchema,
+    vector_table: firmwareVectorTablePageContextSchema,
+    items: firmwareVectorTableViewItemsSchema,
+  }),
+  z.strictObject({
+    ...viewResultBase,
+    kind: z.literal("labview-artifact"),
+    parent_operation: z.literal("inspect_labview_artifact"),
+    view: labviewArtifactViewRequestSchema,
+    labview: labviewArtifactPageContextSchema,
+    items: labviewArtifactViewItemsSchema,
   }),
   uefiFirmwarePageViewResultSchema,
   uefiExtractionPageViewResultSchema,

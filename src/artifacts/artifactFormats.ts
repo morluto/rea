@@ -43,9 +43,11 @@ import { FitArtifactReader } from "./FitArtifactReader.js";
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { InesArtifactReader } from "./InesArtifactReader.js";
+import { MegaDriveRomArtifactReader } from "./MegaDriveRomArtifactReader.js";
 import { N64RomArtifactReader } from "./N64RomArtifactReader.js";
 import { NdsRomArtifactReader } from "./NdsRomArtifactReader.js";
 import { Iso9660ArtifactReader } from "./Iso9660ArtifactReader.js";
+import { Image4ArtifactReader } from "./Image4ArtifactReader.js";
 import { QualcommMbnArtifactReader } from "./QualcommMbnArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
@@ -494,6 +496,16 @@ const NON_ZIP_FORMATS = {
         options.readerLimits?.expanded_bytes,
       ),
   }),
+  "mega-drive-rom": container("mega-drive-rom", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Mega Drive ROM inventory reports the 68000 vector table and the header at 0x100, checks the declared checksum against the word sum from 0x200 through the declared ROM end, and serves vectors.bin, header.bin and program.bin. An SMD copier dump is de-interleaved into that program image. 32X and Sega CD strings are reported and not decoded further. Nothing is executed.",
+    createReader: (path, options) =>
+      new MegaDriveRomArtifactReader(path, sourceOf(options)),
+  }),
   "n64-rom": container("n64-rom", {
     roleContainer: true,
     retainClassifiedSource: true,
@@ -654,6 +666,7 @@ const NON_ZIP_FORMATS = {
   devicetree: described("devicetree", plain),
   "esp-nvs": described("esp-nvs", plain),
   deb: described("deb", plain),
+  "labview-rsrc": described("labview-rsrc", plain),
   entitlements: described("entitlements", plain),
   directory: container("directory", {
     absentInventory: "unavailable",
@@ -765,6 +778,16 @@ const NON_ZIP_FORMATS = {
       "FIT inventory reports each /images node's stored bytes and its declared type, architecture, OS, compression, load and entry. Image data is not decompressed or decrypted, signatures are not verified, nothing is executed, and load and entry addresses are declarations.",
     createReader: (path, options) =>
       new FitArtifactReader(path, sourceOf(options), options.integrity),
+  }),
+  "apple-img4": container("apple-img4", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Image4 inventory reports IM4P, IM4M and IMG4 structure. Payload bytes are ranged as stored. Keybags are reported and not decrypted. Signatures and certificates are not checked. Compressed payloads are not expanded.",
+    createReader: (path, options) =>
+      new Image4ArtifactReader(path, sourceOf(options)),
   }),
   "qualcomm-mbn": container("qualcomm-mbn", {
     roleContainer: true,
