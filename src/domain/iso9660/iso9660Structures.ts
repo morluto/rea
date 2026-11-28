@@ -110,6 +110,8 @@ export interface Iso9660DirectoryRecord {
   readonly extendedAttributeLength: number;
   readonly extentLocation: number;
   readonly dataLength: number;
+  /** The stored big-endian copy when it disagrees with the little-endian half. */
+  readonly dataLengthCopy: number | null;
   readonly recordingDate: string | null;
   readonly flags: number;
   readonly fileUnitSize: number;
@@ -126,6 +128,8 @@ export interface Iso9660Extent {
   readonly location: number;
   readonly extendedAttributeLength: number;
   readonly dataLength: number;
+  /** The stored big-endian copy when it disagrees with the little-endian half. */
+  readonly dataLengthCopy: number | null;
   /** Absolute image offset of the extent's data, after any extended attribute record. */
   readonly dataOffset: number;
   readonly fileUnitSize: number;
@@ -178,6 +182,25 @@ const readBothEndian = (
       field,
     );
   return value;
+};
+
+/**
+ * Read a both-endian field from its little-endian half, reporting the stored
+ * big-endian copy when the halves disagree. Common mastering programs write a
+ * disagreeing copy in directory records: Linux reads only the little-endian half
+ * "due to broken mastering programs", libarchive never reads the copy, and
+ * pycdlib keeps the little-endian value.
+ */
+const readLittleEndianField = (
+  bytes: Buffer,
+  at: number,
+  width: 2 | 4,
+): { readonly value: number; readonly copy: number | null } => {
+  const little = new BinaryReader(bytes, true, ISO9660_FORMAT);
+  const big = new BinaryReader(bytes, false, ISO9660_FORMAT);
+  const value = width === 4 ? little.u32(at) : little.u16(at);
+  const copy = width === 4 ? big.u32(at + width) : big.u16(at + width);
+  return { value, copy: copy === value ? null : copy };
 };
 
 export const readBothEndian32 = (
@@ -296,11 +319,15 @@ export const iso9660DirectoryRecordAt = (
       base + at + 1,
       "extended_attribute_length",
     );
+  // A directory record's data length comes from its little-endian half; a
+  // disagreeing copy is reported rather than refusing the image.
+  const dataLength = readLittleEndianField(bytes, at + 10, 4);
   return {
     offset: base + at,
     extendedAttributeLength,
     extentLocation: readBothEndian32(bytes, at + 2, base, "extent_location"),
-    dataLength: readBothEndian32(bytes, at + 10, base, "data_length"),
+    dataLength: dataLength.value,
+    dataLengthCopy: dataLength.copy,
     recordingDate: decodeIso9660RecordDate(bytes, at + 18),
     flags,
     fileUnitSize,
@@ -506,12 +533,13 @@ export const extentOf = (
     | "dataLength"
     | "fileUnitSize"
     | "interleaveGapSize"
-  >,
+  > & { readonly dataLengthCopy?: number | null },
 ): Iso9660Extent => ({
   recordOffset: record.offset,
   location: record.extentLocation,
   extendedAttributeLength: record.extendedAttributeLength,
   dataLength: record.dataLength,
+  dataLengthCopy: record.dataLengthCopy ?? null,
   dataOffset:
     (record.extentLocation +
       record.extendedAttributeLength +

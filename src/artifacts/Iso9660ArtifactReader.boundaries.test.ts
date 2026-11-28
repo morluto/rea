@@ -420,13 +420,27 @@ it.each([0xd800, 0xdfff])(
   },
 );
 
-it("fails a both-endian directory record disagreement as malformed", async () => {
+/**
+ * A directory record's data length comes from its little-endian half. Linux reads
+ * only that half "due to broken mastering programs", libarchive never reads the
+ * copy, and pycdlib keeps the little-endian value; one disagreeing copy therefore
+ * costs the entry's confirmation, not the rest of the image.
+ */
+it("reports a both-endian directory record disagreement as a limitation", async () => {
   const { bytes, layout } = image();
-  bytes.writeUInt32BE(9, layout.primaryRecords.get("top.txt")! + 14);
-  await expect(inventory(bytes)).rejects.toMatchObject({
-    reason: "malformed",
-    message: expect.stringContaining("data_length"),
-  });
+  const record = layout.primaryRecords.get("top.txt")!;
+  const littleEndian = bytes.readUInt32LE(record + 10);
+  bytes.writeUInt32BE(9, record + 14);
+  const snapshot = await scanCanonicalArtifactInventory(await fixture(bytes));
+  const entry = snapshot.occurrences.find(
+    (row) => row.logical_path === "top.txt",
+  );
+  expect(entry).toMatchObject({ declared_size: littleEndian });
+  expect(
+    entry?.limitations.some(
+      (line) => line.includes(String(littleEndian)) && line.includes("9"),
+    ),
+  ).toBe(true);
 });
 
 it("fails a directory that points back at an ancestor as a cycle", async () => {

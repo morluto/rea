@@ -456,6 +456,13 @@ const entryFor = (
     unpacked: false,
     limitations: [
       ...(layout === "contiguous" ? [] : [layoutLimitation(layout)]),
+      // A record whose stored big-endian copy disagrees names both values, so the
+      // size stays visible as unconfirmed rather than costing the rest of the image.
+      ...(first.dataLengthCopy === null
+        ? []
+        : [
+            `ISO 9660 directory record stores ${String(first.dataLength)} bytes in its little-endian half and ${String(first.dataLengthCopy)} in the big-endian copy; the little-endian value is reported and the size is unconfirmed.`,
+          ]),
       ...(!member.directory &&
       member.dataLength === 0 &&
       first.extendedAttributeLength === 0 &&
