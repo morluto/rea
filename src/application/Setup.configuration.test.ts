@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
@@ -414,7 +414,13 @@ it("offers shared skill intent when the detected personal copy is current", asyn
   expect(result.plannedActions).toEqual([
     expect.objectContaining({
       id: "install_skill",
-      target: `${host.homeDirectory}/.agents/skills/reverse-engineer-anything`,
+      // The fake host simulates macOS, so the target uses POSIX separators on any test host.
+      target: posix.join(
+        host.homeDirectory,
+        ".agents",
+        "skills",
+        "reverse-engineer-anything",
+      ),
     }),
   ]);
   expect(host.configurations).toBe(0);

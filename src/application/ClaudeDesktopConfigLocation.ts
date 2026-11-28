@@ -122,38 +122,8 @@ export const resolveWindowsClaudeDesktopLocation = (
       path: packagesDirectory,
       message: `Found multiple Claude Desktop package families under ${packagesDirectory}: ${families.join(", ")}. Open Settings > Developer > Edit Config in the intended app to identify its configuration.`,
     });
-  if (family !== undefined) {
-    const container = join(packagesDirectory, family);
-    if (family.toLowerCase() === STORE_PACKAGE_FAMILY.toLowerCase())
-      return resolveStoreLocation(
-        fileSystem,
-        roots,
-        family,
-        container,
-        env.CLAUDE_USER_DATA_DIR,
-      );
-    if (family.toLowerCase() !== CLAUDE_DESKTOP_PACKAGE_FAMILY.toLowerCase())
-      return err({
-        path: container,
-        message: `MSIX package storage ${container} has an unrecognized Claude Desktop package identity. REA cannot establish which ${CONFIG_FILE} that package reads and does not fall back to ${appDataConfigPath}. Open Settings > Developer > Edit Config in Claude Desktop to locate its configuration.`,
-      });
-  }
-  const migratedDirectory = join(
-    roots.local,
-    "Claude-Data",
-    CLAUDE_DESKTOP_PACKAGE_FAMILY.toLowerCase(),
-  );
-  const migrated = present(fileSystem, migratedDirectory);
-  const migratedConfigPath = join(migratedDirectory, CONFIG_FILE);
-  const migrationFailure = !migrated.ok
-    ? migrated.error
-    : migrated.value
-      ? {
-          path: migratedConfigPath,
-          message: `Found migrated Claude Desktop storage at ${migratedDirectory}. REA cannot verify which configuration the installed app reads. Quit Claude Desktop fully, verify whether it reads ${migratedConfigPath}, then register REA manually in the active file.`,
-        }
-      : undefined;
   if (family === undefined) {
+    const migrationFailure = legacyMigrationFailure(fileSystem, roots.local);
     if (migrationFailure !== undefined) return err(migrationFailure);
     const storeProfile = join(
       roots.local,
@@ -170,6 +140,20 @@ export const resolveWindowsClaudeDesktopLocation = (
     return ok({ configPath: appDataConfigPath, markerPath: appDataDirectory });
   }
   const container = join(packagesDirectory, family);
+  if (family.toLowerCase() === STORE_PACKAGE_FAMILY.toLowerCase())
+    return resolveStoreLocation(
+      fileSystem,
+      roots,
+      family,
+      container,
+      env.CLAUDE_USER_DATA_DIR,
+    );
+  if (family.toLowerCase() !== CLAUDE_DESKTOP_PACKAGE_FAMILY.toLowerCase())
+    return err({
+      path: container,
+      message: `MSIX package storage ${container} has an unrecognized Claude Desktop package identity. REA cannot establish which ${CONFIG_FILE} that package reads and does not fall back to ${appDataConfigPath}. Open Settings > Developer > Edit Config in Claude Desktop to locate its configuration.`,
+    });
+  const migrationFailure = legacyMigrationFailure(fileSystem, roots.local);
   const privateRoaming = join(container, "LocalCache", "Roaming");
   const privateDirectory = join(privateRoaming, "Claude");
   const privateConfigPath = join(privateDirectory, CONFIG_FILE);
@@ -201,6 +185,29 @@ export const resolveWindowsClaudeDesktopLocation = (
     markerPath: container,
     msixPackage: packageView(),
   });
+};
+
+/**
+ * Migrated storage of the legacy package, which some installations have been
+ * observed reading instead of AppData or the package-private copy (#8968).
+ */
+const legacyMigrationFailure = (
+  fileSystem: ClaudeDesktopLocationFileSystem,
+  localAppData: string,
+): ClaudeDesktopLocationFailure | undefined => {
+  const migratedDirectory = join(
+    localAppData,
+    "Claude-Data",
+    CLAUDE_DESKTOP_PACKAGE_FAMILY.toLowerCase(),
+  );
+  const migrated = present(fileSystem, migratedDirectory);
+  if (!migrated.ok) return migrated.error;
+  if (!migrated.value) return undefined;
+  const migratedConfigPath = join(migratedDirectory, CONFIG_FILE);
+  return {
+    path: migratedConfigPath,
+    message: `Found migrated Claude Desktop storage at ${migratedDirectory}. REA cannot verify which configuration the installed app reads. Quit Claude Desktop fully, verify whether it reads ${migratedConfigPath}, then register REA manually in the active file.`,
+  };
 };
 
 /** The Store app can use a migrated standard profile or a separate 3P deployment. */

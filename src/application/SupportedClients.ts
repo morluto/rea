@@ -490,7 +490,7 @@ export const registrationWriteBlocker = (
       : storage.kind === "roaming_overlay"
         ? `Remove REA's entry by hand from each of ${storage.privateConfigPath} and ${storage.appDataConfigPath} that has one`
         : `Remove REA's entry by hand from ${client.configPath}`;
-  return `REA cannot tell whether ${name}'s MSIX package ${msix.packageFamilyName} started this process, because ${comparison}. The running app could overwrite the change. ${manualEdit} while ${name} is fully quit, or rerun ${operation} from a terminal that ${name} did not start once REA can compare a private file there.`;
+  return `REA cannot tell whether ${name}'s MSIX package ${msix.packageFamilyName} started this process, because ${comparison}. The running app could overwrite the change. ${manualEdit} while ${name} is fully quit, or rerun ${operation} from a terminal that ${name} did not start once REA can compare one of the package's private roaming files.`;
 };
 
 /** The MSIX package view, if any, that redirects this process's AppData writes. */
