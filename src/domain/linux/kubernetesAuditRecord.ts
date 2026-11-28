@@ -106,6 +106,10 @@ export const parseKubernetesAuditLine = (
       return `objectRef.${pendingKey}`;
     return undefined;
   };
+  const forgetOmission = (): void => {
+    const key = fieldKey();
+    if (key !== undefined) budgetOmittedFields.delete(key);
+  };
 
   const top = (): Frame | undefined => stack.at(-1);
   const skipping = (): boolean => top()?.kind === "skip";
@@ -197,6 +201,7 @@ export const parseKubernetesAuditLine = (
       sawStatus = true;
       responseStatus.code = null;
     }
+    forgetOmission();
   };
 
   /** A container where a scalar or string list was required leaves that field null. */
@@ -233,6 +238,7 @@ export const parseKubernetesAuditLine = (
       ROOT_STRINGS.has(pendingKey)
     ) {
       value[pendingKey] = null;
+      forgetOmission();
       return;
     }
     if (frame?.kind === "user" && pendingKey === "groups") {
@@ -258,6 +264,7 @@ export const parseKubernetesAuditLine = (
       sawStatus = true;
       responseStatus.code = null;
     }
+    forgetOmission();
   };
 
   const pushValue = (token: "object" | "array"): void => {
@@ -379,9 +386,9 @@ export const parseKubernetesAuditLine = (
         break;
       case "endString":
         if (capture === "string" && stringOverflow) {
+          rejectScalar();
           const key = fieldKey();
           if (key !== undefined) budgetOmittedFields.add(key);
-          rejectScalar();
           const list = top();
           if (list?.kind === "strings") {
             list.invalid = true;

@@ -618,6 +618,19 @@ it("clears groups when a later scalar replaces the list", async () => {
   });
 });
 
+it("clears budget omission when a later null replaces the value", async () => {
+  const metadata = await metadataOf(
+    `{"apiVersion":"audit.k8s.io/v1","auditID":"agent-null","stage":"RequestReceived","requestURI":"/api","verb":"get","userAgent":"${"x".repeat(200_000)}","userAgent":null}\n`,
+  );
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "agent-null",
+    request_uri: "/api",
+    verb: "get",
+    user_agent: null,
+    request_fields_omitted: false,
+  });
+});
+
 it("keeps a small duplicate after an over-budget value", async () => {
   const metadata = await metadataOf(
     `{"apiVersion":"audit.k8s.io/v1","auditID":"agent","stage":"RequestReceived","requestURI":"/api","verb":"get","userAgent":"${"x".repeat(200_000)}","userAgent":"kubectl"}\n`,
