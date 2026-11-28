@@ -42,6 +42,7 @@ import { managedSignatureTypeNames } from "../domain/managed/managedSignatureTyp
 import { typeNameLookup } from "./ManagedTypeNames.js";
 import { managedTypeReferences } from "../domain/managed/managedTypeReferences.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
+import { parseManagedInterfaceImplementations } from "./ManagedInterfaces.js";
 import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 import { prepareManagedMemberRecovery } from "./ManagedMemberRecovery.js";
 import {
@@ -91,6 +92,7 @@ const unavailable = (
       assembly: null,
       nesting_read: false,
       exported_types: null,
+      interface_implementations: null,
       user_strings: null,
       fields: [],
       methods: [],
@@ -273,7 +275,7 @@ export const inspectManagedMembersBytes = (
       ...(selection === null
         ? []
         : [
-            "Types, fields, methods, member references, call edges, field accesses, and user strings cover only the selected declaring types; coverage describes that selection. Member references are the MemberRef rows the selected method bodies use, and exported types are the ExportedType rows whose full name was selected. Edge targets outside the selection keep their names but are not described.",
+            "Types, interface declarations, fields, methods, member references, call edges, field accesses, and user strings cover only the selected declaring types; coverage describes that selection. Member references are the MemberRef rows the selected method bodies use, and exported types are the ExportedType rows whose full name was selected. Edge targets outside the selection keep their names but are not described.",
           ]),
       ...(unreadableNames === 0
         ? []
@@ -497,6 +499,7 @@ export const inspectManagedMembersBytes = (
         signature_resolution: "type-names-v2",
         nesting_read: parsedTypes.nesting.complete,
         exported_types: selectedExportedTypes,
+        interface_implementations: null,
         fields: fields.fields,
         methods: resolvedMethods,
         member_refs: selectedMemberRefs,
@@ -522,6 +525,7 @@ export const inspectManagedMembersBytes = (
           "CIL instruction anchors are decoded from file-backed method bodies only; no target assembly is loaded or executed.",
           "Field constants are file-backed Constant-table declarations, not runtime field values. Parameter and property defaults and enum-name mappings are not decoded.",
           "Exported types are reported from ExportedType rows as declared; forwarded types are not resolved in their implementing assemblies.",
+          "InterfaceImpl rows declare explicit interfaces, not inherited interface closure, generic-argument identity, assembly resolution or runtime dispatch. Their coverage is independent of method and field decoding.",
           "User strings are the #US literals loaded by ldstr in the inspected method bodies, with their own coverage; instruction anchors and normalized CIL digests keep their build-local tokens.",
           "Member signatures decode ECMA-335 primitive, class, valuetype, generic instantiation, generic variable, pointer, byref, single-dimension and general array, function pointer including VARARG sentinels, custom modifier, and typed reference forms; type operands keep their encoded TypeDefOrRefOrSpec values and append readable TypeDef/TypeRef names when resolved.",
           ...selectionLimitations,
@@ -529,8 +533,47 @@ export const inspectManagedMembersBytes = (
       },
       budget,
     );
-    if (!readUserStrings)
-      return managedMemberInspectionSchema.parse(baseInspection);
+    const withInterfaces = (
+      userStrings: ManagedMemberInspection["user_strings"] = null,
+      limitations = baseInspection.limitations,
+    ): ManagedMemberInspection => {
+      const report = {
+        ...baseInspection,
+        user_strings: userStrings,
+        limitations,
+      };
+      try {
+        return managedMemberInspectionSchema.parse({
+          ...report,
+          interface_implementations: admitManagedProjection(
+            parseManagedInterfaceImplementations(
+              bytes,
+              layout,
+              ranges,
+              parsedTypes,
+              selected,
+              unreadableNames,
+            ),
+            budget,
+          ),
+        });
+      } catch (cause: unknown) {
+        if (!(cause instanceof ManagedRepresentationFailure)) throw cause;
+        return managedMemberInspectionSchema.parse({
+          ...report,
+          interface_implementations: {
+            state: "partial",
+            rows: [],
+            issues: [{ ...cause.issue, scope: "metadata.InterfaceImpl" }],
+          },
+          limitations: [
+            ...report.limitations,
+            "Interface declaration decoding exceeded max_metadata_representation_bytes after the member facts were decoded; those facts are kept, and an empty interface row list does not establish absence. Select fewer type_names or raise max_metadata_representation_bytes to read the declarations.",
+          ],
+        });
+      }
+    };
+    if (!readUserStrings) return withInterfaces();
     let userStrings: ManagedMemberInspection["user_strings"];
     try {
       // #US literals sit beside the member inventory and carry their own
@@ -551,24 +594,20 @@ export const inspectManagedMembersBytes = (
             code === cause.issue.code && scope === cause.issue.scope,
         )
       )
-        return managedMemberInspectionSchema.parse(baseInspection);
-      return managedMemberInspectionSchema.parse({
-        ...baseInspection,
-        user_strings: {
+        return withInterfaces();
+      return withInterfaces(
+        {
           state: "partial",
           literals: [],
           issues: [{ ...cause.issue, scope: "metadata.#US" }],
         },
-        limitations: [
+        [
           ...baseInspection.limitations,
           "User string decoding exceeded max_metadata_representation_bytes after the member facts were decoded; the members are kept and the #US literals are not examined. Select fewer type_names or raise max_metadata_representation_bytes to read them.",
         ],
-      });
+      );
     }
-    return managedMemberInspectionSchema.parse({
-      ...baseInspection,
-      user_strings: userStrings,
-    });
+    return withInterfaces(userStrings);
   } catch (cause: unknown) {
     if (cause instanceof ManagedReaderFailure) {
       if (

@@ -213,6 +213,22 @@ const managedExportedTypeSchema = z.object({
   implementation_token: managedMetadataTokenSchema.nullable(),
 });
 
+const managedInterfaceImplementationSchema = z.object({
+  token: managedMetadataTokenSchema,
+  row_offset: offsetSchema,
+  class_row: z.int().min(0).max(0xffff_ffff),
+  class_token: managedMetadataTokenSchema.nullable(),
+  declaring_type: z.string().nullable(),
+  interface_coded_index: z.int().min(0).max(0xffff_ffff),
+  interface_token: managedMetadataTokenSchema.nullable(),
+  interface_name: z
+    .string()
+    .nullable()
+    .describe(
+      "Declared TypeDef/TypeRef name, or the nominal generic type of a TypeSpec; not assembly identity, generic arguments, inherited interfaces or runtime dispatch.",
+    ),
+});
+
 const managedFieldSchema = z.object({
   token: managedMetadataTokenSchema,
   row_offset: offsetSchema,
@@ -602,6 +618,17 @@ export const managedMemberInspectionSchema = z
     // Null means the table was not examined (member decoding exceeded capacity),
     // not that it was empty.
     exported_types: z.array(managedExportedTypeSchema).nullable(),
+    interface_implementations: z
+      .object({
+        state: knownCoverageStatusSchema,
+        rows: z.array(managedInterfaceImplementationSchema),
+        issues: z.array(managedParseIssueSchema),
+      })
+      .nullable()
+      .exactOptional()
+      .describe(
+        "Explicit InterfaceImpl declarations for the selected types, independent of MethodDef paging, with their own coverage. Complete describes declaration rows, not name resolution or external binding; nullable names remain unknown. Null or omission means not examined; an empty complete inventory establishes no explicit declarations in the selection.",
+      ),
     fields: z.array(managedFieldSchema),
     methods: z.array(managedMethodSchema),
     member_refs: z.array(managedMemberReferenceSchema),
