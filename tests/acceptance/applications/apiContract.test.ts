@@ -348,7 +348,7 @@ cliTest(
       declared: 17,
       unknown: 3,
       unresolved_path_items: 2,
-      diagnostics: 1,
+      diagnostics: 2,
     });
     const source = retained(parent);
     const refs = asView(

@@ -57,7 +57,6 @@
   "src/domain/analysisView/webSourceLocationView.ts": 1,
   "src/domain/apiContract/GraphqlDocuments.ts": 2,
   "src/domain/apiContract/GraphqlInventory.ts": 1,
-  "src/domain/apiContract/parseApiContract.ts": 1,
   "src/domain/apiContract/parseGraphqlContract.ts": 1,
   "src/domain/explicitSensitiveFailure.ts": 1,
   "src/domain/javascript/javascriptSemanticWorkAllowance.ts": 1,

@@ -22,7 +22,7 @@
   "src/domain/analysisView/nativeFunctionMatchingView.ts": 1,
   "src/domain/analysisView/recordedArrayView.ts": 2,
   "src/domain/apiContract/GraphqlInventory.ts": 1,
-  "src/domain/apiContract/parseApiContract.ts": 1,
+  "src/domain/apiContract/contractInventory.ts": 1,
   "src/domain/pngVisualDiff.ts": 1,
   "src/ghidra/GhidraLanguageCatalog.ts": 1,
   "src/hopper/HopperCallerReconciliation.ts": 1,

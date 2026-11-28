@@ -6,6 +6,7 @@ import {
   apiContractSchema,
   type ApiContractArtifact,
 } from "./apiContract.js";
+import { API_CONTRACT_MAX_LOCAL_REF_EXPANSIONS } from "./resolveLocalRefs.js";
 import { parseApiContractSteps } from "./parseApiContract.js";
 import { AnalysisCancelledError } from "../analysisErrorCore.js";
 
@@ -149,11 +150,437 @@ it("preserves unresolved local, cyclic and remote Path Items without following t
     reason: "unresolved-path-item-reference",
   });
   expect(value.source_coverage.status).toBe("partial");
+  expect(value.source_coverage.reference_resolution).toBe("local-only");
+  expect(value.diagnostics.map((row) => row.code)).toEqual([
+    "unresolved-path-reference",
+  ]);
   expect(value.summary).toMatchObject({
     declared: 0,
     unknown: 1,
     unresolved_path_items: 3,
   });
+});
+
+it("resolves local same-document references, including components and chained refs", () => {
+  const input = {
+    openapi: "3.1.2",
+    info: { title: "Owned API", version: "1" },
+    paths: {
+      "/a": { $ref: "#/components/pathItems/Shared" },
+      "/b": { $ref: "#/paths/~1a" },
+      "/c": { $ref: "#/components/pathItems/Chain" },
+    },
+    components: {
+      pathItems: {
+        Shared: { get: { operationId: "shared" }, post: {} },
+        Chain: { $ref: "#/components/pathItems/Shared" },
+      },
+    },
+  };
+  const value = report(input);
+  expect(value.path_item_references.map((row) => row.state)).toEqual([
+    "resolved",
+    "resolved",
+    "resolved",
+  ]);
+  expect(value.operations).toHaveLength(6);
+  // Source pointers name where each operation is declared, not the alias
+  // that referenced it; the effective path stays in `path`.
+  expect(value.operations.map((row) => row.source_pointer)).toEqual([
+    "/components/pathItems/Shared/get",
+    "/components/pathItems/Shared/post",
+    "/components/pathItems/Shared/get",
+    "/components/pathItems/Shared/post",
+    "/components/pathItems/Shared/get",
+    "/components/pathItems/Shared/post",
+  ]);
+  expect(value.operations.map((row) => row.path)).toEqual([
+    "/a",
+    "/a",
+    "/b",
+    "/b",
+    "/c",
+    "/c",
+  ]);
+  expect(
+    value.operations.filter((row) => row.declared_id === "shared"),
+  ).toHaveLength(3);
+  expect(value.operations.every((row) => row.state === "declared")).toBe(true);
+  expect(value.summary).toEqual({
+    operation_slots: 6,
+    declared: 6,
+    unknown: 0,
+    unresolved_path_items: 0,
+    diagnostics: 0,
+  });
+  expect(value.source_coverage).toMatchObject({
+    status: "complete-within-scope",
+    reference_resolution: "local-only",
+  });
+});
+
+it("unescapes RFC 6901 tokens when resolving local references", () => {
+  const input = document({
+    "/plain": { $ref: "#/paths/~1a~1~0b" },
+    "/a/~b": { get: { operationId: "escaped" } },
+  });
+  const value = report(input);
+  expect(value.path_item_references[0]).toMatchObject({ state: "resolved" });
+  expect(value.operations).toHaveLength(2);
+  expect(value.operations[0]).toMatchObject({
+    path: "/plain",
+    declared_id: "escaped",
+    source_pointer: "/paths/~1a~1~0b/get",
+    state: "declared",
+  });
+});
+
+it("percent-decodes URI fragments before JSON Pointer parsing", () => {
+  const input = document({
+    "/plain": { $ref: "#/paths/~1users~1%7Bid%7D" },
+    "/users/{id}": { get: { operationId: "by-id" } },
+  });
+  const value = report(input);
+  expect(value.path_item_references[0]).toMatchObject({ state: "resolved" });
+  expect(value.operations).toHaveLength(2);
+  expect(value.operations[0]).toMatchObject({
+    path: "/plain",
+    declared_id: "by-id",
+    source_pointer: "/paths/~1users~1{id}/get",
+    state: "declared",
+  });
+  expect(value.operations[1]).toMatchObject({
+    path: "/users/{id}",
+    declared_id: "by-id",
+    source_pointer: "/paths/~1users~1{id}/get",
+    state: "declared",
+  });
+});
+
+it("keeps operations declared on intermediate chain items", () => {
+  const input = {
+    ...document({
+      "/alias": { $ref: "#/components/pathItems/Mid" },
+    }),
+    components: {
+      pathItems: {
+        Mid: {
+          $ref: "#/components/pathItems/End",
+          post: { operationId: "mid-post" },
+        },
+        End: { get: { operationId: "end-get" } },
+      },
+    },
+  };
+  const value = report(input);
+  expect(value.path_item_references[0]).toMatchObject({ state: "resolved" });
+  expect(value.operations).toHaveLength(2);
+  expect(value.operations.map((row) => row.method)).toEqual(["POST", "GET"]);
+  expect(value.operations.map((row) => row.declared_id)).toEqual([
+    "mid-post",
+    "end-get",
+  ]);
+  expect(value.operations.map((row) => row.source_pointer)).toEqual([
+    "/components/pathItems/Mid/post",
+    "/components/pathItems/End/get",
+  ]);
+  expect(value.operations.every((row) => row.state === "declared")).toBe(true);
+  expect(value.summary).toMatchObject({
+    declared: 2,
+    unresolved_path_items: 0,
+  });
+});
+
+it("does not resolve an inherited member such as __proto__", () => {
+  const value = report(document({ "/alias": { $ref: "#/__proto__" } }));
+  expect(value.path_item_references[0]).toMatchObject({ state: "unresolved" });
+  expect(value.operations).toHaveLength(0);
+  expect(value.diagnostics.map((row) => row.code)).toEqual([
+    "unresolved-path-reference",
+  ]);
+});
+
+it("does not accept a target whose $ref is malformed", () => {
+  const input = {
+    ...document({
+      "/alias": { $ref: "#/components/pathItems/Shared" },
+    }),
+    components: { pathItems: { Shared: { $ref: 123, get: {} } } },
+  };
+  const value = report(input);
+  expect(value.path_item_references[0]).toMatchObject({ state: "unresolved" });
+  expect(value.operations).toHaveLength(0);
+  expect(value.diagnostics).toEqual([
+    expect.objectContaining({
+      code: "invalid-path-reference",
+      source_pointer: "/components/pathItems/Shared/$ref",
+    }),
+  ]);
+  expect(value.summary).toMatchObject({ unresolved_path_items: 1 });
+});
+
+it("reports one diagnostic for a malformed target reached twice", () => {
+  const input = {
+    ...document({
+      "/first": { $ref: "#/components/pathItems/Shared" },
+      "/second": { $ref: "#/components/pathItems/Shared" },
+    }),
+    components: { pathItems: { Shared: { $ref: 123, get: {} } } },
+  };
+  const value = report(input);
+  expect(value.path_item_references.map((row) => row.state)).toEqual([
+    "unresolved",
+    "unresolved",
+  ]);
+  expect(value.operations).toHaveLength(0);
+  expect(value.diagnostics).toHaveLength(1);
+  expect(value.diagnostics[0]).toMatchObject({
+    code: "invalid-path-reference",
+    source_pointer: "/components/pathItems/Shared/$ref",
+  });
+  expect(new Set(value.diagnostics.map((row) => row.diagnostic_id)).size).toBe(
+    1,
+  );
+});
+
+it("reports one diagnostic for a shared target's unknown field", () => {
+  const input = {
+    ...document({
+      "/first": { $ref: "#/components/pathItems/Shared" },
+      "/second": { $ref: "#/components/pathItems/Shared" },
+    }),
+    components: {
+      pathItems: { Shared: { get: {}, "not-a-field": true } },
+    },
+  };
+  const value = report(input);
+  expect(value.operations).toHaveLength(2);
+  expect(
+    value.diagnostics.filter((row) => row.code === "unknown-path-item-field"),
+  ).toHaveLength(1);
+  expect(new Set(value.diagnostics.map((row) => row.diagnostic_id)).size).toBe(
+    1,
+  );
+});
+
+it("reports one diagnostic for a shared target's malformed operation", () => {
+  const input = {
+    ...document({
+      "/first": { $ref: "#/components/pathItems/Shared" },
+      "/second": { $ref: "#/components/pathItems/Shared" },
+    }),
+    components: { pathItems: { Shared: { get: null } } },
+  };
+  const value = report(input);
+  expect(value.operations).toHaveLength(2);
+  expect(
+    value.operations.every(
+      (row) => row.state === "unknown" && row.reason === "malformed-operation",
+    ),
+  ).toBe(true);
+  expect(
+    value.diagnostics.filter((row) => row.code === "invalid-operation"),
+  ).toHaveLength(1);
+});
+
+it("preserves a method declared both by reference and inline as unknown", () => {
+  const input = {
+    ...document(
+      {
+        "/alias": {
+          $ref: "#/components/pathItems/Shared",
+          get: { operationId: "inline-get" },
+        },
+      },
+      "3.1.2",
+    ),
+    components: {
+      pathItems: { Shared: { get: { operationId: "shared-get" } } },
+    },
+  };
+  const value = report(input);
+  expect(value.path_item_references[0]).toMatchObject({ state: "resolved" });
+  expect(value.operations).toHaveLength(1);
+  expect(value.operations[0]).toMatchObject({
+    method: "GET",
+    path: "/alias",
+    declared_id: null,
+    state: "unknown",
+    reason: "conflicting-operation",
+  });
+  expect(value.diagnostics).toEqual([
+    expect.objectContaining({
+      code: "conflicting-operation",
+      source_pointer: "/paths/~1alias/get",
+    }),
+  ]);
+  expect(value.diagnostics[0]?.message).toContain(
+    "/components/pathItems/Shared/get",
+  );
+  expect(value.summary).toMatchObject({
+    operation_slots: 1,
+    declared: 0,
+    unknown: 1,
+  });
+});
+
+it("preserves a method declared twice across a reference chain as unknown", () => {
+  const input = {
+    ...document({
+      "/alias": { $ref: "#/components/pathItems/Mid" },
+    }),
+    components: {
+      pathItems: {
+        Mid: {
+          $ref: "#/components/pathItems/End",
+          post: { operationId: "mid-post" },
+        },
+        End: { post: { operationId: "end-post" } },
+      },
+    },
+  };
+  const value = report(input);
+  expect(value.operations).toHaveLength(1);
+  expect(value.operations[0]).toMatchObject({
+    method: "POST",
+    state: "unknown",
+    reason: "conflicting-operation",
+  });
+  expect(value.diagnostics.map((row) => row.code)).toEqual([
+    "conflicting-operation",
+  ]);
+});
+
+it("keeps inline sibling operations declared once their reference resolves", () => {
+  const input = {
+    ...document(
+      {
+        "/mixed": {
+          $ref: "#/components/pathItems/Shared",
+          post: { operationId: "sibling" },
+        },
+      },
+      "3.1.2",
+    ),
+    components: { pathItems: { Shared: { get: { operationId: "shared" } } } },
+  };
+  const value = report(input);
+  expect(value.operations.map((row) => row.declared_id)).toEqual([
+    "shared",
+    "sibling",
+  ]);
+  expect(value.operations.every((row) => row.state === "declared")).toBe(true);
+  expect(value.path_item_references[0]).toMatchObject({ state: "resolved" });
+});
+
+it("records direct and indirect reference cycles as unresolved", () => {
+  const input = document({
+    "/self": { $ref: "#/paths/~1self" },
+    "/first": { $ref: "#/paths/~1second" },
+    "/second": { $ref: "#/paths/~1first" },
+  });
+  const value = report(input);
+  expect(value.path_item_references.map((row) => row.state)).toEqual([
+    "unresolved",
+    "unresolved",
+    "unresolved",
+  ]);
+  expect(value.operations).toHaveLength(0);
+  expect(value.diagnostics.map((row) => row.code)).toEqual([
+    "unresolved-path-reference",
+    "unresolved-path-reference",
+    "unresolved-path-reference",
+  ]);
+  expect(value.diagnostics[0]?.message).toContain("cycle");
+  expect(value.summary).toMatchObject({
+    unresolved_path_items: 3,
+    diagnostics: 3,
+  });
+  expect(value.source_coverage.reference_resolution).toBe("local-only");
+});
+
+it("records missing targets and invalid local pointers as unresolved", () => {
+  const input = document({
+    "/missing": { $ref: "#/components/pathItems/Nope" },
+    "/bad-pointer": { $ref: "#not-a-pointer" },
+    "/whole-doc": { $ref: "#" },
+    "/not-an-item": { $ref: "#/info/title" },
+  });
+  const value = report(input);
+  expect(value.path_item_references.map((row) => row.state)).toEqual([
+    "unresolved",
+    "unresolved",
+    "unresolved",
+    "unresolved",
+  ]);
+  expect(value.diagnostics.map((row) => row.code)).toEqual(
+    Array(4).fill("unresolved-path-reference"),
+  );
+  expect(value.summary).toMatchObject({
+    unresolved_path_items: 4,
+    diagnostics: 4,
+  });
+});
+
+it("refuses external and relative-file references without resolving them", () => {
+  const input = document({
+    "/remote": { $ref: "http://127.0.0.1:9/reference.json" },
+    "/file": { $ref: "./sibling.json#/paths/~1other" },
+  });
+  const value = report(input);
+  expect(value.path_item_references.map((row) => row.state)).toEqual([
+    "unresolved",
+    "unresolved",
+  ]);
+  expect(value.diagnostics).toEqual([]);
+  expect(value.source_coverage.reference_resolution).toBe("not-attempted");
+  expect(value.summary).toMatchObject({ unresolved_path_items: 2 });
+});
+
+it("stops reference chains at the depth budget", () => {
+  const paths: Record<string, unknown> = {};
+  const chain = 12;
+  for (let index = 0; index < chain; index++)
+    paths[`/link${index}`] = { $ref: `#/paths/~1link${index + 1}` };
+  paths[`/link${chain}`] = { get: { operationId: "end" } };
+  const value = report(document(paths));
+  expect(value.summary).toEqual({
+    operation_slots: 12,
+    declared: 12,
+    unknown: 0,
+    unresolved_path_items: 1,
+    diagnostics: 1,
+  });
+  expect(value.diagnostics.map((row) => row.code)).toEqual([
+    "unresolved-path-reference",
+  ]);
+  expect(value.diagnostics[0]?.message).toContain("depth budget");
+});
+
+it("stops resolving at the per-document expansion budget", () => {
+  const paths: Record<string, unknown> = {};
+  const total = API_CONTRACT_MAX_LOCAL_REF_EXPANSIONS + 1;
+  for (let index = 0; index < total; index++)
+    paths[`/ref${index}`] = { $ref: "#/components/pathItems/Shared" };
+  const input = {
+    ...document(paths),
+    components: { pathItems: { Shared: { get: {} } } },
+  };
+  const value = report(input);
+  expect(value.summary).toEqual({
+    operation_slots: API_CONTRACT_MAX_LOCAL_REF_EXPANSIONS,
+    declared: API_CONTRACT_MAX_LOCAL_REF_EXPANSIONS,
+    unknown: 0,
+    unresolved_path_items: 1,
+    diagnostics: 1,
+  });
+  expect(value.diagnostics[0]?.message).toContain("expansion budget");
+  expect(value.diagnostics[0]?.message).toContain(
+    "api-contract-local-ref-expansions",
+  );
+  expect(value.diagnostics[0]?.message).toContain(
+    "reduce the number of local $ref resolutions",
+  );
 });
 
 it("keeps usable siblings, malformed slots and missing values distinct", () => {
