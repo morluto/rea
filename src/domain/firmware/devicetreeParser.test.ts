@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import {
   DEVICETREE_READ_BUDGETS,
+  type Devicetree,
   devicetreeSchema,
   inspectDevicetreeInputSchema,
 } from "./devicetree.js";
@@ -475,95 +476,127 @@ it("bounds repeated reference paths before Evidence serialization", () => {
   expect(() => parse(bytes)).toThrow("max_decoded_bytes");
 });
 
-/**
- * A property the reader could not decode leaves the inventory incomplete, so the
- * coverage claim follows the recorded limitations rather than staying complete.
- */
+const propertyAt = (report: Devicetree, path: string, name: string) =>
+  report.nodes
+    .find((node) => node.path === path)
+    ?.properties.find((property) => property.name === name);
+
+// Capability notes are always recorded. One extra line is the undecoded fact.
+const CAPABILITY_NOTES = 2;
+
 it("reports partial coverage when a reg property was not decoded", () => {
-  const report = parse(
-    devicetreeFixture({
-      name: "",
-      properties: {
-        compatible: dtString("test,board"),
-        // More address cells than this reader decodes makes `reg` undecodable.
-        "#address-cells": cells(5),
-        "#size-cells": cells(1),
-      },
-      children: [{ name: "dev@1000", properties: { reg: cells(0, 1) } }],
-    }),
-  );
-  expect(
-    report.limitations.some((line) => line.includes("reg at /dev@1000")),
-  ).toBe(true);
-  expect(report.coverage.status).toBe("partial");
-});
-
-/** A tree the reader decoded completely still claims complete coverage. */
-it("keeps complete coverage when nothing was left undecoded", () => {
-  const report = parse(
-    devicetreeFixture({
-      name: "",
-      properties: {
-        compatible: dtString("test,board"),
-        "#address-cells": cells(1),
-        "#size-cells": cells(1),
-      },
-      children: [{ name: "dev@1000", properties: { reg: cells(0, 1) } }],
-    }),
-  );
-  expect(report.coverage.status).toBe("complete");
-});
-
-/** A phandle that is not a single cell leaves that node's identity unresolved. */
-it("reports partial coverage when a phandle is not a single cell", () => {
-  const report = parse(
-    devicetreeFixture({
-      name: "",
-      properties: {
-        compatible: dtString("test,board"),
-        "#address-cells": cells(1),
-        "#size-cells": cells(1),
-      },
-      children: [
-        {
-          name: "dev@1000",
-          properties: { reg: cells(0, 1), phandle: cells(1, 2) },
+  const report = devicetreeSchema.parse(
+    parse(
+      devicetreeFixture({
+        name: "",
+        properties: {
+          compatible: dtString("test,board"),
+          // Cell counts above four stay outside the decoded reg range.
+          "#address-cells": cells(5),
+          "#size-cells": cells(1),
         },
-      ],
-    }),
-  );
-  expect(
-    report.limitations.some((line) => line.includes("is not a single cell")),
-  ).toBe(true);
-  expect(report.coverage.status).toBe("partial");
-});
-
-/** Two disagreeing phandle spellings on one node leave both values unresolved. */
-it("reports partial coverage when phandle and linux,phandle disagree", () => {
-  const report = parse(
-    devicetreeFixture({
-      name: "",
-      properties: {
-        compatible: dtString("test,board"),
-        "#address-cells": cells(1),
-        "#size-cells": cells(1),
-      },
-      children: [
-        {
-          name: "dev@1000",
-          properties: {
-            reg: cells(0, 1),
-            phandle: cells(7),
-            "linux,phandle": cells(9),
-          },
-        },
-      ],
-    }),
-  );
-  expect(
-    report.limitations.some((line) =>
-      line.includes("conflicts with linux,phandle"),
+        children: [{ name: "dev@1000", properties: { reg: cells(0, 1) } }],
+      }),
     ),
-  ).toBe(true);
-  expect(report.coverage.status).toBe("partial");
+  );
+  expect(propertyAt(report, "/dev@1000", "reg")?.derived.reg).toBeNull();
+  expect(report.coverage).toEqual({
+    status: "partial",
+    examined_nodes: 2,
+    examined_properties: 4,
+  });
+  expect(report.limitations).toHaveLength(CAPABILITY_NOTES + 1);
+});
+
+it("keeps complete coverage when nothing was left undecoded", () => {
+  const report = devicetreeSchema.parse(
+    parse(
+      devicetreeFixture({
+        name: "",
+        properties: {
+          compatible: dtString("test,board"),
+          "#address-cells": cells(1),
+          "#size-cells": cells(1),
+        },
+        children: [{ name: "dev@1000", properties: { reg: cells(0, 1) } }],
+      }),
+    ),
+  );
+  expect(propertyAt(report, "/dev@1000", "reg")?.derived.reg).toEqual([
+    { address: "0x0", size: "0x1" },
+  ]);
+  expect(report.coverage).toEqual({
+    status: "complete",
+    examined_nodes: 2,
+    examined_properties: 4,
+  });
+  expect(report.limitations).toHaveLength(CAPABILITY_NOTES);
+});
+
+it("reports partial coverage when a phandle is not a single cell", () => {
+  const report = devicetreeSchema.parse(
+    parse(
+      devicetreeFixture({
+        name: "",
+        properties: {
+          compatible: dtString("test,board"),
+          "#address-cells": cells(1),
+          "#size-cells": cells(1),
+        },
+        children: [
+          {
+            name: "dev@1000",
+            properties: { reg: cells(0, 1), phandle: cells(1, 2) },
+          },
+        ],
+      }),
+    ),
+  );
+  expect(propertyAt(report, "/dev@1000", "phandle")?.derived.cells).toBeNull();
+  expect(propertyAt(report, "/dev@1000", "reg")?.derived.reg).toEqual([
+    { address: "0x0", size: "0x1" },
+  ]);
+  expect(report.coverage).toEqual({
+    status: "partial",
+    examined_nodes: 2,
+    examined_properties: 5,
+  });
+  expect(report.limitations).toHaveLength(CAPABILITY_NOTES + 1);
+});
+
+it("reports partial coverage when phandle and linux,phandle disagree", () => {
+  const report = devicetreeSchema.parse(
+    parse(
+      devicetreeFixture({
+        name: "",
+        properties: {
+          compatible: dtString("test,board"),
+          "#address-cells": cells(1),
+          "#size-cells": cells(1),
+        },
+        children: [
+          {
+            name: "dev@1000",
+            properties: {
+              reg: cells(0, 1),
+              phandle: cells(7),
+              "linux,phandle": cells(9),
+            },
+          },
+        ],
+      }),
+    ),
+  );
+  expect(propertyAt(report, "/dev@1000", "phandle")?.derived.cells).toEqual([
+    7,
+  ]);
+  expect(
+    propertyAt(report, "/dev@1000", "linux,phandle")?.derived.cells,
+  ).toEqual([9]);
+  expect(report.coverage).toEqual({
+    status: "partial",
+    examined_nodes: 2,
+    examined_properties: 6,
+  });
+  expect(report.limitations).toHaveLength(CAPABILITY_NOTES + 1);
 });

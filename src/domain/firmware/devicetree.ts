@@ -131,7 +131,7 @@ export const devicetreeSchema = z
       ),
     }),
     coverage: z.strictObject({
-      // A property the reader could not decode leaves the inventory incomplete.
+      // This reader always decides coverage. An undecoded property is partial.
       status: knownCoverageStatusSchema,
       examined_nodes: uint,
       examined_properties: uint,
