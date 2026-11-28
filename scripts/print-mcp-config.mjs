@@ -10,24 +10,54 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
+import { parseArgs } from "node:util";
 
-const targetPath = process.argv[2];
-if (!targetPath) {
-  process.stderr.write(
-    "Usage: node scripts/print-mcp-config.mjs <target-path> [--kind executable|database] [--loader-args JSON]\n",
-  );
+const usage =
+  "Usage: node scripts/print-mcp-config.mjs <target-path> [--kind executable|database] [--loader-args JSON]";
+
+let env;
+try {
+  const { values, positionals } = parseArgs({
+    allowPositionals: true,
+    options: {
+      kind: { type: "string", multiple: true },
+      "loader-args": { type: "string", multiple: true },
+      help: { type: "boolean", short: "h" },
+    },
+  });
+  if (values.help) {
+    process.stdout.write(usage + "\n");
+    process.exit(0);
+  }
+  if (positionals.length !== 1 || !positionals[0])
+    throw new Error("Expected one target path");
+  for (const name of ["kind", "loader-args"]) {
+    if (values[name]?.length > 1)
+      throw new Error(`--${name} may only be specified once`);
+  }
+  const kind = values.kind?.[0] ?? "executable";
+  if (kind !== "executable" && kind !== "database")
+    throw new Error("--kind must be executable or database");
+  env = {
+    HOPPER_TARGET_PATH: resolve(positionals[0]),
+    HOPPER_TARGET_KIND: kind,
+  };
+  const encoded = values["loader-args"]?.[0];
+  if (encoded !== undefined) {
+    const args = JSON.parse(encoded);
+    if (
+      !Array.isArray(args) ||
+      !args.every((arg) => typeof arg === "string" && !arg.includes("\0"))
+    )
+      throw new Error(
+        "--loader-args must encode an array of strings without NUL bytes",
+      );
+    env.HOPPER_LOADER_ARGS_JSON = encoded;
+  }
+} catch (error) {
+  process.stderr.write(`${error.message}\n${usage}\n`);
   process.exit(1);
 }
-
-const flags = process.argv.slice(3);
-const kind = readFlag(flags, "--kind") ?? "executable";
-const loaderArgs = readFlag(flags, "--loader-args");
-
-const env = {
-  HOPPER_TARGET_PATH: resolve(targetPath),
-  HOPPER_TARGET_KIND: kind,
-};
-if (loaderArgs) env.HOPPER_LOADER_ARGS_JSON = loaderArgs;
 
 const config = {
   mcpServers: {
@@ -54,8 +84,3 @@ const config = {
 };
 
 process.stdout.write(`${JSON.stringify(config, null, 2)}\n`);
-
-function readFlag(args, name) {
-  const i = args.indexOf(name);
-  return i !== -1 ? args[i + 1] : undefined;
-}
