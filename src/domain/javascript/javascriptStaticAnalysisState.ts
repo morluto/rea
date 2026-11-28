@@ -125,6 +125,8 @@ export interface JavaScriptFindingContext {
       }
     | undefined;
   readonly xhrOpenRequest?: (node: t.Node) => boolean;
+  /** Proven `addModule` call on a CSS or AudioWorklet platform worklet. */
+  readonly workletModuleLoad?: (node: t.Node) => boolean;
   readonly rendererLoad?: (
     callee: t.Node,
     site: t.Node,

@@ -62,7 +62,7 @@ The node vocabulary covers:
 - source map and original source module;
 - BrowserWindow, frame, and target;
 - contextBridge API, IPC channel, and IPC handler;
-- worker and service worker;
+- worker, service worker, and worklet;
 - endpoint and storage;
 - native add-on and native export;
 - runtime script instance;

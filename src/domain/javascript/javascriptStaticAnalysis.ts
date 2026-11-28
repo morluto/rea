@@ -11,6 +11,7 @@ import {
   type JavaScriptSemanticPrecisionInput,
 } from "./javascriptSemanticPrecision.js";
 import { createXhrOpenRequestQuery } from "./javascriptNetworkRequests.js";
+import { createWorkletModuleLoadQuery } from "./javascriptWorkletModuleLoads.js";
 import { uniqueSortedBy } from "../canonicalOrdering.js";
 import * as t from "@babel/types";
 import { JavaScriptRouteScan } from "./javascriptRouteScan.js";
@@ -189,6 +190,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
   );
   const findings: JavaScriptFindingContext = {
     xhrOpenRequest: createXhrOpenRequestQuery(index),
+    workletModuleLoad: createWorkletModuleLoadQuery(index),
     pathIntrinsics: createStaticPathIntrinsicQuery(index),
     browserWindowReceiver: (node, site, suffix) =>
       resolveElectronBrowserWindowReceiver(node, site, suffix, findings, index),
