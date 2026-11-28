@@ -270,6 +270,58 @@ it("reads a safe response code written with a long zero fraction", async () => {
   expect(metadata.events[0]?.stages[0]?.response_code).toBe(200);
 });
 
+it("keeps the widest safe integral response code", async () => {
+  const metadata = await metadataOf(
+    [
+      auditEvent({
+        stage: "ResponseStarted",
+        responseCode: Number.MAX_SAFE_INTEGER,
+      }),
+      auditEvent({
+        stage: "ResponseComplete",
+        responseCode: -Number.MAX_SAFE_INTEGER,
+      }),
+    ].join("\n"),
+  );
+  expect(
+    metadata.events[0]?.stages.map((stage) => stage.response_code),
+  ).toEqual([Number.MAX_SAFE_INTEGER, -Number.MAX_SAFE_INTEGER]);
+  expect(metadata.events[0]?.response_code).toBe(Number.MAX_SAFE_INTEGER);
+});
+
+it.each([
+  ["2e2", 200],
+  ["-2e2", -200],
+])(
+  "keeps the safe integer a long number lexeme evaluates to (%s)",
+  async (lexeme, expected) => {
+    const encoded = auditEvent({ stage: "ResponseStarted" }).replace(
+      '"stage":"ResponseStarted"',
+      `"stage":"ResponseStarted","responseStatus":{"code":${lexeme}}`,
+    );
+    const metadata = await metadataOf(
+      [
+        encoded,
+        auditEvent({ stage: "ResponseComplete", responseCode: 403 }),
+      ].join("\n"),
+    );
+    expect(
+      metadata.events[0]?.stages.map((stage) => stage.response_code),
+    ).toEqual([expected, 403]);
+    expect(metadata.events[0]?.response_code).toBe(expected);
+  },
+);
+
+it("drops a status code whose value is not a safe integer", async () => {
+  const metadata = await metadataOf(
+    auditEvent({
+      stage: "ResponseComplete",
+      responseCode: Number.MAX_SAFE_INTEGER + 2,
+    }),
+  );
+  expect(metadata.events[0]?.response_code).toBeNull();
+});
+
 it("retains valid response facts when another stage has a fractional response code", async () => {
   const metadata = await metadataOf(
     [
