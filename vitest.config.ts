@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { defineConfig } from "vitest/config";
 import { parseCLI } from "vitest/node";
+import { prepareAndroidPlaywrightEnvironment } from "./scripts/lib/cli-process-environment.mjs";
 import {
   BUILT_TEST_PROJECTS,
   SOURCE_TEST_PROJECTS,
@@ -18,17 +19,8 @@ import {
   TEST_DEADLINE_MS as BASE_TEST_DEADLINE_MS,
 } from "./tests/support/testDeadlines.js";
 
-// Playwright's registry does not derive a cache directory for Termux's
-// `android` platform. Match the production CLI fallback before workers import
-// browser modules.
-if (
-  process.platform === "android" &&
-  process.env.PLAYWRIGHT_BROWSERS_PATH === undefined
-) {
-  const cacheRoot =
-    process.env.XDG_CACHE_HOME ?? join(process.env.HOME ?? ".", ".cache");
-  process.env.PLAYWRIGHT_BROWSERS_PATH = join(cacheRoot, "ms-playwright");
-}
+// Select the Android browser cache before workers import browser modules.
+prepareAndroidPlaywrightEnvironment(process.env, process.platform);
 
 const CANONICAL_TEMPORARY_DIRECTORY = realpathSync(tmpdir());
 // Use Vitest's option parser so explicit false and spaced shard values retain
