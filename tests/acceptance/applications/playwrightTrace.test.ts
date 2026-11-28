@@ -7,7 +7,7 @@ import {
   playwrightTraceFixture,
   playwrightTracePathFixture,
 } from "../../fixtures/playwrightTrace.js";
-import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { lazyLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -17,6 +17,15 @@ import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 
 import { lifecycleResultOf } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { evidenceRecordSelectionSchema } from "../../../src/domain/evidenceRecordSummary.js";
+
+/**
+ * One stdio MCP session for the file. Each test passes its own trace path or
+ * retained source; no browser is installed or launched.
+ */
+const traceMcp = lazyLocalToolsMcp({
+  REA_MCP_TOOL_FAMILIES: "application,session",
+  PLAYWRIGHT_BROWSERS_PATH: "/rea-no-browser-required",
+});
 
 cliTest(
   "names trace_limits.nesting_depth and recovers the same trace through CLI and MCP",
@@ -73,9 +82,7 @@ cliTest(
       ],
     });
     expect(recovered.exitCode, recovered.stderr).toBe(0);
-    const { call } = await connectLocalToolsMcp({
-      REA_MCP_TOOL_FAMILIES: "application",
-    });
+    const { call } = await traceMcp();
     const response = await call("inspect_playwright_trace", {
       path: fixture.path,
     });
@@ -101,10 +108,7 @@ cliTest(
   async ({ cli }) => {
     const fixture = await playwrightTracePathFixture();
     const original = await readFile(fixture.path);
-    const { call } = await connectLocalToolsMcp({
-      REA_MCP_TOOL_FAMILIES: "application,session",
-      PLAYWRIGHT_BROWSERS_PATH: "/rea-no-browser-required",
-    });
+    const { call } = await traceMcp();
     const view = {
       kind: "playwright-trace",
       collection: "members",
@@ -218,10 +222,7 @@ cliTest(
   "imports recorder v10 through actual CLI/MCP schemas with retained pages and publication parity",
   async ({ cli }) => {
     const fixture = await playwrightTraceFixture({ resources: true });
-    const { client, call } = await connectLocalToolsMcp({
-      REA_MCP_TOOL_FAMILIES: "application,session",
-      PLAYWRIGHT_BROWSERS_PATH: "/rea-no-browser-required",
-    });
+    const { client, call } = await traceMcp();
     const schemas = await advertisedMcpToolSchemas(
       client,
       "inspect_playwright_trace",
@@ -376,9 +377,7 @@ cliTest(
     expect(complete.exitCode, complete.stderr).toBe(0);
     const parent = parseEvidence(complete.json);
     const report = playwrightTraceSchema.parse(parent.normalized_result);
-    const { call } = await connectLocalToolsMcp({
-      REA_MCP_TOOL_FAMILIES: "application,session",
-    });
+    const { call } = await traceMcp();
     const ingest = await call("inspect_playwright_trace", {
       path: fixture.path,
     });
@@ -496,10 +495,7 @@ cliTest(
       '\n{"type":"console","text":NaN}\n';
     const network = base.network.replaceAll(recordedOrigin, origin);
     const fixture = await playwrightTraceFixture({ trace, network });
-    const { call } = await connectLocalToolsMcp({
-      REA_MCP_TOOL_FAMILIES: "application,session",
-      PLAYWRIGHT_BROWSERS_PATH: "/rea-no-browser-required",
-    });
+    const { call } = await traceMcp();
     const valid = await playwrightTraceFixture({ trace: validTrace, network });
     const control = await call("inspect_playwright_trace", {
       path: valid.path,
@@ -622,10 +618,7 @@ cliTest(
     expect(offset).toBeGreaterThan(0);
     bytes[offset] = bytes[offset]! ^ 1;
     await writeFile(fixture.path, bytes);
-    const { call } = await connectLocalToolsMcp({
-      REA_MCP_TOOL_FAMILIES: "application,session",
-      PLAYWRIGHT_BROWSERS_PATH: "/rea-no-browser-required",
-    });
+    const { call } = await traceMcp();
     const failed = parseMcpToolError(
       await call("inspect_playwright_trace", {
         path: fixture.path,
