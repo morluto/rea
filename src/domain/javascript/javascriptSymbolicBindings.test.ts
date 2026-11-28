@@ -1132,6 +1132,37 @@ it("keeps repeated cached queries within an independent depth budget", () => {
   expect(resolver.truncated).toBe(false);
 });
 
+it.each([
+  ["a later const binding", 'const api = require("electron");', "external"],
+  [
+    "a reassigned binding",
+    'let api = require("electron"); globalThis.reset = () => { api = null; };',
+    "unknown",
+  ],
+])(
+  "reads a Webpack export getter of %s through a re-export getter",
+  (_name, binding, kind) => {
+    const value = inspectOne(`(() => {
+      var modules = {
+        2: (module, exports, load) => { load.d(exports, { api: () => api }); ${binding} },
+        3: (module, exports, load) => { load.d(exports, { api: () => source.api }); var source = load(2); },
+        4: (module, exports, load) => { inspect(load(3).api); },
+      };
+      function load(id) { var module = { exports: {} }; modules[id](module, module.exports, load); return module.exports; }
+      load.d = (exports, definition) => { for (var key in definition) load.o(definition, key) && !load.o(exports, key) && Object.defineProperty(exports, key, { enumerable: true, get: definition[key] }); };
+      load.o = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+      load(4);
+    })();`);
+    expect(value.kind).toBe(kind);
+    if (kind === "external")
+      expect(value).toEqual({
+        kind: "external",
+        loaderAuthority: "candidate",
+        path: ["electron"],
+      });
+  },
+);
+
 it("retains each external selection guard once across deep member reads", () => {
   const { parsed, resolver } = resolverFor("if (guard) {};");
   const condition = { node: parsed.program.body[0]!, positive: true as const };

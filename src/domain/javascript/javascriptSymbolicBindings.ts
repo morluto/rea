@@ -17,6 +17,7 @@ import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
+import { semanticWebpackExportGetterLoaders } from "./javascriptBundledRequireOrigin.js";
 import { ELECTRON_MODULE } from "./javascriptElectronMemberWrites.js";
 import {
   indexJavaScriptElectronIdentitySteps,
@@ -68,6 +69,8 @@ interface PropertyWrite {
   readonly path: readonly string[];
   readonly value: t.Node;
   readonly site: t.Node;
+  /** A Webpack export getter, which keeps the key's first definition. */
+  readonly getter?: true;
   readonly exportReceiver?: "module" | "exports";
   readonly exportValueReceiver?: "module" | "exports";
   readonly receiverUncertain?: true;
@@ -98,6 +101,27 @@ const containsOwnedReturn = (root: t.Node): boolean => {
     },
   });
   return found;
+};
+
+/** The expression a Webpack export getter returns: `() => value` or `function () { return value; }`. */
+const exportGetterValue = (
+  property: t.ObjectMethod | t.ObjectProperty,
+): t.Node | undefined => {
+  const getter = t.isObjectProperty(property)
+    ? unwrapJavaScriptExpression(property.value).node
+    : undefined;
+  if (
+    !(t.isArrowFunctionExpression(getter) || t.isFunctionExpression(getter)) ||
+    getter.async ||
+    getter.generator ||
+    getter.params.length !== 0
+  )
+    return undefined;
+  if (!t.isBlockStatement(getter.body)) return getter.body;
+  const [statement] = getter.body.body;
+  return getter.body.body.length === 1 && t.isReturnStatement(statement)
+    ? (statement.argument ?? undefined)
+    : undefined;
 };
 
 const LOADER_FREE_AMBIENT_VALUES: ReadonlySet<string> = new Set([
@@ -190,6 +214,8 @@ export class JavaScriptSymbolicBindings {
   readonly #namespaceOwners = new Map<string, t.Function>();
   readonly #moduleFactories = new WeakSet<t.Function>();
   readonly #unsafeExports = new Set<string>();
+  /** Loader bindings whose `d` is a proven Webpack export-getter helper. */
+  readonly #exportGetterLoaders = new Set<string>();
   readonly #aliasesByBinding = new Map<string, string[]>();
   readonly #aliasSourcesByBinding = new Map<string, string[]>();
   readonly #bindingAliasGroups = new Map<string, ReadonlySet<string>>();
@@ -253,6 +279,7 @@ export class JavaScriptSymbolicBindings {
         const target = semanticWriteSiteTarget(node);
         if (target !== null) this.#indexWriteSite(target, node);
         if (t.isCallExpression(node) && t.isMemberExpression(node.callee)) {
+          if (this.#indexExportGetters(node, node.callee)) return;
           const intrinsic = defineProperty(node.callee);
           if (intrinsic.status === "unrelated") return;
           const [target, key, descriptor] = node.arguments;
@@ -511,28 +538,60 @@ export class JavaScriptSymbolicBindings {
           key,
           read,
         );
+      // The helper also skips a key that a replacement object already owns,
+      // so a getter after `module.exports = {...}` needs that object's keys.
+      // A reconnect such as `module.exports = exports` restores the original
+      // object, whose own keys are the keyed writes checked below.
+      if (write?.getter) {
+        const replacement = available
+          .slice(0, available.indexOf(write))
+          .findLast((other) => other.path.length === 0);
+        const object =
+          replacement === undefined
+            ? undefined
+            : this.evaluate(replacement.value, value.environment);
+        const reconnect =
+          object?.kind === "namespace" && object.bindingId === value.bindingId;
+        if (
+          object !== undefined &&
+          !reconnect &&
+          (this.unknownMembers(object) > 0 ||
+            this.members(object).includes(key))
+        )
+          return symbolicUnknown("export getter skipped by an owned key");
+        // A local alias such as `const out = exports` keeps its writes under
+        // its own binding, but `out.handle = ...` also owns the getter's key.
+        // Before a replacement, such a write reached the earlier object.
+        if (
+          this.#exportAliasOwnsKey(
+            value.bindingId,
+            key,
+            replacement === undefined || reconnect
+              ? undefined
+              : replacement.site,
+          )
+        )
+          return symbolicUnknown("export getter skipped by an owned key");
+      }
+      // A getter keeps the key's first definition: an earlier write makes
+      // the helper skip the key, and a later one fails against the accessor.
+      if (
+        write !== undefined &&
+        available.some(
+          (other) =>
+            other !== write &&
+            other.path.length === 1 &&
+            other.path[0] === key &&
+            (write.getter || other.getter),
+        )
+      )
+        return symbolicUnknown("ambiguous export writes");
       return write
         ? this.evaluate(write.value, value.environment)
         : symbolicUnknown("unresolved module export");
     }
     if (value.kind === "object") {
-      let index = this.#literalPropertyIndex.get(value.node);
-      if (index === undefined) {
-        const properties = new Map<string, t.ObjectMethod | t.ObjectProperty>();
-        index = properties;
-        for (const property of value.node.properties) {
-          const name = t.isSpreadElement(property)
-            ? null
-            : semanticStaticPropertyKey(property.key, property.computed);
-          if (name === null || t.isSpreadElement(property)) {
-            index = null;
-            break;
-          }
-          if (isObjectPrototypeSetter(property, name)) continue;
-          properties.set(name, property);
-        }
-        this.#literalPropertyIndex.set(value.node, index);
-      }
+      const index = this.#literalProperties(value.node);
       if (index !== null) {
         const property = index.get(key);
         if (property !== undefined)
@@ -579,6 +638,33 @@ export class JavaScriptSymbolicBindings {
       return symbolicUnknown(`${value.kind} members are not modeled`);
     }
     return symbolicUnknown("unresolved property");
+  }
+
+  /**
+   * An object literal's own static properties, keeping the last property of a
+   * repeated key; null when a spread or dynamic key can add any key.
+   */
+  #literalProperties(
+    node: t.ObjectExpression,
+  ): ReadonlyMap<string, t.ObjectMethod | t.ObjectProperty> | null {
+    let index = this.#literalPropertyIndex.get(node);
+    if (index === undefined) {
+      const properties = new Map<string, t.ObjectMethod | t.ObjectProperty>();
+      index = properties;
+      for (const property of node.properties) {
+        const name = t.isSpreadElement(property)
+          ? null
+          : semanticStaticPropertyKey(property.key, property.computed);
+        if (name === null || t.isSpreadElement(property)) {
+          index = null;
+          break;
+        }
+        if (isObjectPrototypeSetter(property, name)) continue;
+        properties.set(name, property);
+      }
+      this.#literalPropertyIndex.set(node, index);
+    }
+    return index;
   }
 
   #objectPropertyValue(
@@ -2115,6 +2201,8 @@ export class JavaScriptSymbolicBindings {
   #indexBootstrap(call: t.CallExpression): void {
     const bootstrap = javascriptBootstrapAt(call, this.state);
     if (!bootstrap) return;
+    for (const loaderId of semanticWebpackExportGetterLoaders(call, this.state))
+      this.#exportGetterLoaders.add(loaderId);
     const modules = new Map<string, SymbolicValue>();
     const tableAliases = new Set([bootstrap.tableBindingId]);
     const pendingAliases = [bootstrap.tableBindingId];
@@ -2173,6 +2261,49 @@ export class JavaScriptSymbolicBindings {
       modules.set(moduleKey, namespace);
     }
     this.#bootstrapTables.push({ tableAliases, modules });
+  }
+
+  /**
+   * Index a proven Webpack `d(exports, {key: () => value})` as live export
+   * getters: a read evaluates the returned expression in the module's
+   * environment. Other getter shapes are writes of unknown values.
+   */
+  #indexExportGetters(
+    call: t.CallExpression,
+    callee: t.MemberExpression,
+  ): boolean {
+    const [target, definitions, ...rest] = call.arguments;
+    const binding = (node: t.Node | undefined) =>
+      t.isIdentifier(node)
+        ? resolveSemanticBindingState(this.state, node, node.name)?.bindingId
+        : undefined;
+    const exportsId = binding(target);
+    const namespaceId =
+      exportsId === undefined || this.#moduleBindings.has(exportsId)
+        ? undefined
+        : this.#exportAliases.get(exportsId);
+    if (
+      semanticStaticPropertyKey(callee.property, callee.computed) !== "d" ||
+      !this.#exportGetterLoaders.has(binding(callee.object) ?? "") ||
+      !t.isIdentifier(target) ||
+      namespaceId === undefined
+    )
+      return false;
+    // `d` sees the literal's own keys, so a repeated key is one definition.
+    const properties = t.isObjectExpression(definitions)
+      ? this.#literalProperties(definitions)
+      : null;
+    if (rest.length > 0 || properties === null) this.#mutated.add(namespaceId);
+    else
+      for (const [key, property] of properties)
+        this.#addWrite(
+          target,
+          [key],
+          exportGetterValue(property) ?? call,
+          call,
+          true,
+        );
+    return true;
   }
 
   #indexBindingAliases(): void {
@@ -2270,6 +2401,39 @@ export class JavaScriptSymbolicBindings {
     );
   }
 
+  /**
+   * Whether a local alias of a factory's exports parameter writes `key`, or
+   * an unknown key, on the namespace object. A keyed write placed before
+   * `after`, a whole-object replacement, reached the replaced object.
+   */
+  #exportAliasOwnsKey(
+    namespaceId: string,
+    key: string,
+    after?: t.Node,
+  ): boolean {
+    for (const [bindingId, alias] of this.#exportAliases) {
+      if (alias !== namespaceId || this.#moduleBindings.has(bindingId))
+        continue;
+      const group = this.#bindingAliasGroup(bindingId);
+      if (this.#mutatedAliasGroups.has(group)) return true;
+      for (const member of group) {
+        if (this.#exportAliases.has(member)) continue;
+        if (this.#mutated.has(member)) return true;
+        if (
+          this.#bindingWrites(member).some(
+            (write) =>
+              write.path.length > 0 &&
+              write.path[0] === key &&
+              (after === undefined ||
+                (write.site.start ?? -1) >= (after.start ?? -1)),
+          )
+        )
+          return true;
+      }
+    }
+    return false;
+  }
+
   #bindingWrites(bindingId: string): readonly PropertyWrite[] {
     const own = this.#writes.get(bindingId) ?? [];
     const group = this.#bindingAliasGroups.get(bindingId);
@@ -2354,6 +2518,7 @@ export class JavaScriptSymbolicBindings {
     path: readonly string[],
     value: t.Node,
     site: t.Node,
+    getter = false,
   ): void {
     const binding = resolveSemanticBindingState(this.state, root, root.name);
     if (!binding) return;
@@ -2403,6 +2568,7 @@ export class JavaScriptSymbolicBindings {
       path: selected,
       value,
       site,
+      ...(getter ? { getter } : {}),
       ...(alias === undefined
         ? {}
         : {
