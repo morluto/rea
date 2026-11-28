@@ -150,8 +150,7 @@ export const nugetNupkgFixture = async (
     await addText(
       writer,
       "_rels/.rels",
-      options.relationships ??
-        relsXml(options.relsTarget ?? `/${nuspecName}`),
+      options.relationships ?? relsXml(options.relsTarget ?? `/${nuspecName}`),
     );
   if (options.nuspecBytes === undefined)
     await addText(writer, nuspecName, options.nuspec ?? defaultNuspec);
