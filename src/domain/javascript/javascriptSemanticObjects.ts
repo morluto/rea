@@ -4,7 +4,6 @@ import type {
   JavaScriptSemanticCallable,
   JavaScriptSemanticObjectOperation,
 } from "./javascriptSemanticIr.js";
-import { semanticCalleeAccess } from "./javascriptSemanticCalls.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import { semanticBindingMayRejectAssignmentAt } from "./javascriptSemanticMutationInitializers.js";
@@ -21,6 +20,8 @@ import {
   type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import { readSemanticRequireOriginCandidate } from "./javascriptSemanticRequireOriginSlot.js";
+import { unwrapPureSemanticSequenceExpression } from "./javascriptSemanticGlobalReference.js";
 import {
   clearSemanticValueCaches,
   evaluateSemanticExpression,
@@ -136,36 +137,6 @@ const isNestedReceiver = (occurrence: t.Node | null): boolean => {
   return t.isObjectPattern(target) || t.isArrayPattern(target);
 };
 
-/**
- * The module member a write rooted directly in `require` targets. Below a
- * computed key the origin names the last known object and the path is unknown.
- */
-const requiredWriteTarget = (
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-) => {
-  let target = node;
-  let access = semanticCalleeAccess(target, state);
-  while (
-    access === undefined &&
-    (t.isMemberExpression(target) || t.isOptionalMemberExpression(target))
-  ) {
-    target = unwrapJavaScriptExpression(target.object).node;
-    access = semanticCalleeAccess(target, state);
-  }
-  const origin = access?.requireOrigin;
-  if (access === undefined || origin === undefined) return undefined;
-  return target === node
-    ? { requireOrigin: origin, path: access.path }
-    : {
-        requireOrigin: {
-          ...origin,
-          importedPath: [...origin.importedPath, ...access.path],
-        },
-        path: null,
-      };
-};
-
 const collectMember = (
   node: t.MemberExpression | t.OptionalMemberExpression,
   parent: t.Node | null,
@@ -199,17 +170,18 @@ const collectMember = (
       state,
       output,
     );
-  const required =
+  const requireOrigin =
     write && identity.bindingId === null
-      ? requiredWriteTarget(node, state)
+      ? requireRootOrigin(identity.root, state)
       : undefined;
   addObjectOperation(
     {
       node,
       kind: write ? "write" : "read",
-      ...(required === undefined
-        ? {}
-        : { requireOrigin: required.requireOrigin }),
+      ...(requireOrigin === undefined ? {} : { requireOrigin }),
+      ...(write && identity.path === null
+        ? { knownPathPrefix: identity.prefix }
+        : {}),
       provenOwnSlot:
         !write &&
         identity.path !== null &&
@@ -218,7 +190,7 @@ const collectMember = (
       ownerCallableId,
       objectBindingId: identity.bindingId,
       targetBindingId: null,
-      propertyPath: required === undefined ? identity.path : required.path,
+      propertyPath: identity.path,
     },
     state,
     output,
@@ -475,6 +447,7 @@ interface AddObjectOperationInput {
   readonly ownerCallableId: string | null;
   readonly objectBindingId: string | null;
   readonly requireOrigin?: JavaScriptSemanticObjectOperation["requireOrigin"];
+  readonly knownPathPrefix?: readonly string[];
   readonly targetBindingId: string | null;
   readonly propertyPath: readonly string[] | null;
   readonly provenOwnSlot?: boolean;
@@ -504,6 +477,9 @@ const addObjectOperation = (
     ...(input.requireOrigin === undefined
       ? {}
       : { requireOrigin: input.requireOrigin }),
+    ...(input.knownPathPrefix === undefined
+      ? {}
+      : { knownPathPrefix: input.knownPathPrefix }),
     targetBindingId: input.targetBindingId,
     propertyPath: input.propertyPath,
     resolution:
@@ -519,7 +495,23 @@ const addObjectOperation = (
 interface ObjectIdentity {
   readonly bindingId: string | null;
   readonly path: readonly string[] | null;
+  /** Keys from the root up to the first computed one; the whole path if static. */
+  readonly prefix: readonly string[];
+  readonly root: t.Node | null;
 }
+
+const requireRootOrigin = (
+  root: t.Node | null,
+  state: JavaScriptSemanticAnalysisState,
+) => {
+  if (root === null) return undefined;
+  const { node } = unwrapJavaScriptExpression(
+    unwrapPureSemanticSequenceExpression(root, state),
+  );
+  return t.isCallExpression(node)
+    ? readSemanticRequireOriginCandidate(node, state)?.origin
+    : undefined;
+};
 
 const expressionObjectIdentity = (
   node: t.Node | null | undefined,
@@ -538,16 +530,22 @@ const expressionObjectIdentity = (
         current.property,
         current.computed,
       );
-      if (name === null) staticPath = false;
-      else path.push(name);
+      if (name === null) {
+        // Keys collected so far sit above this one and are not established.
+        staticPath = false;
+        path.length = 0;
+      } else path.push(name);
       current = current.object;
     } else break;
   }
+  path.reverse();
   return {
     bindingId: t.isIdentifier(current)
       ? (resolveSemanticBindingState(state, current, current.name)?.bindingId ??
         null)
       : null,
-    path: staticPath ? path.reverse() : null,
+    path: staticPath ? path : null,
+    prefix: path,
+    root: current ?? null,
   };
 };
