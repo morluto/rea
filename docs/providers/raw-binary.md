@@ -302,8 +302,10 @@ not been exercised.
 - An M-profile load maps one segment: the file at its base. SRAM, peripheral and
   system blocks are not created, and only the Reset vector is read. Ghidra's
   processor-defined vector labels are not applied, so other vectors are neither
-  entries nor labels. Floating-point state, TrustZone and device memory maps are
-  not modelled.
+  entries nor labels; use
+  [`inspect_firmware_vector_table`](../guides/firmware/firmware-vector-tables.md)
+  to decode the full vector table and optional CMSIS-SVD IRQ names offline.
+  Floating-point state, TrustZone and device memory maps are not modelled.
 - Ghidra 12.2, like 12.1.4, decodes the ARMv8.1-M low-overhead-loop branches
   `wls` and `le` with the right mnemonics, but not their flow. In the verifier's Cortex-M55
   image, `wls` branched 2 bytes short of its target, `le` branched 4 bytes past

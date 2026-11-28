@@ -742,6 +742,23 @@ const occurrenceMetadata = (
 ): OccurrenceMetadata => {
   const left = input.leftOccurrence;
   const right = input.rightOccurrence;
+  const bothTarLinkTargets =
+    left?.entry_kind === "symlink" &&
+    right?.entry_kind === "symlink" &&
+    left.link_target !== undefined &&
+    right.link_target !== undefined &&
+    left.format_metadata?.kind === "tar-entry" &&
+    right.format_metadata?.kind === "tar-entry";
+  // When both byte observations exist, compare the link through that owner.
+  // Historical TAR evidence still contributes its decoded link declaration.
+  const leftFormat =
+    bothTarLinkTargets && left.format_metadata?.kind === "tar-entry"
+      ? { ...left.format_metadata, link_name: null }
+      : left?.format_metadata;
+  const rightFormat =
+    bothTarLinkTargets && right.format_metadata?.kind === "tar-entry"
+      ? { ...right.format_metadata, link_name: null }
+      : right?.format_metadata;
   return {
     asarPacking: compareAsarPacking(left?.unpacked, right?.unpacked),
     encryption: left?.encrypted === right?.encrypted ? "unchanged" : "changed",
@@ -751,8 +768,8 @@ const occurrenceMetadata = (
       options.compareDirectorySourceNames,
     ),
     ...compareFormatDeclarations(
-      formatMetadataDeclaration(left?.format_metadata),
-      formatMetadataDeclaration(right?.format_metadata),
+      formatMetadataDeclaration(leftFormat),
+      formatMetadataDeclaration(rightFormat),
     ),
   };
 };
@@ -818,14 +835,19 @@ const classifyLinkTargets = (
   if (left.link_target.hex !== right.link_target.hex)
     dimensions.push("content");
   if (left.executable !== right.executable) dimensions.push("executable");
-  if (input.metadata.directorySourcePath === "changed")
-    dimensions.push("metadata");
+  if (declaredFactChanged(input.metadata)) dimensions.push("metadata");
+  const unknown = declarationUnknown(input.metadata);
+  if (dimensions.length === 0)
+    return {
+      handled: true,
+      change: unknown
+        ? { ...base, classification: "unknown", dimensions: ["availability"] }
+        : null,
+    };
+  if (unknown) dimensions.push("availability");
   return {
     handled: true,
-    change:
-      dimensions.length === 0
-        ? null
-        : { ...base, classification: "changed", dimensions },
+    change: { ...base, classification: "changed", dimensions },
   };
 };
 

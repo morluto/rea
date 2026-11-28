@@ -166,9 +166,14 @@ intermediate types or splitting definitions across calls does not reduce it;
 only fewer nested levels do. Ghidra 12.2 stores, names and
 compares types recursively: 1024 levels resolved and 2048 exhausted the stack
 inside `addDataType` while its database lock was held, leaving the Program
-unable to save. No caller value raises that stack, so the bound is fixed. If
-Ghidra exhausts its stack anyway, the bridge reports it and ends the session
-rather than serve a Program whose lock may be held.
+unable to save. No caller value raises that stack, so the bound is fixed.
+The parser walks a pointer declarator recursively and can exhaust HotSpot's
+1 MiB default thread stack before that measurement runs, so caller C is parsed
+on a 16 MiB stack: twice the 8 MiB main-thread stack that completed an
+8192-unit pointer chain. The refusal is that walk's measured depth. A parse
+that still overflows the 16 MiB stack is the same fixed ceiling, without a
+measured depth or type name. An overflow while the database lock is held still
+ends the session.
 
 The bridge also refuses, with the construct's line and column (CR, LF and
 CRLF each end a line, as in Ghidra's parser),

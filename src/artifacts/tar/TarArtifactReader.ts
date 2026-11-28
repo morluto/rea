@@ -236,6 +236,9 @@ export class TarArtifactReader implements ArtifactReader {
             ? {}
             : { sourcePath: member.sourcePath }),
           kind: member.kind,
+          ...(member.linkTarget === undefined
+            ? {}
+            : { linkTarget: member.linkTarget }),
           declaredSize: member.kind === "file" ? member.size : null,
           compressedSize: null,
           executable: member.kind === "file" && (member.mode & 0o111) !== 0,

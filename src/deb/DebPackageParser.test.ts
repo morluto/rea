@@ -13,6 +13,7 @@ import {
   DEFAULT_CONTROL_TEXT,
   debPackageFixture,
   notArBytes,
+  paxRecord,
   tarArchive,
   tarMember,
   truncatedAfterDebianBinaryBytes,
@@ -502,17 +503,6 @@ it("counts a hardlinked md5sums path as present in the inventory", async () => {
   });
 });
 
-const paxRecord = (key: string, value: string | Uint8Array): Buffer => {
-  const body = Buffer.concat([
-    Buffer.from(` ${key}=`, "utf8"),
-    typeof value === "string" ? Buffer.from(value, "utf8") : value,
-    Buffer.from("\n", "utf8"),
-  ]);
-  let length = body.length + 1;
-  while (String(length).length + body.length !== length) length += 1;
-  return Buffer.concat([Buffer.from(String(length), "utf8"), body]);
-};
-
 it("reads PAX records by byte length, so a UTF-8 path keeps the next field", async () => {
   const report = await parse(
     debPackageFixture({
@@ -607,25 +597,34 @@ it("refuses an old GNU sparse entry", async () => {
   expect(error.message).toMatch(/GNU sparse entry/u);
 });
 
-it("reports a PAX path that is not UTF-8 as a limitation", async () => {
-  const report = await parse(
-    debPackageFixture({
-      dataEntries: [
-        { name: "./", type: "5", mode: 0o755, content: "" },
-        {
-          name: "./PaxHeaders/h",
-          type: "x",
-          content: paxRecord(
-            "path",
-            Buffer.concat([Buffer.from("./usr/bin/h"), Buffer.from([0xff])]),
-          ),
-        },
-        { name: "./usr/bin/h", content: "" },
-      ],
-    }),
-  );
-  expect(report.limitations).toContain(undecodableTarNamesLimitation(1));
-});
+it.each(["", "\0"])(
+  "reports non-UTF-8 PAX bytes after %j without discarding the suffix",
+  async (separator) => {
+    const report = await parse(
+      debPackageFixture({
+        dataEntries: [
+          { name: "./", type: "5", mode: 0o755, content: "" },
+          {
+            name: "./PaxHeaders/h",
+            type: "x",
+            content: paxRecord(
+              "path",
+              Buffer.concat([
+                Buffer.from(`./usr/bin/h${separator}`),
+                Buffer.from([0xff]),
+              ]),
+            ),
+          },
+          { name: "./usr/bin/h", content: "" },
+        ],
+      }),
+    );
+    expect(report.limitations).toContain(undecodableTarNamesLimitation(1));
+    expect(report.data_entries.at(-1)?.path).toBe(
+      `usr/bin/h${separator}\uFFFD`,
+    );
+  },
+);
 
 it("reads control files from the control.tar root, not nested paths", async () => {
   const report = await parse(
