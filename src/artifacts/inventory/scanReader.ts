@@ -87,6 +87,7 @@ interface ScanContext {
   readonly occurrenceCountByPath: Map<string, number>;
   readonly registry: ArtifactPathRegistry;
   readonly expandedContainerIds: Set<string>;
+  readonly observedParentPaths: Map<MutableOccurrence, string>;
   readonly ownedReaders: ArtifactReader[];
   readonly reconstruction:
     | {
@@ -166,6 +167,7 @@ export const scanReader = async (
     occurrenceCountByPath: new Map<string, number>(),
     registry: new ArtifactPathRegistry(),
     expandedContainerIds: new Set<string>(),
+    observedParentPaths: new Map(),
     ownedReaders,
     reconstruction:
       reader instanceof InesArtifactReader
@@ -186,6 +188,7 @@ export const scanReader = async (
     occurrences,
     byPath,
     context.expandedContainerIds,
+    context.observedParentPaths,
   );
   return {
     nodes,
@@ -299,6 +302,7 @@ const visitArtifactEntries = async (
     readonly prefix: string;
     readonly containerId: string | null;
     readonly iterator: AsyncIterator<ArtifactEntry>;
+    observedParentKeys?: Map<string, string>;
   }> = [
     {
       reader: currentReader,
@@ -348,6 +352,19 @@ const visitArtifactEntries = async (
         entry.kind === "metadata" ? frame.containerId : null,
         { duplicateOrdinal, sourceFormat: frame.reader.format },
       );
+      if (entry.observedParentPath !== undefined) {
+        const keys = (frame.observedParentKeys ??= new Map());
+        let key = keys.get(entry.observedParentPath);
+        if (key === undefined) {
+          key = normalizeArtifactPath(
+            frame.prefix.length === 0
+              ? entry.observedParentPath
+              : `${frame.prefix}/${entry.observedParentPath}`,
+          );
+          keys.set(entry.observedParentPath, key);
+        }
+        context.observedParentPaths.set(occurrence, key);
+      }
       let digested:
         | {
             readonly node: ArtifactNode;

@@ -29,6 +29,7 @@ import { hasUImageMagic } from "./uimageFormat.js";
 import { hasBfltMagic } from "./bfltExecutable.js";
 import { hasNroMagic, hasNsoMagic } from "./switchExecutable.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
+import { hasCompoundFileSignature } from "./windows/compoundFile.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
 import { hasSystemdJournalHeader } from "./linux/systemdJournal.js";
 import { hasAuditdLogRecord } from "./linux/auditdLog.js";
@@ -96,6 +97,7 @@ export type RecognizedArtifactFormat = Extract<
   | "esp-flash-image"
   | "esp-image"
   | "fit"
+  | "compound-file"
   | "qualcomm-mbn"
   | "apple-img4"
   | "ntfs-mft"
@@ -334,6 +336,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
         : { state: "refused", format: "esp-image", reason: ESP8266_REFUSAL };
     },
     when("fit", hasFitImagesNode),
+    when("compound-file", hasCompoundFileSignature),
     when("ntfs-mft", hasMftFileRecordHeader),
     when("systemd-journal", hasSystemdJournalHeader),
     when("auditd-log", hasAuditdLogRecord),

@@ -32,6 +32,7 @@ import { BunStandaloneArtifactReader } from "./BunStandaloneArtifactReader.js";
 import type { DenoStandaloneAdmission } from "./deno/DenoStandaloneAdmission.js";
 import { DenoStandaloneArtifactReader } from "./DenoStandaloneArtifactReader.js";
 import { DfuSeArtifactReader } from "./DfuSeArtifactReader.js";
+import { CompoundFileArtifactReader } from "./CompoundFileArtifactReader.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
 import { DotnetBundleArtifactReader } from "./DotnetBundleArtifactReader.js";
 import {
@@ -788,6 +789,16 @@ const NON_ZIP_FORMATS = {
       "Image4 inventory reports IM4P, IM4M and IMG4 structure. Payload bytes are ranged as stored. Keybags are reported and not decrypted. Signatures and certificates are not checked. Compressed payloads are not expanded.",
     createReader: (path, options) =>
       new Image4ArtifactReader(path, sourceOf(options)),
+  }),
+  "compound-file": container("compound-file", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Compound file inventory lists each directory entry's name, type, declared size and allocation location. Stream contents are not interpreted: a Jump List's DestList, a shell link's target and thumbnail or document bytes stay opaque, mini-stream contents are not resolved, and a non-contiguous chain is reported without a byte range.",
+    createReader: (path, options) =>
+      new CompoundFileArtifactReader(path, sourceOf(options)),
   }),
   "qualcomm-mbn": container("qualcomm-mbn", {
     roleContainer: true,

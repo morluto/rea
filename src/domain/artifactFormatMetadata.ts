@@ -63,6 +63,8 @@ import {
   androidVbmetaDescriptorEntryMetadataSchema,
   androidVbmetaMetadataSchema,
   androidSparseImageMetadataSchema,
+  compoundFileEntryMetadataSchema,
+  compoundFileMetadataSchema,
   auditdLogMetadataSchema,
   iso9660EntryMetadataSchema,
   iso9660MetadataSchema,
@@ -122,6 +124,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
   ntfsMftMetadataSchema,
+  compoundFileMetadataSchema,
+  compoundFileEntryMetadataSchema,
   systemdJournalMetadataSchema,
   auditdLogMetadataSchema,
   dfuSeMetadataSchema,
@@ -407,6 +411,14 @@ const declarationsByKind: {
   "ntfs-mft": {
     notCompared:
       "Its fields come from the file's own FILE record headers and resident file-name attributes, which content comparison covers.",
+  },
+  "compound-file": {
+    notCompared:
+      "Its counts and offsets come from the file's own header, allocation tables and directory entries, which content comparison covers.",
+  },
+  "compound-file-entry": {
+    notCompared:
+      "index, parent_index, the tree links and starting_sector are layout, and storage, contiguous and the declared size come from the file's own directory stream and allocation tables, which its content comparison covers.",
   },
   "systemd-journal": {
     notCompared:
