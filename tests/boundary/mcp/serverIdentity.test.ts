@@ -188,6 +188,43 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
+it("compares Windows server paths by native realpath identity", async () => {
+  const root = await createTestTempDirectory("server-identity-windows-path-");
+  const scripts = join(root, "package", "scripts");
+  const scratch = join(root, "scratch");
+  await mkdir(scripts, { recursive: true });
+  await mkdir(scratch);
+  const canonical = join(scripts, "rea.mjs");
+  const other = join(root, "other.mjs");
+  await writeFile(canonical, "entrypoint");
+  await writeFile(other, "other entrypoint");
+  await symlink(scripts, join(scratch, "link"), "junction");
+  const identity = (server_path: string) =>
+    createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
+      startedAt: "2026-07-13T00:00:00.000Z",
+      commandPath: canonical,
+      expected: { server_path },
+      runtime: "node",
+      platform: "win32",
+    });
+
+  // A junction spelling of the running file is the same registration, while
+  // a different existing file still mismatches and a missing one is unknown.
+  expect(identity(join(scratch, "link", "rea.mjs")).alignment).toMatchObject({
+    state: "aligned",
+    reasons: [],
+  });
+  expect(identity(other).alignment).toMatchObject({
+    state: "mcp_server_restart_required",
+    reasons: ["registration_path_mismatch"],
+  });
+  expect(identity(join(root, "missing.mjs")).alignment).toMatchObject({
+    state: "unknown",
+    reasons: [],
+  });
+});
+
 it("reports the connected client and compares caller expectations against the live catalog", async () => {
   const session = createTestBinarySession(availabilityProvider());
   const server = createServer({ kind: "session", session });

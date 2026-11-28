@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { dirname, basename, resolve } from "node:path";
 
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
@@ -38,13 +38,20 @@ const compareServerPaths = (
   expected: string,
   observed: string,
   runtime: JavaScriptRuntime["id"],
+  platform: NodeJS.Platform,
 ): "aligned" | "mismatch" | "unknown" => {
   // Select the registered script the way this runtime does: Node resolves it
   // lexically, while Bun follows native traversal through a symlink before `..`.
   const script = normalizeEntrypointPath(expected, runtime) ?? expected;
   if (script === observed) return "aligned";
-  if (HOST_PLATFORM.platform === "win32") return "mismatch";
   try {
+    // Windows identity comes from the native realpath, matching registration
+    // identity: case, separators, 8.3 names, and junctions to the same file
+    // canonicalize to one path, while a different file stays a mismatch.
+    if (platform === "win32")
+      return realpathSync.native(script) === realpathSync.native(observed)
+        ? "aligned"
+        : "mismatch";
     const selected = statSync(script, { bigint: true });
     const running = statSync(observed, { bigint: true });
     return selected.dev === running.dev && selected.ino === running.ino
@@ -65,6 +72,8 @@ export const createServerIdentity = (input: {
   readonly catalog: ReturnType<typeof createCatalogIdentity>;
   /** The runtime that selected `commandPath`; defaults to the current one. */
   readonly runtime?: JavaScriptRuntime["id"];
+  /** The platform whose path identity rules apply; defaults to this host. */
+  readonly platform?: NodeJS.Platform;
 }) => {
   const catalog = input.catalog;
   const serverPath = input.commandPath || undefined;
@@ -75,6 +84,7 @@ export const createServerIdentity = (input: {
           input.expected.server_path,
           serverPath,
           input.runtime ?? javaScriptRuntime(process.versions).id,
+          input.platform ?? HOST_PLATFORM.platform,
         );
   const reasons: string[] = [];
   if (
