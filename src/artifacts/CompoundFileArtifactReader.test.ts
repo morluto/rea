@@ -1,4 +1,4 @@
-import { stat, truncate, writeFile } from "node:fs/promises";
+import { readFile, stat, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 
@@ -12,9 +12,11 @@ import {
   COMPOUND_FILE_MAX_BYTES,
 } from "../domain/windows/compoundFile.js";
 import { ArtifactFileSource } from "../resources/ArtifactFileSource.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 
 const SECTOR = 512;
 const END = 0xffff_fffe;
@@ -425,7 +427,7 @@ it("does not rebuild a rejected name into a path under its parent", async () => 
   const listed = inventory.occurrences.find(
     (row) => row.source_path === "bad/name",
   );
-  expect(listed?.logical_path).toBe("entry-2");
+  expect(listed?.logical_path).toBe("Nested/entry-2");
   expect(listed?.parent_occurrence_id).toBe(
     inventory.occurrences.find((row) => row.logical_path === "Nested")
       ?.occurrence_id,
@@ -590,7 +592,8 @@ it.each([
   },
   {
     name: "colliding",
-    leafName: (ordinal: number) => (ordinal === 17_999 ? "payload" : "leaf"),
+    leafName: (ordinal: number) =>
+      ordinal === 17_199 ? "payload" : "n".repeat(31),
     expectLimit: false,
   },
 ])(
@@ -602,7 +605,7 @@ it.each([
     // it; repeated leaves need only the short ordinals for the duplicates.
     const depth = 60;
     const name = "s".repeat(31);
-    const leaves = expectLimit ? 40_000 : 18_000;
+    const leaves = expectLimit ? 40_000 : 17_200;
     const entries: FixtureEntry[] = [
       // Ordinal 1 is the unusable storage; storages 2..61 nest under each other.
       { name: "bad/name", type: 1, start: 0, size: 0, child: 2 },
@@ -633,24 +636,92 @@ it.each([
       let count = 0;
       let retained = 0;
       let limited = false;
+      let flatOrdinal = false;
       let placedPayload = false;
-      for await (const entry of reader.entries()) {
+      let destinationCoverageGap = false;
+      for await (const entry of reader.entries(undefined, {
+        onCoverage: ({ limitations }) => {
+          destinationCoverageGap = limitations.some((text) =>
+            text.includes("some extraction destinations"),
+          );
+        },
+      })) {
         count += 1;
         retained += entry.path.length;
         limited ||= entry.limitations.some((text) =>
           text.includes("paths exceeded the cumulative allowance"),
         );
+        if (
+          entry.observedParentPath !== undefined &&
+          !entry.path.includes("/")
+        ) {
+          flatOrdinal = true;
+          expect(entry.kind).toBe("metadata");
+          expect(entry.byteOffset).toBeNull();
+        }
         placedPayload ||= entry.path.endsWith("/payload");
       }
       expect(count).toBe(leaves + depth + 1);
       expect(retained).toBeLessThanOrEqual(32 * 1024 * 1024);
       expect(limited).toBe(expectLimit);
+      expect(flatOrdinal).toBe(expectLimit);
+      expect(destinationCoverageGap).toBe(expectLimit);
       expect(placedPayload).toBe(!expectLimit);
     } finally {
       await reader.close();
     }
   },
 );
+
+it("keeps an NFC-colliding readable stream inside its storage when extracting", async () => {
+  const bytes = compoundFile({
+    entries: rootWith(1, [
+      { name: "Nested", type: 1, start: 0, size: 0, child: 2 },
+      { name: "é", type: 2, start: 2, size: 4096, right: 3 },
+      { name: "e\u0301", type: 2, start: 10, size: 4096 },
+    ]),
+    fat: [END, END, 3, 4, 5, 6, 7, 8, 9, END, 11, 12, 13, 14, 15, 16, 17, END],
+    totalSectors: 18,
+  });
+  const second = Buffer.alloc(4096, 0x22);
+  second.copy(bytes, (10 + 1) * SECTOR);
+  const directory = await createTestTempDirectory("rea-compound-extract-");
+  const source = join(directory, "names.cfb");
+  const outputRoot = join(directory, "out");
+  await writeFile(source, bytes);
+  const inventory = await scanCanonicalArtifactInventory(source);
+  const storage = inventory.occurrences.find(
+    (entry) => entry.logical_path === "Nested",
+  );
+  expect(
+    inventory.occurrences.find(
+      (entry) => entry.logical_path === "Nested/entry-3",
+    ),
+  ).toMatchObject({
+    entry_kind: "file",
+    parent_occurrence_id: storage?.occurrence_id,
+    source_location: { offset: (10 + 1) * SECTOR, length: 4096 },
+  });
+  const resourceScope = new ArtifactResourceScope();
+  try {
+    await extractArtifact({
+      inputPath: source,
+      inputFormat: "compound-file",
+      outputRoot,
+      environment: {},
+      integrityPolicy: "fail",
+      resourceScope,
+    });
+    expect(
+      (await readFile(join(outputRoot, "Nested", "entry-3"))).equals(second),
+    ).toBe(true);
+    await expect(stat(join(outputRoot, "entry-3"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  } finally {
+    await resourceScope.close();
+  }
+});
 
 it("claims a canonically equivalent name as one path", async () => {
   // `é` (U+00E9) and `e` + U+0301 normalize to the same NFC path. Claiming

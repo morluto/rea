@@ -456,7 +456,7 @@ export const resolveOccurrenceParents = (
   occurrences: readonly MutableOccurrence[],
   byPath: ReadonlyMap<string, readonly MutableOccurrence[]>,
   expandedContainerIds: ReadonlySet<string>,
-  metadataParentPaths?: ReadonlyMap<MutableOccurrence, string>,
+  observedParentPaths?: ReadonlyMap<MutableOccurrence, string>,
 ): ArtifactParentResolution => {
   const root: ArtifactParentIndex = { children: new Map() };
   for (const matches of byPath.values()) {
@@ -491,25 +491,24 @@ export const resolveOccurrenceParents = (
   const limitations = new Set<string>();
   const unknownParentOccurrences = new Set<MutableOccurrence>();
   for (const occurrence of occurrences) {
-    if (occurrence.entry_kind === "metadata") {
-      // A declaration query name does not imply containment. Only a parent
-      // independently established by the reader can override the carrier.
-      const path = metadataParentPaths?.get(occurrence);
-      if (path === undefined) continue;
+    const observedParent = observedParentPaths?.get(occurrence);
+    if (observedParent !== undefined) {
       const parents = byPath
-        .get(path)
+        .get(observedParent)
         ?.filter((candidate) => candidate.entry_kind === "directory");
       if (parents?.length === 1) {
         occurrence.parent_occurrence_id = parents[0]!.occurrence_id;
       } else {
         occurrence.parent_occurrence_id = null;
         unknownParentOccurrences.add(occurrence);
-        const limitation = `The parent occurrence for ${JSON.stringify(occurrence.logical_path)} is unknown because the declared directory ${JSON.stringify(path)} does not identify one observed occurrence.`;
+        const limitation = `The parent occurrence for ${JSON.stringify(occurrence.logical_path)} is unknown because the declared directory ${JSON.stringify(observedParent)} does not identify one observed occurrence.`;
         occurrence.limitations.push(limitation);
         limitations.add(limitation);
       }
       continue;
     }
+    // A metadata query name alone does not imply containment.
+    if (occurrence.entry_kind === "metadata") continue;
     const path = occurrence.logical_path;
     let branch = root;
     let parent: MutableOccurrence | undefined;

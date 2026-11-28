@@ -243,17 +243,22 @@ export class CompoundFileArtifactReader implements ArtifactReader {
     // registry rejects that as a file prefix. Directory ordinals say nothing
     // about parent-before-child, so a child whose parent is not placed yet
     // waits until it is instead of claiming a prefix its parent may lose.
-    const placedByIndex = new Map<number, string>();
+    const placedByIndex = new Map<
+      number,
+      { path: string; materializable: boolean }
+    >();
     const entries = new Map<string, ArtifactEntry>();
     const byPath = new Map<string, string>();
+    let incompletePlacement = false;
     const place = (entry: CompoundFileDirectoryEntry): void => {
       pathBudget.refund(fallbackReservation);
       const artifact = toArtifactEntry(entry);
       if (artifact === null) return;
       const key = String(entry.index);
       const declaredParent = entry.parentIndex;
-      const placedParent =
+      const parent =
         declaredParent === null ? undefined : placedByIndex.get(declaredParent);
+      const parentPath = parent?.path ?? "";
       // The parser owns where its tree lists a member: the parent's placed path
       // plus the member's own usable component. `path` may be null because the
       // entry is an orphan, an ancestor's name cannot name a path, or the
@@ -262,33 +267,55 @@ export class CompoundFileArtifactReader implements ArtifactReader {
       // and claiming it at the root would invent a member the tree never holds.
       const component = entry.component;
       const listed =
-        placedParent === undefined || component === null
+        parent === undefined || component === null
           ? null
-          : placedParent === ""
+          : parentPath === ""
             ? component
-            : `${placedParent}/${component}`;
+            : `${parentPath}/${component}`;
       const projected =
         listed === null || listed === artifact.path
           ? artifact
           : { ...artifact, path: listed };
-      const placed = claimPath(projected, claimed, pathBudget, entry.index);
-      if (entry.type === "storage") placedByIndex.set(entry.index, placed.path);
-      entries.set(
-        key,
-        entry.type === "stream" &&
-          placed.kind === "metadata" &&
-          placedParent !== undefined &&
-          placedParent !== ""
-          ? { ...placed, metadataParentPath: placedParent }
-          : placed,
+      const placed = claimPath(
+        projected,
+        parentPath,
+        claimed,
+        pathBudget,
+        entry.index,
       );
+      // A flat ordinal is an inventory label if the allowance could not
+      // retain a path within its storage. It cannot serve as an extraction
+      // destination for this member or any file below such a storage.
+      const materializable =
+        parent?.materializable !== false &&
+        (parentPath === "" || placed.path.startsWith(`${parentPath}/`));
+      incompletePlacement ||= !materializable;
+      if (entry.type === "storage")
+        placedByIndex.set(entry.index, { path: placed.path, materializable });
+      const member = entry.type === "storage" || entry.type === "stream";
+      entries.set(key, {
+        ...placed,
+        ...(member && parentPath !== ""
+          ? { observedParentPath: parentPath }
+          : {}),
+        ...(!materializable && placed.kind === "file"
+          ? ({
+              kind: "metadata",
+              byteOffset: null,
+              limitations: [
+                ...placed.limitations,
+                "The path allowance cannot retain this stream inside its storage hierarchy, so the listed path is unavailable for extraction.",
+              ],
+            } as const)
+          : {}),
+      });
       byPath.set(placed.path, key);
     };
     // Ancestors first: a child's path is built from its parent's placed path,
     // so the parent must be placed before it whatever order the directory
     // lists them in. The root storage is not a member of itself, so it seeds
     // the map at the empty prefix its children extend.
-    placedByIndex.set(0, "");
+    placedByIndex.set(0, { path: "", materializable: true });
     const waiting = new Map<number, CompoundFileDirectoryEntry[]>();
     const settle = (entry: CompoundFileDirectoryEntry): void => {
       const queued = waiting.get(entry.index);
@@ -321,7 +348,12 @@ export class CompoundFileArtifactReader implements ArtifactReader {
     await this.#source.read(signal);
     this.#assertOpen(signal);
     this.#metadata = image.metadata;
-    this.#limitations = image.limitations;
+    this.#limitations = incompletePlacement
+      ? [
+          ...image.limitations,
+          "The path allowance could not retain some extraction destinations inside their storage hierarchy.",
+        ]
+      : image.limitations;
     for (const [key, entry] of entries) this.#entries.set(key, entry);
     for (const [path, key] of byPath) this.#byPath.set(path, key);
   }
@@ -409,6 +441,7 @@ const sameRange = (entry: ArtifactEntry, stored: ArtifactEntry): boolean =>
  */
 const claimPath = (
   entry: ArtifactEntry,
+  parentPath: string,
   claimed: Set<string>,
   paths: Budget,
   index: number,
@@ -424,23 +457,37 @@ const claimPath = (
   }
   // A member may literally use an ordinal path. Compare fallbacks against
   // the same index so they never take another entry's established identity.
-  const base = `entry-${String(index)}`;
-  let path = base;
-  for (let suffix = 2; claimed.has(path); suffix += 1)
-    path = `${base}-${String(suffix)}`;
-  paths.charge(path.length, () =>
-    invariantViolation("Compound file ordinal path exceeded its reservation"),
+  const ordinal = `entry-${String(index)}`;
+  const fallback = (base: string): { path: string; identity: string } => {
+    let path = base;
+    let identity = normalizedIdentity(path) ?? path;
+    for (let suffix = 2; claimed.has(identity); suffix += 1) {
+      path = `${base}-${String(suffix)}`;
+      identity = normalizedIdentity(path) ?? path;
+    }
+    return { path, identity };
+  };
+  let placed = fallback(
+    parentPath === "" ? ordinal : `${parentPath}/${ordinal}`,
   );
-  claimed.add(path);
+  let fellOutsideParent = false;
+  if (!paths.tryCharge(Math.max(placed.path.length, placed.identity.length))) {
+    placed = fallback(ordinal);
+    paths.charge(placed.path.length, () =>
+      invariantViolation("Compound file ordinal path exceeded its reservation"),
+    );
+    fellOutsideParent = true;
+  }
+  claimed.add(placed.identity);
   return {
     ...entry,
-    path,
+    path: placed.path,
     ...(entry.path === "" || entry.sourcePath !== undefined
       ? {}
       : { sourcePath: entry.path }),
     limitations: [
       ...entry.limitations,
-      canClaim
+      canClaim || fellOutsideParent
         ? "Directory paths exceeded the cumulative allowance this read retains, so this entry is listed under its source ordinal; its declared name and facts are kept."
         : "This entry's declared name is not a single safe path component, or another entry already claimed its logical path, so it is listed under its source ordinal; the declared name, when it has one, is retained in sourcePath.",
     ],
