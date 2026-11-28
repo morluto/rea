@@ -96,7 +96,11 @@ describe("Kimi Code registration lifecycle", () => {
       client.configPath,
       JSON.stringify({
         mcpServers: {
-          rea: { command: "rea", args: ["mcp"], enabledTools },
+          rea: {
+            command: "npx",
+            args: ["-y", "rea-agents@6.6.0", "mcp"],
+            enabledTools,
+          },
         },
       }),
     );
@@ -119,7 +123,7 @@ describe("Kimi Code registration lifecycle", () => {
     const original = JSON.stringify({
       mcpServers: {
         rea: {
-          ...expectedRegistration(["rea", "mcp"]),
+          ...expectedRegistration(["npx", "-y", "rea-agents@6.6.0", "mcp"]),
           startupTimeoutMs: 90_000,
           toolTimeoutMs: 300_000,
         },
@@ -245,8 +249,8 @@ describe("Kimi Code input-schema profile selection", () => {
     const stored = JSON.stringify({
       mcpServers: {
         rea: {
-          command: "rea",
-          args: ["mcp"],
+          command: "npx",
+          args: ["-y", "rea-agents@6.6.0", "mcp"],
           env: { REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
         },
       },
@@ -294,8 +298,8 @@ describe("Kimi Code input-schema profile selection", () => {
         JSON.stringify({
           mcpServers: {
             rea: {
-              command: "rea",
-              args: ["mcp"],
+              command: "npx",
+              args: ["-y", "rea-agents@6.6.0", "mcp"],
               env: { REA_MCP_INPUT_SCHEMA_PROFILE: storedProfile },
             },
           },

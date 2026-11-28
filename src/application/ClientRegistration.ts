@@ -217,7 +217,9 @@ const recordedRegistrationEnvironment = (
     client.format === "goose"
       ? gooseEnvironmentField(source.connection)
       : ok(
-          client.format === "opencode" || client.format === "kilo"
+          client.format === "opencode" ||
+            client.format === "fx" ||
+            client.format === "kilo"
             ? "environment"
             : "env",
         );
@@ -243,9 +245,11 @@ export const clientRegistrationCommandLookup = (
   value: unknown,
   client: SetupClient,
   inherited: Readonly<NodeJS.ProcessEnv> = process.env,
-): ClientRegistrationCommandLookup | undefined => {
+): ClientRegistrationCommandLookup => {
   const recorded = recordedRegistrationEnvironment(value, client);
-  if (recorded === undefined) return undefined;
+  // A malformed env block cannot prove PATH for bare commands; package and
+  // absolute launchers still classify without it.
+  if (recorded === undefined) return { unresolvedPath: true };
   const platform = HOST_PLATFORM.platform;
   return {
     environment: mergeEnvironmentOverrides(inherited, recorded, platform),
@@ -272,12 +276,10 @@ export const clientRegistrationOwnership = (
     profile: client.registrationProfile,
   });
   if (!parsed.ok) return "unknown";
-  const lookup = clientRegistrationCommandLookup(value, client);
-  if (lookup === undefined) return "unknown";
   return classifyClientRegistrationCommand(
     [parsed.value.command, ...parsed.value.args],
     currentCommandPath,
-    lookup,
+    clientRegistrationCommandLookup(value, client),
   );
 };
 

@@ -364,7 +364,7 @@ export const readClientRegistrationInspections = async (
                 raw,
                 client,
                 options.environment ?? process.env,
-              ) ?? { unresolvedPath: true },
+              ),
             ).identity
           : "unknown";
         record(
@@ -389,7 +389,7 @@ export const readClientRegistrationInspections = async (
           raw,
           client,
           options.environment ?? process.env,
-        ) ?? { unresolvedPath: true },
+        ),
       );
       const transientPaths = transientClientLauncherPaths(
         command,

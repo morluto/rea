@@ -229,14 +229,16 @@ const windowsReaCmdScript = (cmdPath: string): string | undefined => {
   for (const line of text.split(/\r?\n/u)) {
     const trimmed = line.trim();
     // Comments and echo are not executed launch statements.
-    if (/^(?:rem\b|::|@?\s*echo\b)/iu.test(trimmed)) continue;
-    // npm cmd-shim launch: ... & "%_prog%"  "%dp0%\node_modules\<pkg>\…" %*
+    if (/^(?:@?\s*rem\b|::|@?\s*echo\b)/iu.test(trimmed)) continue;
+    // npm cmd-shim launch only: start of command or after &/|, then
+    // "%_prog%" "%dp0%\node_modules\<pkg>\…" %*
     const match =
-      /"%_prog%"\s+"%dp0%([\\/][^"]+)"\s+%*/iu.exec(line) ??
-      /&(?:\s+title\s+%COMSPEC%\s+&)?\s*"%_prog%"\s+"%dp0%([\\/][^"]+)"\s+%*/iu.exec(
-        line,
+      /(?:^|[&|])\s*(?:@\s*)?"%_prog%"\s+"%dp0%([\\/][^"]+)"\s+%*/iu.exec(
+        trimmed,
       );
     if (match === null) continue;
+    const launchAt = trimmed.search(/"%_prog%"/iu);
+    if (launchAt > 0 && /\becho\b/iu.test(trimmed.slice(0, launchAt))) continue;
     const candidate = match[1]!.replace(/^[\\/]/u, "");
     const parts = candidate.split(/[/\\]/u).map((part) => part.toLowerCase());
     const modules = parts.indexOf("node_modules");
@@ -281,11 +283,9 @@ const resolveBareCliOnPath = (
     }
     return undefined;
   }
-  for (const candidate of posixPathCandidates(
-    name,
-    environment.PATH ?? "",
-    { relativeEntries: "resolve" },
-  )) {
+  for (const candidate of posixPathCandidates(name, environment.PATH ?? "", {
+    relativeEntries: "resolve",
+  })) {
     if (candidate.relativeEntry) return "unknown";
     try {
       accessSync(candidate.path, constants.X_OK);
@@ -672,11 +672,7 @@ export const inspectClientRegistrationCommand = (
       },
     };
   }
-  return inspectDirectRegistrationCommand(
-    command,
-    currentCommandPath,
-    lookup,
-  );
+  return inspectDirectRegistrationCommand(command, currentCommandPath, lookup);
 };
 
 /** Ownership-only consumers share the same parsed command facts. */

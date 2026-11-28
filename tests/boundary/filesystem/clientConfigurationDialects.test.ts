@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
+import { clientRegistrationOwnership } from "../../../src/application/ClientRegistration.js";
 import {
   currentClientRegistrationCommand,
   classifyClientRegistrationCommand,
 } from "../../../src/application/ClientRegistrationIdentity.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
 
@@ -1076,6 +1078,24 @@ describe("client launcher traversal semantics", () => {
         classifyClientRegistrationCommand(["rea", "mcp"], script, {
           environment: { PATH: bin },
         }),
+      ).toBe("owned");
+
+      const fxClient = {
+        name: "fx",
+        registrationProfile: supportedClientRegistrationProfile("fx"),
+        format: "fx",
+        configPath: join(root, "fx.json"),
+      } as const;
+      expect(
+        clientRegistrationOwnership(
+          {
+            type: "local",
+            command: ["rea", "mcp"],
+            environment: { PATH: bin },
+          },
+          fxClient,
+          script,
+        ),
       ).toBe("owned");
     },
   );
