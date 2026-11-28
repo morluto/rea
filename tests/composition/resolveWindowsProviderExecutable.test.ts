@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { err, ok } from "../../src/domain/result.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../../src/rizin/RizinProviderIdentity.js";
-import { resolveWindowsProviderExecutable } from "../../src/process/WindowsProviderExecutable.js";
+import { resolveWindowsProviderExecutable } from "../../src/composition/resolveWindowsProviderExecutable.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 
 const windowsLookup = (cwd: string, files: readonly string[]) => {
@@ -91,22 +91,18 @@ describe("resolveWindowsProviderExecutable", () => {
     ).toEqual(err({ kind: "invalid_extension", extension: "C:\\bad" }));
   });
 
-  it("finds SDK batch launchers only when the caller opts into batch wrapping", () => {
+  it("keeps batch launchers under the caller's batch wrapping ownership", () => {
     const environment = {
       PATH: "C:\\Android SDK\\build-tools",
       PATHEXT: ".COM;.EXE;.BAT;.CMD",
     };
     const expected = "C:\\Android SDK\\build-tools\\apksigner.BAT";
     const lookup = windowsLookup("C:\\work", [expected]);
+    // The shared resolver searches runnable image extensions only; batch
+    // launchers stay the caller's wrapping boundary, never an implicit pick.
     expect(
       resolveWindowsProviderExecutable("apksigner", environment, lookup),
     ).toEqual(err({ kind: "not_found" }));
-    expect(
-      resolveWindowsProviderExecutable("apksigner", environment, {
-        ...lookup,
-        allowBatch: true,
-      }),
-    ).toEqual(ok(expected));
   });
 
   it("passes an absolute selected command through provider composition", () => {

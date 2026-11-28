@@ -61,7 +61,7 @@ import {
   type ProviderProcessSnapshot,
   type ProviderProcessSupervisor,
 } from "../process/ProviderProcess.js";
-import { resolveWindowsProviderExecutable } from "../process/WindowsProviderExecutable.js";
+import { resolveWindowsProviderExecutable } from "../composition/resolveWindowsProviderExecutable.js";
 import { adbEvidenceParameters } from "../domain/adb/adbEvidenceParameters.js";
 import { adbArguments } from "./AdbCommand.js";
 
