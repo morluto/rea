@@ -90,6 +90,10 @@ import {
 } from "../domain/iso9660/iso9660Structures.js";
 import { DFUSE_SUFFIX_BYTES } from "../domain/firmware/dfuse.js";
 import {
+  hasMamSignature,
+  hasPrefetchSignature,
+} from "../domain/windows/prefetchFormat.js";
+import {
   locateEspFlashLayout,
   type EspFlashSelection,
 } from "../domain/firmware/espFlashLocation.js";

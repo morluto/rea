@@ -154,6 +154,11 @@ export const documentationSections = [
         route: "/ntfs-metadata",
       },
       {
+        text: "Windows Prefetch files",
+        source: "guides/native/windows-prefetch.md",
+        route: "/windows-prefetch",
+      },
+      {
         text: "Binary hardening",
         source: "binary-hardening.md",
         route: "/binary-hardening",

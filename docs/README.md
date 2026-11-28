@@ -41,6 +41,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
 - [Windows Shell Link shortcuts](guides/native/windows-shortcut.md)
 - [Acquired NTFS metadata](guides/native/ntfs-metadata.md)
+- [Windows Prefetch files](guides/native/windows-prefetch.md)
 - [Binary hardening](binary-hardening.md)
 - [ELF note tables](elf-notes.md)
 - [ELF dependency tables](elf-dependencies.md)

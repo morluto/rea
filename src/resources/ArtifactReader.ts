@@ -292,6 +292,7 @@ export interface ArtifactReader {
     | "bflt"
     | "esp-flash-image"
     | "fit"
+    | "windows-prefetch"
     | "qualcomm-mbn"
     | "apple-img4"
     | "ntfs-mft"
