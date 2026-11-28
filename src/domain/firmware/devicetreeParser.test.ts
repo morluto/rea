@@ -513,3 +513,57 @@ it("keeps complete coverage when nothing was left undecoded", () => {
   );
   expect(report.coverage.status).toBe("complete");
 });
+
+/** A phandle that is not a single cell leaves that node's identity unresolved. */
+it("reports partial coverage when a phandle is not a single cell", () => {
+  const report = parse(
+    devicetreeFixture({
+      name: "",
+      properties: {
+        compatible: dtString("test,board"),
+        "#address-cells": cells(1),
+        "#size-cells": cells(1),
+      },
+      children: [
+        {
+          name: "dev@1000",
+          properties: { reg: cells(0, 1), phandle: cells(1, 2) },
+        },
+      ],
+    }),
+  );
+  expect(
+    report.limitations.some((line) => line.includes("is not a single cell")),
+  ).toBe(true);
+  expect(report.coverage.status).toBe("partial");
+});
+
+/** Two disagreeing phandle spellings on one node leave both values unresolved. */
+it("reports partial coverage when phandle and linux,phandle disagree", () => {
+  const report = parse(
+    devicetreeFixture({
+      name: "",
+      properties: {
+        compatible: dtString("test,board"),
+        "#address-cells": cells(1),
+        "#size-cells": cells(1),
+      },
+      children: [
+        {
+          name: "dev@1000",
+          properties: {
+            reg: cells(0, 1),
+            phandle: cells(7),
+            "linux,phandle": cells(9),
+          },
+        },
+      ],
+    }),
+  );
+  expect(
+    report.limitations.some((line) =>
+      line.includes("conflicts with linux,phandle"),
+    ),
+  ).toBe(true);
+  expect(report.coverage.status).toBe("partial");
+});
