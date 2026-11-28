@@ -30,6 +30,7 @@ export const PYTHON_READY_CHECK = `
 export const PYTHON_IMPORTS = `from __future__ import annotations
 
 from array import array
+from builtins import BaseException, EOFError, Exception, FileExistsError, FileNotFoundError, NotImplementedError, OSError, RecursionError, UnicodeDecodeError, ValueError
 from itertools import islice
 import binascii
 import contextlib
