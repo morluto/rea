@@ -360,6 +360,8 @@ describe("browser CSS variables item and summary schemas", () => {
     expect(
       browserCssVariablesSchema.safeParse({
         ...valid,
+        total: 4,
+        retained_count: 4,
         items: [
           { name: `--${"x".repeat(130)}`, value: "red" },
           { name: "--brand+tone", value: "red" },
@@ -388,6 +390,24 @@ describe("browser CSS variables item and summary schemas", () => {
       browserCssVariablesSchema.safeParse({
         ...valid,
         status: "malformed",
+      }).success,
+    ).toBe(false);
+
+    // Rejects contradictory retained_count or included total
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        retained_count: 1,
+        items: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        status: "included",
+        total: 1,
+        retained_count: 0,
+        items: [],
       }).success,
     ).toBe(false);
 

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import {
   browserCssVariableItemSchema,
-  browserCssVariablesSchema,
+  browserCssVariablesSummarySchema,
   webPageInspectionSchema,
   type WebPageInspection,
 } from "../browserObservationSchemas.js";
@@ -64,7 +64,7 @@ export const webPageSectionSchema = z.strictObject({
     .omit({ requests: true, websocket_connections: true })
     .optional(),
   scripts: page.scripts.omit({ items: true }).optional(),
-  css_variables: browserCssVariablesSchema.omit({ items: true }).optional(),
+  css_variables: browserCssVariablesSummarySchema.optional(),
 });
 
 const pageShape = {
@@ -138,7 +138,7 @@ export const webPageSummarySchema = z.strictObject({
     usage_bytes: true,
     quota_bytes: true,
   }),
-  css_variables: browserCssVariablesSchema.omit({ items: true }),
+  css_variables: browserCssVariablesSummarySchema,
   counts: z.strictObject({
     dom_nodes: z.int().nonnegative(),
     accessibility_nodes: z.int().nonnegative(),

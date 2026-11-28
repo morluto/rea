@@ -294,13 +294,34 @@ export type BrowserCssVariableItem = z.infer<
   typeof browserCssVariableItemSchema
 >;
 
-export const browserCssVariablesSchema = z.object({
+const browserCssVariablesBaseSchema = z.object({
   status: z.enum(["not_approved", "included", "unavailable", "truncated"]),
   origin_scope: z.enum(["same_origin", "all_allowed"]).default("same_origin"),
   total: z.int().min(0),
   retained_count: z.int().min(0),
   items: z.array(browserCssVariableItemSchema).max(MAX_CSS_VARIABLES_CEILING),
 });
+
+export const browserCssVariablesSummarySchema =
+  browserCssVariablesBaseSchema.omit({ items: true });
+
+export const browserCssVariablesSchema =
+  browserCssVariablesBaseSchema.superRefine((val, ctx) => {
+    if (val.retained_count !== val.items.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["retained_count"],
+        message: "retained_count must match items.length",
+      });
+    }
+    if (val.status === "included" && val.total !== val.items.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["total"],
+        message: 'total must match items.length when status is "included"',
+      });
+    }
+  });
 export type BrowserCssVariables = z.infer<typeof browserCssVariablesSchema>;
 
 /** Provider-neutral normalized result for one passive web-page observation. */

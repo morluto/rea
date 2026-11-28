@@ -1221,6 +1221,10 @@ it("redacts credentials from standalone URL custom properties and admits custom 
           value: "https://alice:one@a.test/x,https://bob:two@b.test/y",
         },
         {
+          name: "--asset-scheme-relative-list",
+          value: "https://public.test/a,//bob:two@b.test/y",
+        },
+        {
           name: "--asset-safe-comma-path",
           value: "https://cdn.example/sprites/a,//icons@2x/logo.svg",
         },
@@ -1289,6 +1293,11 @@ it("redacts credentials from standalone URL custom properties and admits custom 
     value: "https://a.test/x,https://b.test/y",
     redacted: true,
   });
+  expect(byName.get("--asset-scheme-relative-list")).toEqual({
+    name: "--asset-scheme-relative-list",
+    value: "https://public.test/a,//b.test/y",
+    redacted: true,
+  });
   expect(byName.get("--asset-safe-comma-path")).toEqual({
     name: "--asset-safe-comma-path",
     value: "https://cdn.example/sprites/a,//icons@2x/logo.svg",
@@ -1319,4 +1328,46 @@ it("redacts credentials from standalone URL custom properties and admits custom 
     value: "#123456",
     redacted: false,
   });
+});
+
+it("rejects malformed element child nodeId before falling back to document root nodeId", async () => {
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: "invalid-child-id", nodeType: 1 }],
+      },
+    },
+  });
+
+  const limitations: string[] = [];
+  const exclusions: {
+    section: string;
+    reason: string;
+    count: number | null;
+  }[] = [];
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+      }),
+      events: {
+        completeness: {
+          exclude: (section, reason, count) => {
+            exclusions.push({ section, reason, count });
+          },
+        },
+      },
+    },
+    limitations,
+  );
+
+  expect(result.status).toBe("unavailable");
+  expect(exclusions).toEqual([
+    { section: "css_variables", reason: "invalid_protocol_value", count: 1 },
+  ]);
 });

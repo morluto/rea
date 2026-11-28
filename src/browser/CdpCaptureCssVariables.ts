@@ -402,7 +402,9 @@ const redactStandaloneCssUrl = (value: string): string => {
       tokenEnd++;
     }
     const token = value.slice(pos, tokenEnd);
-    const parts = token.split(/,(?=[a-zA-Z][a-zA-Z0-9+.-]*:\/\/)/u);
+    const parts = token.split(
+      /,(?=(?:[a-zA-Z][a-zA-Z0-9+.-]*:\/\/|\/\/[^,\s/]+:[^,\s/@]+@))/u,
+    );
     result += parts
       .map((part) => {
         const partTrailingComma = part.endsWith(",");
@@ -570,7 +572,9 @@ export const captureCssVariables = async (
   const children = recordsValue(rootRecord.children);
   const elementChild = children.find((c) => numberValue(c.nodeType) === 1);
   const targetNodeId =
-    numberValue(elementChild?.nodeId) ?? numberValue(rootRecord.nodeId);
+    elementChild !== undefined
+      ? numberValue(elementChild.nodeId)
+      : numberValue(rootRecord.nodeId);
 
   if (
     targetNodeId === undefined ||
