@@ -1268,7 +1268,10 @@ require coverage and both preflights. A failed, canceled, skipped or missing
 selected quality job still fails the required gate.
 
 The separate **Mutation sweep** workflow runs both complete configurations daily
-and on manual dispatch. Each isolated job has a 90-minute budget. The sweep runs
+and on manual dispatch. Each isolated job has a 90-minute budget and passes
+`--concurrency 4` for its 4-vCPU runner; Stryker divides concurrency between
+TypeScript checkers and test runners, so the configurations' default of 2,
+kept for shared local machines, runs one test runner. The sweep runs
 outside the PR and release publication gates. `ci:full` requests full regression,
 coverage and provider qualification; it does not request a complete mutation
 sweep. Use the Mutation sweep workflow to request that result. Both jobs use the

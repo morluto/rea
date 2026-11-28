@@ -73,7 +73,7 @@ it("runs both complete canonical sweeps independently of PR and release gates", 
   expect(sweep?.env?.MUTATION_CONFIG).toBe("${{ matrix.config }}");
   expect(sweep?.run?.trim().split("\n")).toEqual([
     "node scripts/prepare-reverse-tools-mutation.mjs",
-    'npx --no-install stryker run "${MUTATION_CONFIG}"',
+    'npx --no-install stryker run "${MUTATION_CONFIG}" --concurrency 4',
   ]);
   expect(job.steps.some((step) => step.run === "npm run test:prepare")).toBe(
     true,
