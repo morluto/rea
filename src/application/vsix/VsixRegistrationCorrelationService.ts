@@ -32,7 +32,7 @@ const OPERATION = "correlate_vsix_registrations";
 
 const LIMITATIONS = [
   "REA does not verify that the JavaScript analysis covers the files of the selected package; entry_points only says whether a declared entry path was analyzed.",
-  "undetermined replaces not_found when a declared entry point was not analyzed or analysis was truncated. not_found means no vscode registration with that literal identifier was seen. Identifiers built at run time are listed as unresolved, and unrecognized code or bundler forms can hide a registration.",
+  "undetermined replaces not_found when a declared entry point or any source was not analyzed, analysis was truncated, or the application graph predates callee facts; it replaces registered_undeclared when declarations were not all read. not_found means no vscode registration with that literal identifier was seen. Identifiers built at run time are listed as unresolved, and unrecognized code or bundler forms can hide a registration.",
   "A registration with loader_authority candidate rests on an unestablished require; wrapper unverified additionally rests on a helper whose effect was not checked.",
   "Static source facts only: activation, execution and handler behavior are not observed.",
 ] as const;
@@ -118,6 +118,7 @@ export const correlateVsixRegistrationsExecution = (
   const result = vsixRegistrationCorrelationSchema.parse({
     ...correlateVsixRegistrations({
       contributes: report.contributes,
+      manifestRead: report.package_identity !== null,
       entryPoints: [
         report.entry_points.main,
         report.entry_points.browser,

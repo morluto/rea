@@ -5,6 +5,10 @@ import type {
 import type { JavaScriptSemanticPrimitive } from "./javascriptSemanticValueTypes.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 
+/** Ambiguity that concerns only which loader a literal `require` uses. */
+export const UNKNOWN_REQUIRE_LOADER_REASON =
+  "CommonJS loader authority is unknown.";
+
 /** Construct exact local provenance without inventing module origins. */
 export const semanticLocalProvenance = (): JavaScriptBindingProvenance => ({
   status: "local",
@@ -37,7 +41,7 @@ export const semanticOriginsProvenance = (
     : semanticAmbiguousProvenance(
         unique,
         unique.some(({ loaderAuthority }) => loaderAuthority === "candidate")
-          ? "CommonJS loader authority is unknown."
+          ? UNKNOWN_REQUIRE_LOADER_REASON
           : "Multiple module origins.",
       );
 };

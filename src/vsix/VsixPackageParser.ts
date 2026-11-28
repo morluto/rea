@@ -620,15 +620,17 @@ const rowsOf = (value: unknown): readonly Record<string, unknown>[] =>
 const exactText = (value: unknown): string | null =>
   typeof value === "string" && value !== "" ? value : null;
 
-const menuItems = (menus: unknown) =>
+const menuGroups = (menus: unknown) =>
   rowsOf(menus).flatMap((record) =>
     Object.entries(record).flatMap(([menu, items]) =>
       menu === ""
         ? []
-        : rowsOf(items).map((row) => ({
-            menu,
-            command: exactText(row.command),
-          })),
+        : [
+            {
+              menu,
+              commands: rowsOf(items).map((row) => exactText(row.command)),
+            },
+          ],
     ),
   );
 
@@ -761,7 +763,7 @@ const parsePackageJsonDocument = (
       commands,
       commands_total: commandRows.length,
       commands_omitted: 0,
-      menus: menuItems(contributesRaw?.menus),
+      menus: menuGroups(contributesRaw?.menus),
       keybindings: rowsOf(contributesRaw?.keybindings).map((row) => ({
         command: exactText(row.command),
         key: exactText(row.key),

@@ -49,7 +49,7 @@ exists.
 
 `activation_events` lists each package.json event with `eager` true for `*`
 and `onStartupFinished`. `contributes` lists contribute key names and counts,
-every declared command, and the command each menu item (`menus`) and
+every declared command, the commands each menu invokes (`menus`), and the command each
 keybinding (`keybindings`) invokes, plus declared chat participants, language
 model tools and MCP server providers (`declarations`). `extension_dependencies` and `extension_pack` keep both
 manifests' declared ids and a `disagreement` flag. A side is `null` when its
@@ -103,8 +103,8 @@ Each registration has its module, line and column. `loader_authority:
 candidate` marks a `require`-based match, and `wrapper: unverified` one that
 reaches `vscode` through an interop helper such as `__toESM` whose effect is not
 checked. Calls whose identifier is not a string literal appear in
-`unresolved_registrations`. `menus` and `keybindings` list where each command is
-invoked; they are null when not recorded.
+`unresolved_registrations`. `menus` lists the known commands each menu invokes, and each command's
+`keybindings` lists its keys; both are null when not recorded.
 
 REA does not verify that the two records describe the same files:
 `entry_points` says whether each declared entry path was analyzed. `not_found`
@@ -122,6 +122,11 @@ model tools and MCP server providers:
 The servers an MCP provider returns at run time, their commands and prompt
 handling are not analyzed. `summary` counts commands only, apart from
 `unresolved_registrations`, which covers every kind.
+
+`undetermined` also replaces `registered_undeclared` when the manifest was not
+read or an older record omitted commands. Absence is not claimed when any source
+was skipped or unparsed, or for application Evidence recorded before callee
+facts existed; rerun the analysis for those.
 
 ## Limits and failures
 

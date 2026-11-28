@@ -52,7 +52,6 @@ const commandSchema = z.strictObject({
   status: z.enum(STATUSES),
   title: z.string().nullable(),
   registrations: z.array(registrationSchema),
-  menus: z.array(z.string()).nullable(),
   keybindings: z.array(z.string()).nullable(),
 });
 
@@ -68,6 +67,9 @@ const count = z.int().nonnegative();
 const correlationShape = {
   commands: z.array(commandSchema),
   contributions: z.array(contributionSchema),
+  menus: z
+    .array(z.strictObject({ menu: z.string(), commands: z.array(z.string()) }))
+    .nullable(),
   unresolved_registrations: z.array(registrationSchema),
   entry_points: z.array(
     z.strictObject({ path: z.string(), analyzed: z.boolean() }),
@@ -95,10 +97,12 @@ export const vsixRegistrationCorrelationSchema = z.strictObject({
 interface CorrelationInput {
   readonly contributes: Pick<
     VsixPackage["contributes"],
-    "commands" | "menus" | "keybindings" | "declarations"
+    "commands" | "commands_omitted" | "menus" | "keybindings" | "declarations"
   >;
   /** Entry point member paths declared by the package. */
   readonly entryPoints: readonly string[];
+  /** Whether the package manifest declaring contributions was read. */
+  readonly manifestRead: boolean;
   readonly semanticGraph: JavaScriptSemanticGraph;
 }
 
@@ -162,7 +166,10 @@ const registrationsOf = (graph: JavaScriptSemanticGraph) => {
 const joinDeclarations = (
   declared: ReadonlyMap<string, string | null> | null,
   found: ReadonlyMap<string, Registration[]>,
-  complete: boolean,
+  {
+    complete,
+    allDeclared,
+  }: { readonly complete: boolean; readonly allDeclared: boolean },
 ) =>
   [...new Set([...(declared?.keys() ?? []), ...found.keys()])]
     .sort(compareUnicodeCodePoints)
@@ -172,7 +179,9 @@ const joinDeclarations = (
         declared === null
           ? "undetermined"
           : !declared.has(id)
-            ? "registered_undeclared"
+            ? allDeclared
+              ? "registered_undeclared"
+              : "undetermined"
             : registrations.length > 0
               ? "registered"
               : complete
@@ -207,27 +216,54 @@ const groupBy = <Row extends { readonly command: string | null }>(
   return groups;
 };
 
-/** Files whose call analysis was dropped under a resource limit. */
-const omittedCallFiles = (graph: JavaScriptSemanticGraph) =>
-  new Set(
-    graph.unknowns.flatMap(({ family, reason, evidence }) =>
-      family === "call-flow" &&
-      reason === "resource-limit" &&
-      evidence.location.available &&
-      evidence.location.value.kind === "artifact-path"
-        ? [evidence.location.value.path]
-        : [],
-    ),
-  );
+/**
+ * Files whose calls were not analyzed: skipped or unparsed sources, and call
+ * analysis dropped under a resource limit.
+ */
+const unanalyzedFiles = (graph: JavaScriptSemanticGraph) => {
+  const paths = new Set<string>();
+  let any = false;
+  for (const { family, reason, evidence } of graph.unknowns) {
+    const dropped =
+      reason === "incomplete-module" ||
+      (reason === "resource-limit" && family === "call-flow");
+    if (!dropped) continue;
+    const { location } = evidence;
+    if (location.available && location.value.kind === "artifact-path") {
+      paths.add(location.value.path);
+      any = true;
+    } else if (reason === "incomplete-module") any = true;
+  }
+  return { paths, any };
+};
 
-/** Match a package member path or the same path relative to `extension/`. */
-const analyzedEntry = (graph: JavaScriptSemanticGraph) => {
-  const omitted = omittedCallFiles(graph);
+/**
+ * Which declared entries had their calls analyzed, and whether an absent
+ * registration can be claimed at all.
+ */
+const callCoverage = (
+  graph: JavaScriptSemanticGraph,
+  entryPoints: readonly string[],
+) => {
+  // Graphs recorded without callee facts hide every registration.
+  const recorded = graph.callee_fact_modules?.includes("vscode") === true;
+  const unanalyzed = unanalyzedFiles(graph);
   const modules = new Set(graph.nodes.map((node) => node.identity.module_path));
-  return (entry: string) =>
-    [entry, entry.replace(/^extension\//u, "")].some(
-      (path) => modules.has(path) && !omitted.has(path),
-    );
+  const entries = entryPoints.map((path) => ({
+    path,
+    analyzed:
+      recorded &&
+      [path, path.replace(/^extension\//u, "")].some(
+        (name) => modules.has(name) && !unanalyzed.paths.has(name),
+      ),
+  }));
+  const complete =
+    recorded &&
+    !graph.coverage.truncated &&
+    !unanalyzed.any &&
+    entries.length > 0 &&
+    entries.every((entry) => entry.analyzed);
+  return { entries, complete };
 };
 
 /**
@@ -237,34 +273,27 @@ const analyzedEntry = (graph: JavaScriptSemanticGraph) => {
 export const correlateVsixRegistrations = ({
   contributes,
   entryPoints,
+  manifestRead,
   semanticGraph,
 }: CorrelationInput) => {
   const { byKind, unresolved } = registrationsOf(semanticGraph);
   const declared = firstById(
     contributes.commands.map(({ command, title }) => [command, title]),
   );
-  const menus = groupBy(contributes.menus, ({ menu }) => menu);
   const keys = groupBy(contributes.keybindings, ({ key }) => key);
-  const analyzed = analyzedEntry(semanticGraph);
-  const entries = entryPoints.map((path) => ({
-    path,
-    analyzed: analyzed(path),
+  const { entries, complete } = callCoverage(semanticGraph, entryPoints);
+  // An unread manifest or a capped older list cannot show an ID is undeclared.
+  const allDeclared = manifestRead && contributes.commands_omitted === 0;
+  const commands = joinDeclarations(declared, byKind.command, {
+    complete,
+    allDeclared,
+  }).map(({ id, status, text, registrations }) => ({
+    command: id,
+    status,
+    title: text,
+    registrations,
+    keybindings: keys === null ? null : (keys.get(id) ?? []),
   }));
-  // Absence needs every declared entry analyzed and no omitted analysis.
-  const complete =
-    !semanticGraph.coverage.truncated &&
-    entries.length > 0 &&
-    entries.every((entry) => entry.analyzed);
-  const commands = joinDeclarations(declared, byKind.command, complete).map(
-    ({ id, status, text, registrations }) => ({
-      command: id,
-      status,
-      title: text,
-      registrations,
-      menus: menus === null ? null : (menus.get(id) ?? []),
-      keybindings: keys === null ? null : (keys.get(id) ?? []),
-    }),
-  );
   const declaredContributions = VSIX_CONTRIBUTION_KINDS.flatMap((kind) =>
     joinDeclarations(
       contributes.declarations === null
@@ -275,7 +304,7 @@ export const correlateVsixRegistrations = ({
               .map(({ id, label }) => [id, label]),
           ),
       byKind[kind],
-      complete,
+      { complete, allDeclared: manifestRead },
     ).map(({ id, status, text, registrations }) => ({
       kind,
       id,
@@ -284,19 +313,32 @@ export const correlateVsixRegistrations = ({
       registrations,
     })),
   );
-  const tally = (status: (typeof commands)[number]["status"]) =>
-    commands.filter((command) => command.status === status).length;
+  const tally = {
+    registered: 0,
+    not_found: 0,
+    undetermined: 0,
+    registered_undeclared: 0,
+  };
+  for (const { status } of commands) tally[status] += 1;
+  const known = new Set(commands.map(({ command }) => command));
+  // Grouped by menu so a long contributed menu name is retained once.
+  const menus =
+    contributes.menus?.map(({ menu, commands: ids }) => ({
+      menu,
+      commands: ids.filter((id): id is string => id !== null && known.has(id)),
+    })) ?? null;
   return {
     commands,
+    menus,
     contributions: declaredContributions,
     unresolved_registrations: unresolved,
     entry_points: entries,
     summary: {
       declared: declared.size,
-      registered: tally("registered"),
-      not_found: tally("not_found"),
-      registered_undeclared: tally("registered_undeclared"),
-      undetermined: tally("undetermined"),
+      registered: tally.registered,
+      not_found: tally.not_found,
+      registered_undeclared: tally.registered_undeclared,
+      undetermined: tally.undetermined,
       unresolved_registrations: unresolved.length,
     },
     semantic_graph_truncated: semanticGraph.coverage.truncated,

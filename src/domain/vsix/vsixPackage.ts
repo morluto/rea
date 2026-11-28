@@ -281,10 +281,13 @@ const contributeCommandSchema = z.strictObject({
   title: nullableText,
 });
 
-/** A command a menu item or keybinding invokes; null when it names none. */
-const menuItemSchema = z.strictObject({
+/**
+ * The commands one menu's items invoke, in order; null for an item naming
+ * none. The publisher-controlled menu name is retained once.
+ */
+const menuSchema = z.strictObject({
   menu: z.string().min(1),
-  command: nullableText,
+  commands: z.array(nullableText),
 });
 const keybindingSchema = z.strictObject({
   command: nullableText,
@@ -392,7 +395,7 @@ export const vsixPackageSchema = z.strictObject({
     commands_total: uint,
     commands_omitted: uint,
     /** Null when package.json was not read, or in older Evidence. */
-    menus: z.array(menuItemSchema).nullable().default(null),
+    menus: z.array(menuSchema).nullable().default(null),
     keybindings: z.array(keybindingSchema).nullable().default(null),
     declarations: z.array(contributionSchema).nullable().default(null),
   }),

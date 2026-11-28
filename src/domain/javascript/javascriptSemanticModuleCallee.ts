@@ -1,4 +1,5 @@
 import type { JavaScriptSemanticIr } from "./javascriptSemanticIr.js";
+import { UNKNOWN_REQUIRE_LOADER_REASON } from "./javascriptSemanticProvenance.js";
 
 /** A call whose callee is a static member chain rooted in one module import. */
 export interface JavaScriptModuleCallee {
@@ -44,7 +45,12 @@ export const semanticModuleCallees = (
     const [origin, ...others] = provenance.origins;
     if (origin === undefined || others.length > 0) continue;
     const candidate = origin.loaderAuthority === "candidate";
-    if (provenance.status !== "module" && !candidate) continue;
+    // Other ambiguity reasons concern the value itself, not only its loader.
+    if (
+      provenance.status !== "module" &&
+      provenance.reason !== UNKNOWN_REQUIRE_LOADER_REASON
+    )
+      continue;
     if (definitions.some(({ kind }) => kind === "assignment")) continue;
     callees.set(callSiteId, {
       specifier: origin.specifier,
