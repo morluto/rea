@@ -31,6 +31,20 @@ export const parseConformanceFixtureManifest = (manifest) => {
       )
     )
       throw new Error("Invalid conformance fixture string expectations");
+    // A counted expectation is a pair: the prefix selects the records and the
+    // count is what the verifier binds to the source. Admitting one without the
+    // other would let a fixture declare the invariant and never check it.
+    for (const [prefix, count] of [
+      ["symbolPrefix", "symbolCount"],
+      ["stringPrefix", "stringCount"],
+    ])
+      if (
+        (expectations[prefix] === undefined) !==
+        (expectations[count] === undefined)
+      )
+        throw new Error(
+          `Conformance fixture declarations must carry ${prefix} and ${count} together`,
+        );
   }
   return manifest;
 };
