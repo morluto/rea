@@ -356,17 +356,21 @@ describe("browser CSS variables item and summary schemas", () => {
       }).success,
     ).toBe(false);
 
-    // Admits long valid custom property names (>128 chars) and rejects invalid syntax
+    // Admits long valid custom property names (>128 chars) and escaped/decoded ASCII punctuation
     expect(
       browserCssVariablesSchema.safeParse({
         ...valid,
-        items: [{ name: `--${"x".repeat(130)}`, value: "red" }],
+        items: [
+          { name: `--${"x".repeat(130)}`, value: "red" },
+          { name: "--brand+tone", value: "red" },
+          { name: "--brand\\+tone", value: "red" },
+        ],
       }).success,
     ).toBe(true);
     expect(
       browserCssVariablesSchema.safeParse({
         ...valid,
-        items: [{ name: "--invalid name", value: "red" }],
+        items: [{ name: "--invalid\nname", value: "red" }],
       }).success,
     ).toBe(false);
 

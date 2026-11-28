@@ -402,34 +402,21 @@ const redactStandaloneCssUrl = (value: string): string => {
       tokenEnd++;
     }
     const token = value.slice(pos, tokenEnd);
-    const hasTrailingComma = token.endsWith(",");
-    const candidate = hasTrailingComma ? token.slice(0, -1) : token;
-    try {
-      const sanitized = redactCssUrl(candidate);
-      if (sanitized.redacted) {
-        result += `${sanitized.url}${hasTrailingComma ? "," : ""}`;
-      } else if (candidate.includes(",")) {
-        const parts = token.split(/,(?=[a-zA-Z][a-zA-Z0-9+.-]*:\/\/)/u);
-        result += parts
-          .map((part) => {
-            const partTrailingComma = part.endsWith(",");
-            const partCandidate = partTrailingComma ? part.slice(0, -1) : part;
-            try {
-              const partSanitized = redactCssUrl(partCandidate);
-              return partSanitized.redacted
-                ? `${partSanitized.url}${partTrailingComma ? "," : ""}`
-                : part;
-            } catch {
-              return part;
-            }
-          })
-          .join(",");
-      } else {
-        result += token;
-      }
-    } catch {
-      result += token;
-    }
+    const parts = token.split(/,(?=[a-zA-Z][a-zA-Z0-9+.-]*:\/\/)/u);
+    result += parts
+      .map((part) => {
+        const partTrailingComma = part.endsWith(",");
+        const partCandidate = partTrailingComma ? part.slice(0, -1) : part;
+        try {
+          const partSanitized = redactCssUrl(partCandidate);
+          return partSanitized.redacted
+            ? `${partSanitized.url}${partTrailingComma ? "," : ""}`
+            : part;
+        } catch {
+          return part;
+        }
+      })
+      .join(",");
     pos = tokenEnd;
   }
 
