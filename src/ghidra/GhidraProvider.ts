@@ -86,6 +86,7 @@ import {
   ghidraProcessorUnsupportedReason,
   isGhidraPspTarget,
 } from "./GhidraPspProfile.js";
+import { isGhidraEeTarget } from "./GhidraEeProfile.js";
 import { resolveGhidraExtensions } from "./extensions/GhidraExtensions.js";
 import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
 import {
@@ -293,12 +294,17 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       };
     if (hostPlatform === "win32")
       return inspectWindowsP0TargetSupport(target, diagnostics);
+    const extensionLane = isGhidraPspTarget(target)
+      ? "PSP Allegrex"
+      : isGhidraEeTarget(target)
+        ? "PlayStation 2 EE"
+        : null;
     const mipsReason =
-      isGhidraPspTarget(target) &&
+      extensionLane !== null &&
       (hostPlatform !== "linux" ||
         (this.installationHost?.architecture ?? HOST_PLATFORM.architecture) !==
           "x64")
-        ? "The initial PSP Allegrex profile is verified on Linux x64 only."
+        ? `The initial ${extensionLane} profile is verified on Linux x64 only.`
         : ghidraProcessorUnsupportedReason(target);
     if (mipsReason !== null)
       return {

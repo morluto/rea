@@ -582,17 +582,23 @@ export const ghidraMipsProfileMismatchReason = (
   target: BinaryTarget,
   parameters: Readonly<Record<string, unknown>>,
   existingProject: boolean,
+  extensionLane?: Readonly<Record<string, JsonValue>>,
 ): string | null => {
   if (target.architecture !== "mips" || target.mips === undefined) return null;
   const expected = ghidraMipsProfileParameters(target);
   // PSP keeps its own loader and lane but still commits target-derived MIPS
   // metadata; bind that metadata without demanding the generic lane name.
+  // A target-derived extension lane (EE) replaces the generic lane and basis.
   const pspLane = "psp-elf32-exec-eabi32-allegrex";
   const committedLane = parameters.mips_support_lane;
   const expectedLane =
-    committedLane === pspLane ? pspLane : expected.mips_support_lane;
+    committedLane === pspLane
+      ? pspLane
+      : (extensionLane ?? expected).mips_support_lane;
   const expectedBasis =
-    committedLane === pspLane ? undefined : expected.mips_abi_basis;
+    committedLane === pspLane
+      ? undefined
+      : (extensionLane ?? expected).mips_abi_basis;
   if (
     !existingProject &&
     expectedLane !== undefined &&

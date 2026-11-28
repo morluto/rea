@@ -48,6 +48,12 @@ import {
   isGhidraPspTarget,
 } from "./GhidraPspProfile.js";
 import { resolveGhidraPspExtension } from "./GhidraPspExtension.js";
+import { resolveGhidraEeExtension } from "./GhidraEeExtension.js";
+import {
+  ghidraEeLanguageOverride,
+  ghidraEeProfileParameters,
+  isGhidraEeTarget,
+} from "./GhidraEeProfile.js";
 import {
   NATIVE_AOT_MAX_REPORT_BYTES,
   NATIVE_AOT_MAX_SOURCE_BYTES,
@@ -79,6 +85,7 @@ export const ghidraPinnedLanguage = (
   target: BinaryTarget,
 ): GhidraLanguageOverride | undefined =>
   ghidraMipsLanguageOverride(target) ??
+  ghidraEeLanguageOverride(target) ??
   ghidraRiscvLanguageOverride(target) ??
   ghidraPowerPcLanguage(target);
 
@@ -167,6 +174,18 @@ export const resolveGhidraAnalysisProfile = async (
     ? await resolveGhidraPspExtension(installation, resources, signal)
     : null;
   if (pspExtension !== null && !pspExtension.ok) return pspExtension;
+  // The EE lane pins the extension's language; a caller-selected generic processor cannot replace it.
+  if (isGhidraEeTarget(target) && languageOverride !== undefined)
+    return err(
+      languageOverrideConflict(
+        languageOverride,
+        "The bounded PlayStation 2 EE profile does not accept processor or compiler specification overrides.",
+      ),
+    );
+  const eeExtension = isGhidraEeTarget(target)
+    ? await resolveGhidraEeExtension(installation, resources, signal)
+    : null;
+  if (eeExtension !== null && !eeExtension.ok) return eeExtension;
   const provider = { ...identity, version: installation.providerVersion };
   const createProfile = (parameters: Readonly<Record<string, JsonValue>>) =>
     createGhidraProfile(provider, parameters, target);
@@ -402,6 +421,12 @@ export const resolveGhidraAnalysisProfile = async (
               language_id: "Allegrex:LE:32:default",
               compiler_spec_id: "default",
               psp_extension: { ...pspExtension.value },
+            }
+          : {}),
+        ...(eeExtension?.ok === true
+          ? {
+              ...ghidraEeProfileParameters(target),
+              ee_extension: { ...eeExtension.value },
             }
           : {}),
       }),

@@ -5,6 +5,10 @@ import {
   ghidraMipsUnsupportedReason,
 } from "./GhidraMipsProfile.js";
 import { ghidraPowerPcUnsupportedReason } from "./GhidraPowerPcProfile.js";
+import {
+  ghidraEeUnsupportedReason,
+  isGhidraEeTarget,
+} from "./GhidraEeProfile.js";
 import { ghidraRiscvUnsupportedReason } from "./GhidraRiscvProfile.js";
 
 /** Allegrex's ELF machine declaration, not a filename or inferred instruction. */
@@ -26,6 +30,7 @@ export const ghidraProcessorUnsupportedReason = (
     return ghidraPowerPcUnsupportedReason(target);
   if (target.kind === "executable" && target.architecture === "riscv")
     return ghidraRiscvUnsupportedReason(target);
+  if (isGhidraEeTarget(target)) return ghidraEeUnsupportedReason(target);
   if (
     target.kind !== "executable" ||
     target.architecture !== "mips" ||

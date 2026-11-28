@@ -100,6 +100,13 @@ import {
   GHIDRA_PSP_LIMITATIONS,
 } from "./GhidraPspProfile.js";
 import { ghidraPspExtensionSchema } from "./GhidraPspExtension.js";
+import { ghidraEeExtensionSchema } from "./GhidraEeExtension.js";
+import {
+  GHIDRA_EE_LANGUAGE_ID,
+  ghidraEeLimitations,
+  ghidraEeProfileParameters,
+  isGhidraEeTarget,
+} from "./GhidraEeProfile.js";
 import {
   ghidraRiscvCallingConvention,
   ghidraRiscvCallingConventionFailure,
@@ -405,6 +412,23 @@ export const createGhidraProviderClient = (input: {
         "Resolve the supported PSP profile and installed Allegrex extension before opening the session.",
       ),
     );
+  const ee = isGhidraEeTarget(target);
+  const eeExtension = ee
+    ? ghidraEeExtensionSchema.safeParse(
+        committedProfile.parameters.ee_extension,
+      )
+    : null;
+  if (
+    eeExtension !== null &&
+    (!eeExtension.success ||
+      committedProfile.parameters.language_id !== GHIDRA_EE_LANGUAGE_ID)
+  )
+    return err(
+      ghidraProfileConflict(
+        "open_binary",
+        "Resolve the supported PlayStation 2 EE profile and installed ghidra-emotionengine-reloaded extension before opening the session.",
+      ),
+    );
   const softFloat = isGhidraMipsSoftFloatTarget(target);
   if (
     softFloat !==
@@ -567,6 +591,7 @@ export const createGhidraProviderClient = (input: {
     project !== undefined &&
       committedProfile.parameters.import_mode ===
         "existing-project-private-copy",
+    ee ? ghidraEeProfileParameters(target) : undefined,
   );
   if (mipsProfileMismatch !== null)
     return err(ghidraProfileConflict("open_binary", mipsProfileMismatch));
@@ -743,6 +768,9 @@ export const createGhidraProviderClient = (input: {
       ),
       ...(pspExtension?.success === true
         ? { pspExtension: pspExtension.data }
+        : {}),
+      ...(eeExtension?.success === true
+        ? { eeExtension: eeExtension.data }
         : {}),
       ...(softFloat ? { mipsSoftFloat: true as const } : {}),
       ...(elfImageBase === undefined ? {} : { elfImageBase }),
@@ -1046,6 +1074,7 @@ export const createGhidraProviderClient = (input: {
       ...providerLimitations,
       ...targetLimitations,
       ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
+      ...(ee ? ghidraEeLimitations(target) : []),
       ...softFloatLimitations,
       ...riscvPolicyLimitations,
       ...ghidraExtensionLimitations(extensions),

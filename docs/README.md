@@ -184,6 +184,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Optional NativeAOT metadata recovery](providers/ghidra-nativeaot.md)
 - [MIPS ELF analysis through Ghidra](providers/ghidra-mips.md)
 - [PSP static ELF analysis through Ghidra](providers/ghidra-psp.md)
+- [PlayStation 2 EE static ELF analysis through Ghidra](providers/ghidra-ps2.md)
 - [RISC-V ELF analysis through Ghidra](providers/ghidra-riscv.md)
 - [Windows Ghidra P0](providers/windows-ghidra-p0.md)
 - [Headerless raw-binary analysis with Ghidra](providers/raw-binary.md)

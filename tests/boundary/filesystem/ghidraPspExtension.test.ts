@@ -269,6 +269,47 @@ describe.skipIf(process.platform === "win32")(
       expect(spawn).not.toHaveBeenCalled();
     });
 
+    it("classifies an extension that vanished after resolution before starting a provider", async () => {
+      const { directory, root } = await installation();
+      const extension = await inspectGhidraPspExtension(
+        root,
+        INSTALL_VERSION,
+        new ArtifactResourceScope(),
+      );
+      await rename(root, `${root}-removed`);
+      const spawn = vi.fn();
+      const launcher = new GhidraHeadlessLauncher({
+        environment: {},
+        analyzeHeadlessPath: join(directory, "support/analyzeHeadless"),
+        configurationDirectoryName: `ghidra_${INSTALL_VERSION}_PUBLIC`,
+        javaHome: "/jdk-21",
+        bridgeScriptPath: "/packaged/ReaGhidraBridge.java",
+        pspExtension: extension,
+        spawnProcess: spawn,
+      });
+      const launched = await launcher.launch(
+        {
+          runtimeRoot: join(directory, "runtime"),
+          transport: "unix-socket",
+          endpointPath: join(directory, "socket"),
+          token: "test-only-token",
+          runId: "00000000-0000-4000-8000-000000000001",
+          targetPath: target.path,
+          targetSha256: target.sha256,
+          providerVersion: INSTALL_VERSION,
+          profileDigest: "b".repeat(64),
+        },
+        { resourceScope: new ArtifactResourceScope() },
+      );
+      expect(launched.ok).toBe(false);
+      if (launched.ok)
+        throw new Error("Vanished extension reached provider startup");
+      expect(String(launched.error.cause)).toContain(
+        "PSP_EXTENSION_UNAVAILABLE",
+      );
+      expect(spawn).not.toHaveBeenCalled();
+    });
+
     it("requires a fresh extension when a saved profile's installation has disappeared", async () => {
       const { provider, root } = await installation();
       const before = await provider.resolveAnalysisProfile(target);
