@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { readRecordedResponseDeclaration } from "./recordedResponseBody.js";
+import { apiSurfaceResponse } from "./webNetworkApiSurfaceResponse.js";
 import {
   parseRecordedTransportUrl,
   parseUrlQueryParameterNames,
@@ -222,6 +222,7 @@ export const readRecordedRequestLine = (
   reported: unknown,
   includeQuery: boolean,
   temporary: Reserve,
+  format: "har" | "saz" = "har",
 ): RecordedRequestLine | null => {
   const excluded = (reason: RequestLineExclusion): RecordedRequestLine => ({
     kind: "excluded",
@@ -239,17 +240,20 @@ export const readRecordedRequestLine = (
   if (typeof method !== "string" || method.length === 0)
     return excluded("method-unavailable");
   if (parsed.path === null) return excluded("url-unparseable");
-  const response = readRecordedResponseDeclaration(reported);
-  const mime = response?.content?.mimeType;
-  const rawMime = typeof mime === "string" ? mime : "";
-  if (!temporary(textBytes(rawMime.length))) return null;
+  const {
+    status,
+    mime: rawMime,
+    mimeSourceLength,
+  } = apiSurfaceResponse(reported, format);
+  if (!temporary(textBytes(Math.max(rawMime.length, mimeSourceLength))))
+    return null;
   return {
     kind: "line",
     method,
     origin: parsed.origin,
     path: parsed.path,
     query: parsed.query,
-    status: response?.status ?? null,
+    status,
     rawMime,
   };
 };

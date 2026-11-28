@@ -116,7 +116,10 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
     return ok(undefined);
   }
 
-  add(record: WebNetworkCaptureRecord): Result<void, AnalysisError> {
+  add(
+    record: WebNetworkCaptureRecord,
+    format: "har" | "saz" = "har",
+  ): Result<void, AnalysisError> {
     const rollbackAdmission = this.retainedCheckpoint();
     const limitations = this.prepareLimitations(record.limitations);
     if (!limitations.ok) return limitations;
@@ -126,6 +129,7 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
         record.reported,
         this.includeQueryParameterNames,
         this.scratch,
+        format,
       );
       if (line === null) return this.overBudget();
       let appended: Result<void, AnalysisError>;

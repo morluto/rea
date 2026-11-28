@@ -48,7 +48,8 @@ export const decodeSazHttp = (bytes: Buffer, request: boolean) => {
       "malformed",
       "SAZ HTTP start line is malformed.",
     );
-  const headers: { name: string; value: string }[] = [];
+  const headers: { name: string; value: string; value_unfolded?: string }[] =
+    [];
   for (let index = 2; index < parts.length; index += 2) {
     const line = parts[index] ?? "";
     if (/^[ \t]/.test(line)) {
@@ -58,6 +59,9 @@ export const decodeSazHttp = (bytes: Buffer, request: boolean) => {
           "malformed",
           "SAZ HTTP header continuation has no field.",
         );
+      // A line the parser split is the only continuation framing. Preserve
+      // the original spelling alongside the parser-owned unfolded value.
+      previous.value_unfolded = `${previous.value_unfolded ?? previous.value} ${line.replace(/^[ \t]+/u, "")}`;
       previous.value += `${parts[index - 1] ?? ""}${line}`;
       continue;
     }

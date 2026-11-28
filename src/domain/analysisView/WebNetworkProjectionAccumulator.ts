@@ -23,7 +23,7 @@ import {
 } from "./webNetworkRouteTemplates.js";
 import { evidenceFileTarget } from "../evidence.js";
 
-/** Shared retained/temporary byte accounting for views that group retained HAR records. */
+/** Shared retained/temporary byte accounting for views that group retained capture records. */
 export abstract class WebNetworkProjectionAccumulator {
   readonly #limitations = new Set<string>();
   /** Retained state and temporary work share one allowance. */
@@ -176,8 +176,8 @@ export abstract class WebNetworkProjectionAccumulator {
   }
 }
 
-/** Authenticate and gate a retained HAR parent before a grouping view reads any record. */
-const parseHarCapture = (
+/** Parse a retained capture parent's normalized result before a grouping view reads any record. */
+const parseRetainedCapture = (
   parent: AnalysisViewParent,
   operation: string,
   sourceField: string,
@@ -199,12 +199,17 @@ const parseHarCapture = (
   return ok(parsed.data);
 };
 
-export const admitHarCaptureParent = (
+/** Authenticate and gate a retained capture parent before a grouping view reads any record. */
+export const admitWebNetworkCaptureParent = (
   parent: AnalysisViewParent,
   viewKind: "api-surface" | "environment-manifest" | "environment-state",
   accumulator: WebNetworkProjectionAccumulator,
-  context: { readonly operation?: string; readonly sourceField?: string } = {},
-): Result<WebNetworkCapture, AnalysisError> => {
+  context: {
+    readonly operation?: string;
+    readonly sourceField?: string;
+    readonly allowSaz?: boolean;
+  } = {},
+): Result<WebNetworkCapture & { format: "har" | "saz" }, AnalysisError> => {
   const operation = context.operation ?? "inspect_analysis_view";
   const sourceField = context.sourceField ?? "source";
   const unsupported = (reason: string) =>
@@ -215,11 +220,16 @@ export const admitHarCaptureParent = (
     );
   const admitted = accumulator.admitCaptureClone(parent.normalizedResult);
   if (!admitted.ok) return admitted;
-  const parsed = parseHarCapture(parent, operation, sourceField);
+  const parsed = parseRetainedCapture(parent, operation, sourceField);
   if (!parsed.ok) return parsed;
-  if (parsed.value.format !== "har")
+  const { format } = parsed.value;
+  if (
+    (format !== "har" && format !== "saz") ||
+    (format === "saz" &&
+      (viewKind !== "api-surface" || context.allowSaz !== true))
+  )
     return unsupported(
-      `${viewKind} does not support capture format ${parsed.value.format}.`,
+      `${viewKind} does not support capture format ${format}.`,
     );
   // Environment views preserve the recorded report path and authenticate its digest;
   // the api-surface view keeps the admission its existing callers rely on.
@@ -248,5 +258,5 @@ export const admitHarCaptureParent = (
         { field: "sensitive_value_count" },
       ),
     );
-  return ok(parsed.value);
+  return ok({ ...parsed.value, format });
 };

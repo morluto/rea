@@ -8,7 +8,7 @@ import {
   type AdmittedView,
 } from "./analysisViewShape.js";
 import { WebNetworkApiSurfaceAccumulator } from "./WebNetworkApiSurfaceAccumulator.js";
-import { admitHarCaptureParent } from "./WebNetworkProjectionAccumulator.js";
+import { admitWebNetworkCaptureParent } from "./WebNetworkProjectionAccumulator.js";
 
 import { apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
 
@@ -27,8 +27,7 @@ export const createApiSurfaceAccumulator = (
     selected?.include_request_header_names === true,
   );
 };
-
-/** Group retained HAR request lines; format matches do not establish handler identity. */
+/** Group retained HAR/SAZ request lines; format matches do not establish handler identity. */
 export const projectWebNetworkApiSurfaceView = (
   parent: AnalysisViewParent,
   view: AdmittedView,
@@ -44,7 +43,12 @@ export const projectWebNetworkApiSurfaceView = (
       ),
     );
   assertOwnedView<z.output<typeof apiSurfaceViewSchema>>(view, "api-surface");
-  const admitted = admitHarCaptureParent(parent, "api-surface", accumulator);
+  const admitted = admitWebNetworkCaptureParent(
+    parent,
+    "api-surface",
+    accumulator,
+    { allowSaz: true },
+  );
   if (!admitted.ok) return admitted;
   const capture = admitted.value;
   const limitations = accumulator.addLimitations([
@@ -61,6 +65,11 @@ export const projectWebNetworkApiSurfaceView = (
           "Observed header, cookie and set-cookie names do not establish authentication, session semantics or a complete header schema; no values are copied.",
         ]
       : []),
+    ...(view.include_request_header_names === true && capture.format === "saz"
+      ? [
+          "SAZ captures carry cookies as request and response header fields, so SAZ groups list request header names only and the cookie and set-cookie name lists stay empty.",
+        ]
+      : []),
     ...(capture.records.length < capture.total_records
       ? [
           "Parent contains an ordinal subset; the surface covers only retained records.",
@@ -69,7 +78,7 @@ export const projectWebNetworkApiSurfaceView = (
   ]);
   if (!limitations.ok) return limitations;
   for (const record of capture.records) {
-    const added = accumulator.add(record);
+    const added = accumulator.add(record, capture.format);
     if (!added.ok) return added;
   }
   const page = accumulator.page(view.offset, view.limit);

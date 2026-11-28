@@ -418,15 +418,13 @@ it("pages groups independently of record completeness and preserves null digests
     },
   });
 });
-it("rejects native captures and malformed parents with typed errors", () => {
+it("rejects mitmproxy captures and malformed parents with typed errors", () => {
   const capture = analysisViewCaptureFixture();
-  for (const format of ["mitmproxy", "saz"] as const) {
-    capture.format = format;
-    expect(project(capture)).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisTargetFailureError" },
-    });
-  }
+  capture.format = "mitmproxy";
+  expect(project(capture)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisTargetFailureError" },
+  });
   expect(
     projectAnalysisView(
       {
@@ -787,6 +785,8 @@ it("treats malformed media types as unknown and keeps source limitations", () =>
     "\u000btext/plain\u000b",
     "\u000ctext/plain\u000c",
     "text/K",
+    "\r\n text/plain",
+    "\n\ttext/plain",
   ];
   capture.records = malformed.map((_, ordinal) => ({
     ...capture.records[0]!,
