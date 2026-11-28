@@ -136,8 +136,18 @@ describe.each([
       uname: "builder",
     });
     expect(result.entries[1]?.sourcePath).toBe("./app/run.x86_64");
+    expect(result.entries[1]?.limitations).toEqual([]);
     expect(result.contents.get("app/data.pck")).toBe("GDPC-not-really");
-    expect(result.coverage).toEqual([{ status: "complete", limitations: [] }]);
+    expect(result.coverage).toEqual([
+      {
+        status: "complete",
+        limitations: [
+          expect.stringMatching(
+            /^\d+ tar member name\(s\) have a leading current-directory prefix/u,
+          ),
+        ],
+      },
+    ]);
     expect(result.metadata).toMatchObject({
       kind: "tar",
       compression,
@@ -210,6 +220,41 @@ describe.each([
       end_state: "malformed",
       end_offset: 1024,
     });
+  });
+
+  it.each([0, 256])(
+    "reports an incomplete second end block (%i bytes)",
+    async (bytes) => {
+      const body = Buffer.concat([
+        tarMembers([{ name: "a.txt", data: "a" }]),
+        Buffer.alloc(512 + bytes),
+      ]);
+      const result = await read(compression === "gzip" ? gzipSync(body) : body);
+      expect(result.entries.map((entry) => entry.path)).toEqual(["a.txt"]);
+      expect(result.metadata).toMatchObject({
+        end_state: "truncated",
+        end_offset: 1024,
+      });
+      expect(result.coverage[0]?.status).toBe("unknown");
+    },
+  );
+
+  it("reports a non-zero second end block and counts the remaining data", async () => {
+    const body = Buffer.concat([
+      tarMembers([{ name: "a.txt", data: "a" }]),
+      Buffer.alloc(512),
+      Buffer.from("tail"),
+      Buffer.alloc(509),
+      Buffer.from("more"),
+    ]);
+    const result = await read(compression === "gzip" ? gzipSync(body) : body);
+    expect(result.entries.map((entry) => entry.path)).toEqual(["a.txt"]);
+    expect(result.metadata).toMatchObject({
+      end_state: "malformed",
+      end_offset: 1024,
+      trailing_nonzero_bytes: 8,
+    });
+    expect(result.coverage[0]?.status).toBe("unknown");
   });
 
   it("reports non-zero bytes after the end marker as uninventoried", async () => {
@@ -537,6 +582,33 @@ describe("tar header edge cases", () => {
     expect(result.entries[0]?.path).toBe("\u0080");
     expect(result.entries[0]?.limitations).toEqual([
       "tar name is not UTF-8; decoded as Latin-1; raw hex: 80.",
+    ]);
+  });
+
+  it("preserves GNU longlink and PAX binary linkpath target bytes", async () => {
+    const long = "dir/".repeat(40) + "file";
+    const pax = Buffer.from(
+      "21 hdrcharset=BINARY\n16 linkpath=\xe9.x\n",
+      "latin1",
+    );
+    const result = await read(
+      tarFixture([
+        { name: "LongLink", type: "K", dialect: "gnu", data: long + "\0" },
+        { name: "gnu-link", type: "2", linkname: "ignored" },
+        { name: "PaxHeader", type: "x", data: pax },
+        { name: "pax-link", type: "2", linkname: "ignored" },
+        { name: "utf8-link", type: "2", pax: { linkpath: "é.x" } },
+      ]),
+    );
+    expect(
+      result.entries.map(({ path, linkTarget }) => ({ path, linkTarget })),
+    ).toEqual([
+      {
+        path: "gnu-link",
+        linkTarget: { text: long, hex: Buffer.from(long).toString("hex") },
+      },
+      { path: "pax-link", linkTarget: { text: null, hex: "e92e78" } },
+      { path: "utf8-link", linkTarget: { text: "é.x", hex: "c3a92e78" } },
     ]);
   });
 

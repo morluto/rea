@@ -1188,6 +1188,15 @@ export const reobserveUnavailableTokenFacts = async (
   return current;
 };
 
+/**
+ * Whether a procfs read failed because the process entry is gone. The caller
+ * corroborates exit with a signal-zero probe before reporting absence.
+ */
+const procfsEntryVanished = (cause: unknown): boolean =>
+  cause instanceof Error &&
+  "code" in cause &&
+  (cause.code === "ENOENT" || cause.code === "ESRCH");
+
 /** Create the operating-system process inspector for an explicit host context. */
 export const createSystemProcessOwnershipHost = (
   platform: NodeJS.Platform,
@@ -1398,6 +1407,8 @@ export const createSystemProcessOwnershipHost = (
               );
             } catch (cause: unknown) {
               rethrowInspectionFailure(cause);
+              // Without credentials, an exited process would look like a live one.
+              if (procfsEntryVanished(cause)) throw cause;
               return [pid, readableIdentity(parsed)] as const;
             }
             assertProcessOwnershipInspectionActive(signal);
@@ -1467,6 +1478,8 @@ export const createSystemProcessOwnershipHost = (
               );
             } catch (cause: unknown) {
               rethrowInspectionFailure(cause);
+              // The credentials cannot be bound to a generation that exited.
+              if (procfsEntryVanished(cause)) throw cause;
               return [pid, readableIdentity(parsed)] as const;
             }
             assertProcessOwnershipInspectionActive(signal);
@@ -1491,11 +1504,7 @@ export const createSystemProcessOwnershipHost = (
             ] as const;
           } catch (cause: unknown) {
             rethrowInspectionFailure(cause);
-            if (
-              cause instanceof Error &&
-              "code" in cause &&
-              (cause.code === "ENOENT" || cause.code === "ESRCH")
-            ) {
+            if (procfsEntryVanished(cause)) {
               assertProcessOwnershipInspectionActive(signal);
               let presenceProbeFailure: unknown;
               let presenceProbeSucceeded = false;

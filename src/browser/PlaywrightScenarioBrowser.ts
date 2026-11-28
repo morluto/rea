@@ -10,7 +10,7 @@ import {
   AnalysisCleanupLeaseGroup,
   AnalysisCleanupLease,
 } from "../resources/index.js";
-import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -45,6 +45,9 @@ import { CdpMalformedReply } from "./protocol/CdpCommands.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "capture_browser_scenario" as const;
+
+const defaultRemoveDirectory = (path: string): Promise<void> =>
+  rm(path, { recursive: true, force: true, maxRetries: 3 });
 
 const throwIfScenarioCancelled = (signal: AbortSignal | undefined): void => {
   if (signal?.aborted === true)
@@ -348,6 +351,42 @@ const acquireAttachedScenario = (
   });
 };
 
+const trimTrailingSlashes = (value: string): string => {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(0, end);
+};
+
+const normalizedTermuxPrefix = (
+  environment: Readonly<Record<string, string | undefined>>,
+): string | undefined => {
+  const trimmed = environment.PREFIX?.trim();
+  if (trimmed === undefined || trimmed.length === 0) return undefined;
+  const normalized = trimTrailingSlashes(trimmed);
+  return normalized.length === 0 ? undefined : normalized;
+};
+
+const androidTempDirectory = (
+  environment: Readonly<Record<string, string | undefined>>,
+): string | undefined => {
+  const configured = environment.TMPDIR?.trim();
+  if (configured !== undefined && configured.length > 0) return configured;
+  const prefix = normalizedTermuxPrefix(environment);
+  return prefix === undefined ? undefined : `${prefix}/tmp`;
+};
+
+const createScenarioTempDirectory = async (
+  environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
+  prefix: string,
+): Promise<string> => {
+  const base =
+    platform === "android"
+      ? (androidTempDirectory(environment) ?? tmpdir())
+      : tmpdir();
+  return mkdtemp(join(base, prefix));
+};
+
 const allowedBrowserEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
   platform: NodeJS.Platform,
@@ -382,10 +421,16 @@ const allowedBrowserEnvironment = (
   // directory. Termux supplies an exec interceptor that rewrites those calls
   // through the system linker and removes itself for the launched program.
   // Playwright must retain it for its Chromium child process.
-  const prefix = environment.PREFIX;
-  if (prefix === undefined) return selected;
+  const androidTmp = androidTempDirectory(environment);
+  const { TMPDIR: _rawTmpdir, ...withoutRawTmpdir } = selected;
+  const withTmpdir =
+    androidTmp === undefined
+      ? withoutRawTmpdir
+      : { ...withoutRawTmpdir, TMPDIR: androidTmp };
+  const prefix = normalizedTermuxPrefix(environment);
+  if (prefix === undefined) return withTmpdir;
   return {
-    ...selected,
+    ...withTmpdir,
     LD_PRELOAD: `${prefix}/lib/libtermux-exec.so`,
     TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
   };
@@ -721,7 +766,10 @@ type ScenarioBrowserLauncher = Pick<
 > & {
   readonly connectOverCDP: (
     endpoint: string,
-    options?: Pick<ConnectOverCDPOptions, "timeout" | "noDefaults">,
+    options?: Pick<
+      ConnectOverCDPOptions,
+      "timeout" | "noDefaults" | "artifactsDir"
+    >,
   ) => Promise<Pick<Browser, "contexts" | "close" | "isConnected" | "version">>;
 };
 
@@ -733,18 +781,32 @@ type AttachedBrowserRequest = Extract<
 const openAttachedScenarioBrowser = async (
   browserRequest: AttachedBrowserRequest,
   environment: BrowserScenario["environment"],
+  hostEnvironment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
   launcher: ScenarioBrowserLauncher,
   signal: AbortSignal | undefined,
   retainCleanup: ((lease: AnalysisCleanupLease) => void) | undefined,
   commandTimeoutMs: number,
+  removeDirectory: (path: string) => Promise<void>,
 ): Promise<OpenedScenarioBrowser> => {
   const lease = await acquireAttachedScenario(browserRequest, signal);
   let cleanupOwner: PlaywrightScenarioBrowserCleanupOwner | undefined;
   let environmentOwner: AttachedScenarioEnvironmentOwner | undefined;
+  let artifactsDir: string | undefined;
   try {
     const priorOwner = lease.admission.cleanupOwner;
     if (priorOwner !== undefined) await priorOwner.close();
     throwIfScenarioCancelled(signal);
+
+    if (platform === "android") {
+      artifactsDir = await createScenarioTempDirectory(
+        hostEnvironment,
+        platform,
+        "rea-browser-artifacts-",
+      );
+      await chmod(artifactsDir, 0o700);
+      throwIfScenarioCancelled(signal);
+    }
 
     const browser = await withScenarioCommandDeadline(
       () =>
@@ -754,6 +816,7 @@ const openAttachedScenarioBrowser = async (
           // Playwright defaults also mutate unrelated external pages and can
           // require context management on an otherwise usable CDP endpoint.
           noDefaults: true,
+          ...(artifactsDir === undefined ? {} : { artifactsDir }),
         }),
       commandTimeoutMs,
       "handshake",
@@ -802,7 +865,10 @@ const openAttachedScenarioBrowser = async (
             lease.admission.cleanupOwner = undefined;
           lease.release();
         },
-        removeProfile: undefined,
+        removeProfile:
+          artifactsDir === undefined
+            ? undefined
+            : () => removeDirectory(artifactsDir!),
       });
     cleanupOwner = cleanup;
     lease.admission.cleanupOwner = cleanup;
@@ -845,16 +911,58 @@ const openAttachedScenarioBrowser = async (
     };
   } catch (cause: unknown) {
     if (cleanupOwner === undefined) {
-      const owned = ownLateScenarioCommand(
-        cause,
-        retainCleanup,
-        "browser_transport",
-        async () => {
-          await releaseLateScenarioCommand(cause);
+      if (scenarioCommandPending(cause) !== undefined) {
+        let browserReleased = false;
+        let artifactsRemoved = artifactsDir === undefined;
+        let leaseReleased = false;
+        const releaseLeaseOnce = (): void => {
+          if (leaseReleased) return;
+          leaseReleased = true;
           lease.release();
-        },
-      );
-      if (!owned) lease.release();
+        };
+        const ownedArtifactsDir = artifactsDir;
+        const late = new AnalysisCleanupLease(
+          async () => {
+            if (!browserReleased) {
+              await releaseLateScenarioCommand(cause);
+              browserReleased = true;
+              releaseLeaseOnce();
+            }
+            if (!artifactsRemoved && ownedArtifactsDir !== undefined) {
+              await removeDirectory(ownedArtifactsDir);
+              artifactsRemoved = true;
+            }
+          },
+          {
+            get cleanupResources() {
+              return [
+                ...(!browserReleased ? ["browser_transport"] : []),
+                ...(!artifactsRemoved ? ["browser_profile"] : []),
+              ];
+            },
+          },
+        );
+        retainCleanup?.(late);
+        void late.release().catch(() => undefined);
+        throw cause;
+      }
+      // No browser transport was acquired; release the target admission lease
+      // before removing the independent artifacts directory so a directory
+      // removal failure cannot deadlock subsequent attaches to this target.
+      lease.release();
+      if (artifactsDir !== undefined) {
+        const ownedArtifactsDir = artifactsDir;
+        const cleanup = new AnalysisCleanupLease(
+          () => removeDirectory(ownedArtifactsDir),
+          ["browser_profile"],
+        );
+        try {
+          return await failBrowserScenarioOperation(cleanup, cause);
+        } catch (failure: unknown) {
+          if (failure !== cause) retainCleanup?.(cleanup);
+          throw failure;
+        }
+      }
       throw cause;
     }
     const cleanup = cleanupOwner;
@@ -878,10 +986,13 @@ export const openPlaywrightScenarioBrowser = async (
     readonly retainCleanup?: (lease: AnalysisCleanupLease) => void;
     /** The host Chromium launches on; defaults to the running host. */
     readonly platform?: NodeJS.Platform;
+    /** Override temporary directory removal in lifecycle tests. */
+    readonly removeDirectory?: (path: string) => Promise<void>;
   } = {},
 ): Promise<OpenedScenarioBrowser> => {
   throwIfScenarioCancelled(options.signal);
   const platform = options.platform ?? HOST_PLATFORM.platform;
+  const removeDirectory = options.removeDirectory ?? defaultRemoveDirectory;
   // Load Playwright only when a scenario opens; MCP startup stays off its module graph.
   const launcher =
     options.launcher ?? (await import("playwright-core")).chromium;
@@ -890,14 +1001,22 @@ export const openPlaywrightScenarioBrowser = async (
     return openAttachedScenarioBrowser(
       scenario.browser,
       scenario.environment,
+      environment,
+      platform,
       launcher,
       options.signal,
       options.retainCleanup,
       commandTimeoutMs,
+      removeDirectory,
     );
 
   throwIfScenarioCancelled(options.signal);
-  const profilePath = await mkdtemp(join(tmpdir(), "rea-browser-scenario-"));
+  const profilePath = await createScenarioTempDirectory(
+    environment,
+    platform,
+    "rea-browser-scenario-",
+  );
+  const artifactsDir = join(profilePath, "playwright-artifacts");
   let context: BrowserContext;
   const executablePath = scenario.browser.executable_path;
   const headless = scenario.browser.headless;
@@ -905,6 +1024,7 @@ export const openPlaywrightScenarioBrowser = async (
   let launchStarted = false;
   try {
     await chmod(profilePath, 0o700);
+    await mkdir(artifactsDir, { mode: 0o700 });
     throwIfScenarioCancelled(options.signal);
     launchStarted = true;
     context = await withScenarioCommandDeadline(
@@ -913,6 +1033,7 @@ export const openPlaywrightScenarioBrowser = async (
           executablePath,
           headless,
           acceptDownloads: false,
+          artifactsDir,
           viewport: {
             width: scenario.environment.viewport.width,
             height: scenario.environment.viewport.height,
@@ -930,9 +1051,11 @@ export const openPlaywrightScenarioBrowser = async (
           timeout: commandTimeoutMs,
           chromiumSandbox,
           // Termux's Chromium cannot create its renderer process through Android's
-          // executable boundary. Single-process mode keeps the browser and page in
-          // the Termux-launched process so scenario navigation remains available.
-          args: platform === "android" ? ["--single-process"] : [],
+          // executable boundary and Android lacks a writable /dev/shm.
+          args:
+            platform === "android"
+              ? ["--single-process", "--disable-dev-shm-usage"]
+              : [],
         }),
       commandTimeoutMs,
       "launch",
@@ -942,7 +1065,7 @@ export const openPlaywrightScenarioBrowser = async (
   } catch (cause: unknown) {
     const cleanup = new AnalysisCleanupLease(async () => {
       await releaseLateScenarioCommand(cause);
-      await rm(profilePath, { recursive: true, force: true, maxRetries: 3 });
+      await removeDirectory(profilePath);
     }, ["browser_profile"]);
     // Preserve Playwright's launch diagnostics before the generic provider
     // boundary discards an untyped error. Keep the original cause for late
@@ -974,8 +1097,7 @@ export const openPlaywrightScenarioBrowser = async (
     closeBrowser: async (disconnectAtBoundary) => {
       await disconnectAtBoundary(() => context.close());
     },
-    removeProfile: () =>
-      rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
+    removeProfile: () => removeDirectory(profilePath),
   });
   try {
     throwIfScenarioCancelled(options.signal);

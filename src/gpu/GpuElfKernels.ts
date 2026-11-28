@@ -46,7 +46,12 @@ import {
   type GpuSource,
 } from "./GpuSource.js";
 import {
-  AMD_METADATA_BYTES,
+  DEFAULT_GPU_METADATA_BYTES,
+  GPU_METADATA_BYTES_LIMIT,
+  formatGpuByteBudget,
+  type GpuCodeObjectsBudgets,
+} from "../domain/gpu/gpuCodeObjectsBudgets.js";
+import {
   AmdMetadataValueBudget,
   amdCount,
   amdRecord,
@@ -124,6 +129,7 @@ export const readGpuElfKernels = async (
   pause: ZstandardFramePause,
   preparedAmd?: AmdElfMetadata,
   onTarget?: (target: GpuPayloadTarget) => void,
+  budgets?: GpuCodeObjectsBudgets,
 ): Promise<{
   limitations: string[];
   coverage: "complete" | "partial";
@@ -132,14 +138,20 @@ export const readGpuElfKernels = async (
     return amdKernels(source, preparedAmd, onKernel, onTarget);
   const directory = await readGpuNativeDirectory(
     source,
-    readElfSectionDirectory(source.size),
+    readElfSectionDirectory(
+      source.size,
+      budgets?.maxStructureBytes === undefined
+        ? undefined
+        : { structureBytes: budgets.maxStructureBytes },
+    ),
     pause,
+    budgets?.maxStructureBytes,
   );
   if (directory.machine !== (kind === "cubin" ? 190 : 224))
     rejectGpu("GPU entry kind disagrees with ELF machine");
   if (kind === "cubin") {
     onTarget?.(readCudaTarget(source, directory));
-    const coverage = await cudaKernels(source, directory, onKernel);
+    const coverage = await cudaKernels(source, directory, onKernel, budgets);
     return {
       coverage,
       limitations: [
@@ -156,7 +168,7 @@ export const readGpuElfKernels = async (
       ],
     };
   }
-  const metadata = await readAmdElfMetadata(source, directory);
+  const metadata = await readAmdElfMetadata(source, directory, budgets);
   const parsed = amdKernels(
     source,
     metadata.ok ? metadata.value : metadata.error.partial,
@@ -169,11 +181,12 @@ export const readGpuElfKernels = async (
 const indexCudaMetadata = async (
   source: GpuSource,
   directory: NativeSectionDirectory,
+  budgets?: GpuCodeObjectsBudgets,
 ) => {
   const infosByText = new Map<number, NativeSection[]>(),
     sharedByText = new Map<number, NativeSection[]>();
   const registerFacts = new Map<string, Map<number, GpuLocation>>();
-  const budget = new CudaMetadataBudget(),
+  const budget = new CudaMetadataBudget(budgets),
     seenMetadata = new Set<string>();
   for (const row of directory.sections) {
     const map =
@@ -302,8 +315,9 @@ const cudaKernels = async (
   source: GpuSource,
   directory: NativeSectionDirectory,
   onKernel: (kernel: GpuKernel) => void,
+  budgets?: GpuCodeObjectsBudgets,
 ): Promise<"complete" | "partial"> => {
-  const index = await indexCudaMetadata(source, directory);
+  const index = await indexCudaMetadata(source, directory, budgets);
   const extendedTables = new ElfSymbolSectionIndexTables(directory.sections);
   let complete = index.allNamesKnown;
   let symbolTables = 0;
@@ -457,12 +471,21 @@ const legacyAmdNoteLimitation = (abi: AmdGpuAbi, type: number) =>
 export const readAmdElfMetadata = async (
   source: GpuSource,
   directory: NativeSectionDirectory,
+  budgets?: Pick<
+    GpuCodeObjectsBudgets,
+    | "maxMetadataBytes"
+    | "maxParserVisits"
+    | "maxParserEntries"
+    | "maxTokenBytes"
+  >,
 ): Promise<
   Result<
     AmdElfMetadata,
     { kind: "incomplete-amd-metadata"; cause: unknown; partial: AmdElfMetadata }
   >
 > => {
+  const maxMetadataBytes =
+    budgets?.maxMetadataBytes ?? DEFAULT_GPU_METADATA_BYTES;
   const limitations: string[] = [];
   const notes: AmdElfMetadata["notes"] = [];
   let retainedBytes = 0;
@@ -550,11 +573,13 @@ export const readAmdElfMetadata = async (
     for (const section of directory.sections) {
       if (elfNoteSectionStorage(section) === "not-note") continue;
       const sectionSize = gpuCount(section.size);
-      if (sectionSize > AMD_METADATA_BYTES - retainedBytes)
+      if (sectionSize > maxMetadataBytes - retainedBytes)
         throw new BinaryResourceFailure(
           "structure",
-          AMD_METADATA_BYTES,
-          "AMDGPU ELF note discovery exceeds the 8 MiB retained metadata budget",
+          maxMetadataBytes,
+          `AMDGPU ELF note discovery exceeds the ${formatGpuByteBudget(maxMetadataBytes)} retained metadata budget`,
+          GPU_METADATA_BYTES_LIMIT,
+          "bytes",
         );
       retainedBytes += sectionSize;
       const bytes = await sectionBytes(source, section);
@@ -591,6 +616,7 @@ export const readAmdElfMetadata = async (
               // PAL register maps are keyed by unsigned register offsets.
               pal === null ? "string" : "string-or-unsigned",
               valueBudget,
+              budgets,
             ),
           );
           if (metadata === null) rejectGpu("AMDGPU metadata is not a map");

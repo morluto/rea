@@ -199,3 +199,43 @@ export const admitWxapkgMemberExtents = <
     ? err({ _tag: "MemberOutsideDataRegion", member: outside })
     : err({ _tag: "ConflictingMemberExtents" });
 };
+
+/** File bytes that no parsed structure or member extent accounts for. */
+export interface WxapkgUnaccountedBytes {
+  readonly bytes: number;
+  readonly ranges: number;
+  /** Start of the first unaccounted range; null when every byte is accounted. */
+  readonly firstOffset: number | null;
+}
+
+/**
+ * Bytes after the header and parsed rows that no member extent covers. Member
+ * extents may overlap, so their union is measured. Unused index bytes, gaps
+ * between members and bytes after the last member are all unaccounted.
+ */
+export const wxapkgUnaccountedBytes = (
+  rowsEnd: number,
+  fileSize: number,
+  members: readonly { readonly offset: number; readonly size: number }[],
+): WxapkgUnaccountedBytes => {
+  const extents = members
+    .filter((member) => member.size > 0)
+    .map((member) => [member.offset, member.offset + member.size] as const)
+    .sort((left, right) => left[0] - right[0]);
+  let reach = rowsEnd;
+  let bytes = 0;
+  let ranges = 0;
+  let firstOffset: number | null = null;
+  const gapUntil = (end: number): void => {
+    if (end <= reach) return;
+    bytes += end - reach;
+    ranges += 1;
+    firstOffset ??= reach;
+  };
+  for (const [start, end] of extents) {
+    gapUntil(start);
+    reach = Math.max(reach, end);
+  }
+  gapUntil(fileSize);
+  return { bytes, ranges, firstOffset };
+};

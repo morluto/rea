@@ -133,6 +133,9 @@ if (!(await compiledRuntimeExists(packageRoot, runtimeFiles))) {
       // Worker shutdown is shared with the dispatch finally below. A failed
       // shutdown is reported here because this callback is what exits.
       exit: (code, finishOutput) => {
+        // Registration and command presentation can request exit again after
+        // a failed document write. The first request owns shutdown.
+        if (exiting) return;
         exiting = true;
         void (async () => {
           let status = code;

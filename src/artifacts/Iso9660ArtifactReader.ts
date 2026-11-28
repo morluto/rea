@@ -218,7 +218,11 @@ export class Iso9660ArtifactReader extends PositionalArtifactReader<Iso9660Metad
             size: volume.volumeSetSize,
             sequence: volume.volumeSequenceNumber,
           },
-          { self: directory.record, parent: directory.parent },
+          {
+            self: directory.record,
+            parent: directory.parent,
+            parentMayBeSelf: joliet,
+          },
         ),
         joliet,
         (section) => tree.admitExtent(section),

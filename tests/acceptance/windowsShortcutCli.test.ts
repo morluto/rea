@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import {
+  LINK_FLAG,
   powershellHiddenIconSpoofShortcut,
   TRACKER_MAC,
   truncatedStringDataShortcut,
@@ -302,5 +303,91 @@ cliTest(
     ).normalized_result;
     expect(report.coverage.status).toBe("partial");
     expect(report.coverage.failing_offset).toEqual(expect.any(Number));
+  },
+);
+
+cliTest(
+  "keeps target_extension unknown through CLI and stdio MCP when higher-precedence paths are unread",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-windows-shortcut-cli-unread-target-",
+    );
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
+
+    const fullLinkInfo = windowsShortcutBytes({
+      flags:
+        LINK_FLAG.HasLinkTargetIDList |
+        LINK_FLAG.HasLinkInfo |
+        LINK_FLAG.IsUnicode,
+      idList: [{ kind: "file", shortName: "decoy.pdf" }],
+      linkInfo: { localBasePath: "C:\\Windows\\System32\\cmd.exe" },
+      extraData: [],
+      terminalBlock: false,
+    });
+    const linkInfoOffset = 76 + 2 + fullLinkInfo.readUInt16LE(76);
+    const unreadLinkInfo = fullLinkInfo.subarray(0, linkInfoOffset + 4);
+
+    const unicodePrefix = windowsShortcutBytes({
+      flags:
+        LINK_FLAG.HasLinkTargetIDList |
+        LINK_FLAG.HasLinkInfo |
+        LINK_FLAG.IsUnicode,
+      idList: [{ kind: "file", shortName: "decoy.pdf" }],
+      linkInfo: null,
+      extraData: [],
+      terminalBlock: false,
+    });
+    const shortUnicodeLinkInfo = Buffer.alloc(0x1c);
+    shortUnicodeLinkInfo.writeUInt32LE(0x1c, 0);
+    shortUnicodeLinkInfo.writeUInt32LE(0x24, 4);
+    shortUnicodeLinkInfo.writeUInt32LE(0x1, 8);
+    const truncatedUnicodeHeader = Buffer.concat([
+      unicodePrefix,
+      shortUnicodeLinkInfo,
+      Buffer.alloc(4),
+    ]);
+
+    const unreadRelativePath = windowsShortcutBytes({
+      flags:
+        LINK_FLAG.HasLinkTargetIDList |
+        LINK_FLAG.HasRelativePath |
+        LINK_FLAG.IsUnicode,
+      idList: [{ kind: "file", shortName: "decoy.pdf" }],
+      linkInfo: null,
+      relativePath: ".\\payload.exe",
+      extraData: [],
+      terminalBlock: false,
+      omitStringBytes: 6,
+    });
+
+    for (const [name, bytes] of [
+      ["unread-linkinfo.lnk", unreadLinkInfo],
+      ["truncated-unicode-linkinfo.lnk", truncatedUnicodeHeader],
+      ["unread-relative-path.lnk", unreadRelativePath],
+    ] as const) {
+      const path = join(root, name);
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: ["inspect-windows-shortcut", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const response = await call("inspect_windows_shortcut", { path });
+      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      for (const value of [result.json, response.structuredContent]) {
+        const { normalized_result: report } =
+          shortcutContract.outputSchema.parse(value);
+        expect(report.coverage.status).toBe("partial");
+        expect(report.id_list?.items[0]).toMatchObject({
+          kind: "file_entry",
+          short_name: "decoy.pdf",
+        });
+        expect(report.observations).toContainEqual({
+          kind: "target_extension",
+          evidence_kind: "derived",
+          extension: null,
+        });
+      }
+    }
   },
 );

@@ -8,7 +8,11 @@ that build. Binwalk and Unblob operations run only on Linux; other hosts
 report the capability as unavailable. Verification covers Linux x64.
 No device, root privilege, mount, emulation or execution of extracted programs
 is needed. Arbitrary firmware bytes do not pass native executable admission;
-select a returned ELF separately for supported Ghidra analysis.
+select a returned ELF separately for supported Ghidra analysis. For bare-metal
+ARM M-profile and RISC-V images with a known load base, use
+[`inspect_firmware_vector_table`](firmware-vector-tables.md) to decode system
+exception vectors, external IRQ handler addresses, and optional CMSIS-SVD
+interrupt bindings without opening a session.
 
 On Linux, Binwalk and Unblob run as REA-owned processes and require a
 procps-compatible system `ps`; see the shared
@@ -27,11 +31,18 @@ MCP, summary delivery and selected supporting facts. Its real-data verification
 covers a pair of OpenWrt FIT releases; it does not establish comparison of
 decoded root filesystems or arbitrary firmware formats.
 
-## UEFI flash images and AMI NVRAM
+## UEFI flash images and NVRAM variable stores
 
 The bundled UEFI tools map PI firmware volumes, FFS files and sections in local
 flash images. They also report plausible AMD PSP directory tables and scan for
-AMI NVAR chains such as `StdDefaults`. They run independently of Binwalk and
+AMI NVAR chains such as `StdDefaults`, plus TianoCore EDK2 / OVMF
+`VARIABLE_STORE_HEADER` regions (`gEfiVariableGuid` /
+`gEfiAuthenticatedVariableGuid`). An EDK2 store whose header is formatted but
+not `HEALTHY` is still walked, with a limitation saying EDK2 treats it as
+invalid. A store signature without the formatted marker is listed as rejected
+rather than counted as absence. REA does not replay EDK2 fault-tolerant writes,
+so when an FTW queue holds records, a store interrupted mid-reclaim may be
+reported from its stale copy. The UEFI tools run independently of Binwalk and
 Unblob. FFS file and section discovery applies to FFS2 and FFS3 volumes.
 Volumes with other file-system GUIDs retain their header and extent, with the
 body reported as unparsed. REA checks the volume header and block map against
@@ -155,7 +166,11 @@ stream. Read `derivations` to trace each decoded stream back to its carrier.
 LZMA-custom, LZMAF86, and AMD-zlib can yield nested volumes or section chains.
 The LZMAF86 worker reverses the x86 branch filter before mapping decoded bytes.
 A decoder limit makes inspection partial and appears as a size gap in
-extraction. When decoded bytes lack confirmed framing, extraction retains the
+extraction. Only the declared or decoded output size meets that limit: as in
+EDK II's one-call decoder, an LZMA stream's dictionary sizes only the decoder
+window, which never exceeds the output, so a large dictionary on a small
+section decodes. LZMA properties follow the LZMA1 specification (lc 0-8, lp
+0-4, pb 0-4), and a corrupt stream is reported as malformed. When decoded bytes lack confirmed framing, extraction retains the
 decoded stream and reports its unparsed range. Decode derivations cover the
 input range examined by the decoder. Unread LZMA carrier bytes are reported
 as a gap, including an optional end marker when a known-size stream completes
@@ -483,7 +498,8 @@ REA_FIRMWARE_VERIFY_GHIDRA=1 npm run verify:firmware
 `REA_FIRMWARE_TEST_ENTRYPOINT` can select an isolated installed npm package's
 `scripts/rea.mjs` to verify the packaged CLI/MCP workflow. Real coverage here is
 generated gzip/USTAR/ext4 with a Linux x64 ELF child; SquashFS, UBIFS, proprietary
-firmware, other hosts and architectures remain unverified.
+firmware, other hosts and architectures remain unverified. UBI volume containers
+have a native reader; see [Inspect UBI images](#inspect-ubi-images).
 
 ## Inspect ESP images
 
@@ -560,6 +576,16 @@ DONT_CARE chunks written as zeros; stored checksums are not verified. The
 expanded child is classified again, so a sparse-wrapped boot image continues
 to the Android boot image reader. See [Android sparse images](android-sparse-image.md).
 
+## Inspect UBI images
+
+`inspect-artifact` / `extract-artifact` recognize a UBI image or NAND dump by
+its `UBI#` erase-counter header and inventory the eraseblock layout and volume
+table without mounting anything. Each volume is reassembled from its logical
+eraseblocks into `volumes/<name>`; a volume with a missing logical eraseblock
+is inventoried and refuses extraction. UBIFS and SquashFS contents inside a
+volume are not decoded. See [UBI images](ubi-images.md) for layout facts,
+volume table checks, reassembly rules and verification scope.
+
 ## Inspect UF2 and DfuSe images
 
 Use `inspect-artifact` / `inspect_artifact` on a UF2 file for each familyID's
@@ -589,3 +615,33 @@ zstd are recorded from leading magic and left compressed. An AVB footer is
 reported with its sizes and is not verified. `ANDROID!` does not say whether
 the file was boot, init_boot, or recovery. Extract `dtb` and pass that file
 to `inspect-devicetree`. See [Android boot images](../../android-boot-image.md).
+
+### Android DTBO partition images
+
+Standalone Android DTBO partition images (`0xd7b7ab1e`, table versions `0` and
+`1`) expose child overlay entries (`dtbo-<index>.dtbo`) with `id`, `rev`,
+version-1 compression flags (`none`, `zlib`, `gzip`, or `unknown`), custom
+metadata words, and leading `0xd00dfeed` FDT magic checks. Compressed entries
+remain untouched with explicit limitations; extract uncompressed entries to
+run `inspect-devicetree`. See [Android DTBO partition images](../../android-dtbo.md).
+
+## Inspect Android vbmeta images
+
+`inspect-artifact` / `extract-artifact` recognize a standalone `vbmeta.img`
+by the `AVB0` magic at offset 0. The root records the header, rollback index,
+flags, release string, and each property, hashtree, hash, kernel command-line,
+and chain-partition descriptor. Unknown descriptor tags are retained. The
+authentication block, public key, and public key metadata are extractable
+children. Signatures and digests are recorded and not verified. See
+[Android Verified Boot vbmeta images](android-vbmeta.md).
+
+## Inspect Qualcomm MBN images
+
+`inspect-artifact` / `extract-artifact` recognize a legacy Qualcomm MBN boot
+image by its header and payload sizes, with pointer checks for version 3.
+The headers are 40 bytes for v3 and v5, and 48 for v6. Inventory lists the
+header, code, signature, certificate-chain and v6 metadata regions. An ELF image whose program
+headers declare a Qualcomm hash segment is inventoried as `qualcomm-mbn` with its hash
+table and per program header hash offsets, while binary target resolution
+still reads it as ELF. Signatures and certificates are located, not verified,
+and hashes are not recomputed. See [Qualcomm MBN images](qualcomm-mbn-images.md).

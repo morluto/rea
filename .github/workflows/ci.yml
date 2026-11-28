@@ -318,15 +318,6 @@ jobs:
           path: .turbo/cache/
           key: rea-static-deep-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
           restore-keys: rea-static-deep-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-
-      - name: Restore Knip analysis cache
-        id: knip-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: node_modules/.cache/knip
-          # Each trusted commit publishes a new entry. Restore still matches the
-          # configuration prefix from the previous successful full run.
-          key: knip-meta-v1-${{ runner.os }}-${{ hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json') }}-${{ github.sha }}
-          restore-keys: knip-meta-v1-${{ runner.os }}-${{ hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json') }}-
       - name: Record deep static task source and execution identity
         continue-on-error: true
         env:
@@ -334,7 +325,7 @@ jobs:
           CI_STATIC_CONTEXT_SCRIPT: check:ci:deep:tasks
         run: npm run ci:static-context
       - name: Run deep static checks
-        run: npm run check:ci:deep
+        run: npm run check:ci:deep:job
       - name: Save validated deep static task cache
         if: >-
           success() && steps.npm-cache.outputs.can-save == 'true' &&
@@ -343,14 +334,6 @@ jobs:
         with:
           path: .turbo/cache/
           key: ${{ steps.static-cache.outputs.cache-primary-key }}
-      - name: Save Knip analysis cache
-        if: >-
-          success() && steps.npm-cache.outputs.can-save == 'true' &&
-          steps.knip-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: node_modules/.cache/knip
-          key: ${{ steps.knip-cache.outputs.cache-primary-key }}
       - name: Upload complete deep static diagnostics
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -496,6 +479,8 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
       - run: npm ci
+      - name: Require mutation targets in the checker projects
+        run: npm run verify:mutation-targets
       - name: Reuse portable build outputs across runs
         uses: ./.github/actions/portable-build-cache
       - name: Run reverse tools tests with coverage
@@ -542,6 +527,30 @@ jobs:
         with:
           save: ${{ github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
       - run: npm run test:prepare
+      # Knip resolves the package imports that name built workers, so it runs
+      # after the build on every code change instead of only on full runs.
+      - name: Restore Knip analysis cache
+        if: needs.changes.outputs.code == 'true'
+        id: knip-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/.cache/knip
+          # Each trusted commit publishes a new entry. Restore still matches the
+          # configuration prefix from the previous trusted run.
+          key: knip-meta-v1-${{ runner.os }}-${{ hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json') }}-${{ github.sha }}
+          restore-keys: knip-meta-v1-${{ runner.os }}-${{ hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json') }}-
+      - name: Check unused files, exports and dependencies
+        if: needs.changes.outputs.code == 'true'
+        run: node scripts/run-turbo.mjs run knip
+      - name: Save Knip analysis cache
+        if: >-
+          success() && needs.changes.outputs.code == 'true' &&
+          steps.npm-cache.outputs.can-save == 'true' &&
+          steps.knip-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/.cache/knip
+          key: ${{ steps.knip-cache.outputs.cache-primary-key }}
       # Only portable tests consume history. A single selected file has one
       # possible assignment; larger selections use their own tier's timings.
       - name: Find available trusted timing history
@@ -568,7 +577,9 @@ jobs:
           github-token: ${{ github.token }}
           path: .cache/ci-test-history
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: needs.changes.outputs.tier != 'warm'
+        if: >-
+          (needs.changes.outputs.code == 'true' && needs.changes.outputs.tier != 'warm') ||
+          needs.changes.outputs.sqlite == 'true'
         with:
           name: rea-test-runtime
           overwrite: true
@@ -737,6 +748,7 @@ jobs:
           CI_VERIFY_TEST_INVENTORY: "true"
           CI_COMPARE_TEST_SHADOW: ${{ steps.shadow-download.outcome == 'success' }}
           CI_TEST_SELECTION: ${{ needs.changes.outputs.test_selection }}
+          CI_APPLE_SELECTED: ${{ needs.changes.outputs.apple }}
           CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/ci/test-report.mjs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1081,6 +1093,7 @@ jobs:
           key: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
           restore-keys: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-
       - name: Typecheck with the official Windows compiler
+        if: matrix.suite == 'capabilities'
         env:
           GOMAXPROCS: "2"
           GOMEMLIMIT: "3GiB"
@@ -1151,6 +1164,7 @@ jobs:
           src/contracts/sessionPathInputs.test.ts
           tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts
           tests/boundary/mcp/rawBinaryMcp.test.ts
+          tests/boundary/filesystem/windowsTargetSeparators.test.ts
           tests/boundary/mcp/advertisedDialect.test.ts
           tests/boundary/mcp/absoluteLocalPathSchema.test.ts
           tests/boundary/mcp/toolSchemaValidity.test.ts

@@ -251,7 +251,7 @@ export class IdaOperationRunner {
         conformsToInputContract: true,
         related: { operations: ["list_procedures", "search_procedures"] },
         remediationAction:
-          "Choose an observed name or address from the current IDA inventory. CLI: rea search <path> . --kind procedures --mode regex --provider ida. MCP: use search_procedures or list_procedures. An inventory miss leaves the function's presence in the artifact unknown.",
+          "Choose an observed name or address from the current IDA inventory; search_procedures or list_procedures reports them. An inventory miss leaves the function's presence in the artifact unknown.",
       },
       [
         {

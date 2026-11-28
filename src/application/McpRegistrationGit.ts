@@ -15,6 +15,7 @@ import {
   ExecFileOutputCancelledError,
   execFileBytes,
 } from "../process/ExecFileOutput.js";
+import { isEnoentError } from "./ClientConfigPath.js";
 import type { McpRegistrationLocationContext } from "./McpRegistrationLocations.js";
 
 /** Git's observed active and primary worktree roots; neither grants mutation authority. */
@@ -119,10 +120,7 @@ const nearestGitDirectory = async (
       await lstat(`${directory}${directory.endsWith(sep) ? "" : sep}.git`);
       return directory;
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof Error && "code" in cause && cause.code === "ENOENT")
-      )
-        throw cause;
+      if (!isEnoentError(cause)) throw cause;
     }
     const parent = dirname(directory);
     if (parent === directory) return undefined;

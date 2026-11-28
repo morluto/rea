@@ -88,17 +88,16 @@ it.each(["compact"] as const)(
         }),
       );
       await call("open_binary", { path });
-      const partialReply = await call("inspect_artifact", {});
-      expect(partialReply.isError, JSON.stringify(partialReply)).not.toBe(true);
-      const partial = artifactInspectionResultSchema.parse(
-        parseEvidence(partialReply.structuredContent).normalized_result,
+      const lzmaReply = await call("inspect_artifact", {});
+      expect(lzmaReply.isError, JSON.stringify(lzmaReply)).not.toBe(true);
+      const lzma = artifactInspectionResultSchema.parse(
+        parseEvidence(lzmaReply.structuredContent).normalized_result,
       ).substeps[0]!.evidence.normalized_result;
-      expect(partial.coverage).toMatchObject({ status: "unknown" });
-      expect(partial.occurrences).toContainEqual(
+      expect(lzma.coverage).toMatchObject({ status: "complete" });
+      expect(lzma.occurrences).toContainEqual(
         expect.objectContaining({
           logical_path: "CAB-lzma",
-          hash_status: "unavailable",
-          artifact_id: null,
+          hash_status: "verified",
         }),
       );
       await call("close_binary", {});

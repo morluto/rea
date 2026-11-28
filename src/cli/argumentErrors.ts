@@ -49,16 +49,17 @@ export const cliArgumentFailure = (
   command: string,
   failure: CliArgvFailure,
 ): CliCommandFailure => {
-  if (failure.kind === "dry_run" || failure.kind === "flag_spelling")
-    return { code: "PARSE_ERROR", message: failure.message, retryable: false };
+  // Unknown flags, missing values and surplus positionals are argv parse
+  // failures like a misspelled flag; UNKNOWN stays reserved for unexpected errors.
   if (failure.kind !== "validation")
     return {
-      code: "UNKNOWN",
+      code: "PARSE_ERROR",
       message:
         failure.message +
         (failure.kind === "surplus"
           ? ` Use '${cli} ${command} --help' for the declared argument shape.`
           : ""),
+      retryable: false,
     };
   return {
     code: "VALIDATION_ERROR",

@@ -4,6 +4,7 @@ import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createKernelModuleService } from "../../../src/composition/binaryDiagnostics/kernelModule.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { kernelModuleSchema } from "../../../src/domain/native/kernelModule.js";
 import {
   kernelModuleFixture,
@@ -151,15 +152,42 @@ describe("kernel module stable filesystem boundary", () => {
   it("returns typed resource and cancellation failures", async () => {
     const root = await createTestTempDirectory("rea-kernel-module-budget-");
     const path = join(root, "demo.ko");
-    await writeFile(path, kernelModuleFixture());
+    const bytes = kernelModuleFixture();
+    await writeFile(path, bytes);
     const service = createKernelModuleService();
     try {
       const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
       if (tooSmall.ok) throw new Error("Expected resource budget failure");
       expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+      expect(projectAnalysisError(tooSmall.error).details).toMatchObject({
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64,
+          unit: "bytes",
+          minimum: 64,
+          maximum: 536870912,
+          default_value: 67108864,
+          applies_at: "next_call",
+          required_value: bytes.length,
+        },
+      });
       const tooMany = await service.inspect({ path, max_entries: 1 });
       if (tooMany.ok) throw new Error("Expected entry budget failure");
       expect(tooMany.error._tag).toBe("AnalysisResourceConstraintError");
+      expect(projectAnalysisError(tooMany.error).details).toMatchObject({
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_entries",
+          effective_value: 1,
+          unit: "count",
+          minimum: 1,
+          maximum: 65536,
+          default_value: 8192,
+          applies_at: "next_call",
+        },
+      });
+      expect((await service.inspect({ path, max_entries: 16 })).ok).toBe(true);
       const cancelled = await service.inspect(
         { path },
         { signal: AbortSignal.abort() },

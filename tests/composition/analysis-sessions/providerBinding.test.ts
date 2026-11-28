@@ -6,6 +6,7 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createStubHopperProject } from "../../fixtures/hopperProjectFile.js";
 import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
 import {
@@ -419,9 +420,7 @@ const capability = (
 });
 
 const databaseTarget = async (): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-provider-binding-");
-  const path = join(directory, "fixture.hop");
-  await writeFile(path, "fixture");
+  const path = await createStubHopperProject("rea-provider-binding-");
   return path;
 };
 

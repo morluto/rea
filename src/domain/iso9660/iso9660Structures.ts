@@ -216,13 +216,26 @@ export const readBothEndian16 = (
   field: string,
 ): number => readBothEndian(bytes, at, 2, base, field);
 
+/**
+ * Decode one directory record that must end by `limit`.
+ *
+ * `fixedExtent.extent` is the record's bound when the caller has one the
+ * length byte does not describe. `fixedExtent.identifierLength` is the
+ * identifier's length when the caller has established it and the
+ * identifier-length byte names a different stored length. Other callers
+ * leave `fixedExtent` unset, so the record's own bytes stay the bound.
+ */
 export const iso9660DirectoryRecordAt = (
   bytes: Buffer,
   at: number,
   base: number,
   limit: number,
+  fixedExtent?: {
+    readonly extent: number;
+    readonly identifierLength?: number;
+  },
 ): Iso9660DirectoryRecord => {
-  const length = bytes[at] ?? 0;
+  const length = fixedExtent?.extent ?? bytes[at] ?? 0;
   if (length < ISO9660_DIRECTORY_RECORD_HEADER_BYTES + 1)
     throw iso9660Malformed(
       `directory record length ${String(length)} is shorter than its fixed fields`,
@@ -235,7 +248,7 @@ export const iso9660DirectoryRecordAt = (
       base + at,
       "length",
     );
-  const identifierLength = bytes[at + 32] ?? 0;
+  const identifierLength = fixedExtent?.identifierLength ?? bytes[at + 32] ?? 0;
   // An even-length identifier is followed by one zero padding byte.
   const padded = identifierLength % 2 === 0;
   const identifierEnd =
@@ -356,6 +369,11 @@ export interface Iso9660DirectoryLinks {
   readonly self: Iso9660DirectoryLink;
   /** The record that admitted the parent directory; the root's parent is the root. */
   readonly parent: Iso9660DirectoryLink;
+  /**
+   * Also accept a `..` record that describes the directory itself. libisofs
+   * (xorriso, mkisofs emulation) writes every Joliet `..` record that way.
+   */
+  readonly parentMayBeSelf?: boolean;
 }
 
 const assertMandatoryLink = (
@@ -364,7 +382,12 @@ const assertMandatoryLink = (
   links: Iso9660DirectoryLinks,
 ): void => {
   const role = index === 0 ? "self (.)" : "parent (..)";
-  const expected = index === 0 ? links.self : links.parent;
+  const expected =
+    index === 0 ||
+    (links.parentMayBeSelf === true &&
+      record.extentLocation === links.self.extentLocation)
+      ? links.self
+      : links.parent;
   if (iso9660DirectoryIsInterleaved(record))
     throw iso9660Malformed(
       `the ${role} record declares interleaving for a contiguous directory`,

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createStubHopperProject } from "../../fixtures/hopperProjectFile.js";
 
 import {
   createAnalysisExecution,
@@ -53,9 +54,7 @@ describe("guided prompt completion from live analysis", () => {
           ),
       },
     );
-    const directory = await createTestTempDirectory("rea-prompt-completion-");
-    const target = join(directory, "fixture.hop");
-    await writeFile(target, "fixture");
+    const target = await createStubHopperProject("rea-prompt-completion-");
     expect((await session.open(target)).ok).toBe(true);
     const completion = createPromptCompletionSource(session, session);
     expect(await completion.complete("document", "app")).toEqual([]);

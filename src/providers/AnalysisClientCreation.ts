@@ -25,6 +25,18 @@ import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCle
 import { err, ok, type Result } from "../domain/result.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
+import {
+  retainCloseOutcome,
+  type EngineCloseReport,
+} from "../domain/engineCloseReport.js";
+
+interface ClientLease {
+  readonly client: AnalysisClient;
+  readonly lease: AnalysisCleanupLease;
+  /** The releasing close's report until a release outcome takes it. */
+  report?: EngineCloseReport | null;
+  failure?: AnalysisError;
+}
 
 /** Own deferred client creation while callers wait independently and close joins it. */
 export class AnalysisClientCreation {
@@ -40,14 +52,10 @@ export class AnalysisClientCreation {
    * The close owner of one exact client, and the failure its last close
    * produced. External cleanup can settle that failure without the lease.
    */
-  #clientLease:
-    | {
-        readonly client: AnalysisClient;
-        readonly lease: AnalysisCleanupLease;
-        failure?: AnalysisError;
-      }
+  #clientLease: ClientLease | undefined;
+  #closing:
+    | Promise<Result<EngineCloseReport | null, AnalysisError>>
     | undefined;
-  #closing: Promise<Result<null, AnalysisError>> | undefined;
   #closeOptions: Parameters<AnalysisClient["close"]>[0];
 
   constructor(
@@ -219,7 +227,7 @@ export class AnalysisClientCreation {
 
   close(
     options?: Parameters<AnalysisClient["close"]>[0],
-  ): Promise<Result<null, AnalysisError>> {
+  ): Promise<Result<EngineCloseReport | null, AnalysisError>> {
     this.#closed = true;
     this.#closeOptions = options;
     this.#attempt?.close();
@@ -233,17 +241,24 @@ export class AnalysisClientCreation {
           ? undefined
           : inspections.error;
         const closed = await this.#releaseClient(this.#closeOptions);
+        // What the client's close completed stays with this close's outcome.
         if (!closed.ok && inspectionFailure !== undefined)
           return err(
-            analysisErrorWithCleanupDependencies(
-              closed.error,
-              inspectionFailure,
-              "create_analysis_client",
+            retainCloseOutcome(
+              analysisErrorWithCleanupDependencies(
+                closed.error,
+                inspectionFailure,
+                "create_analysis_client",
+              ),
+              closed,
             ),
           );
         if (!closed.ok) return closed;
-        if (inspectionFailure !== undefined) return err(inspectionFailure);
-        return this.#failure?.cleanupIncomplete ? err(this.#failure) : ok(null);
+        if (inspectionFailure !== undefined)
+          return err(retainCloseOutcome(inspectionFailure, closed));
+        return this.#failure?.cleanupIncomplete
+          ? err(retainCloseOutcome(this.#failure, closed))
+          : closed;
       })
       .finally(() => {
         this.#closing = undefined;
@@ -253,27 +268,35 @@ export class AnalysisClientCreation {
 
   async #releaseClient(
     options: Parameters<AnalysisClient["close"]>[0],
-  ): Promise<Result<null, AnalysisError>> {
+  ): Promise<Result<EngineCloseReport | null, AnalysisError>> {
     if (this.#client === undefined) return ok(null);
     const client = this.#client;
     if (options !== undefined) this.#closeOptions = options;
     if (this.#clientLease?.client !== client) this.#clientLease = undefined;
-    this.#clientLease ??= {
-      client,
-      lease: new AnalysisCleanupLease(async () => {
-        const result = await closeAnalysisClient(
-          client,
-          this.providerId,
-          this.#closeOptions,
-        );
-        if (!result.ok) throw result.error;
-      }),
-    };
+    // The lease owns release; the report of the close that released the
+    // client is handed to one release outcome.
+    if (this.#clientLease === undefined) {
+      const created: ClientLease = {
+        client,
+        lease: new AnalysisCleanupLease(async () => {
+          const result = await closeAnalysisClient(
+            client,
+            this.providerId,
+            this.#closeOptions,
+          );
+          if (!result.ok) throw result.error;
+          created.report = result.value;
+        }),
+      };
+      this.#clientLease = created;
+    }
     const entry = this.#clientLease;
     const clientLease = entry.lease;
     try {
       await clientLease.release();
-      return ok(null);
+      const report = entry.report ?? null;
+      entry.report = null;
+      return ok(report);
     } catch (cause: unknown) {
       const failure = new ProviderCleanupError(
         this.providerId,
@@ -287,7 +310,20 @@ export class AnalysisClientCreation {
             ? { client_close_failure: projectAnalysisError(cause) }
             : {}),
         },
-        { cause, operation: "create_analysis_client" },
+        {
+          cause,
+          operation: "create_analysis_client",
+          // The client knows what its retained close needs; keep that advice
+          // and the control that stopped the close on the failure the caller
+          // reads.
+          ...(cause instanceof ProviderAdapterError &&
+          cause.remediationAction !== undefined
+            ? { remediationAction: cause.remediationAction }
+            : {}),
+          ...(cause instanceof AnalysisError && cause.limit !== undefined
+            ? { limit: cause.limit }
+            : {}),
+        },
       );
       if (cause instanceof AnalysisError && cause.hasCleanupOwner) {
         failure.bindCleanupResourceOwner({
@@ -307,7 +343,11 @@ export class AnalysisClientCreation {
       }
       clientLease.bindCleanupError(failure);
       entry.failure = failure;
-      return err(failure);
+      return err(
+        cause instanceof AnalysisError
+          ? retainCloseOutcome(failure, err(cause))
+          : failure,
+      );
     }
   }
 }

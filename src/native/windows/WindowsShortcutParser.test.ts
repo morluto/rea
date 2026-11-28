@@ -1622,3 +1622,180 @@ it("leaves non-ASCII ANSI extensions uninterpreted", async () => {
     extension: ".ア",
   });
 });
+
+it.each([
+  {
+    label: "truncated before header",
+    mutate: (bytes: Buffer, linkInfoOffset: number) =>
+      bytes.subarray(0, linkInfoOffset + 4),
+    expectedIssue: "truncated",
+  },
+  {
+    label: "size overruns file",
+    mutate: (bytes: Buffer, linkInfoOffset: number) => {
+      const copy = Buffer.from(bytes);
+      copy.writeUInt32LE(0x2000, linkInfoOffset);
+      return copy;
+    },
+    expectedIssue: "block_size_overrun",
+  },
+  {
+    label: "size below 0x1C",
+    mutate: (bytes: Buffer, linkInfoOffset: number) => {
+      const copy = Buffer.from(bytes);
+      copy.writeUInt32LE(0x10, linkInfoOffset);
+      return copy;
+    },
+    expectedIssue: "block_size_overrun",
+  },
+] as const)(
+  "keeps target_extension unknown when declared LinkInfo is unread ($label)",
+  async ({ mutate, expectedIssue }) => {
+    const valid = windowsShortcutBytes({
+      flags:
+        LINK_FLAG.HasLinkTargetIDList |
+        LINK_FLAG.HasLinkInfo |
+        LINK_FLAG.IsUnicode,
+      idList: [{ kind: "file", shortName: "decoy.pdf" }],
+      linkInfo: { localBasePath: "C:\\Windows\\System32\\cmd.exe" },
+      extraData: [],
+      terminalBlock: false,
+    });
+    const idListSize = valid.readUInt16LE(76);
+    const linkInfoOffset = 76 + 2 + idListSize;
+    const report = await parse(mutate(valid, linkInfoOffset));
+    expect(report.link_info).toBeNull();
+    expect(report.id_list?.items[0]).toMatchObject({
+      kind: "file_entry",
+      short_name: "decoy.pdf",
+    });
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({ code: expectedIssue, offset: linkInfoOffset }),
+    );
+    expect(report.observations).toContainEqual({
+      kind: "target_extension",
+      evidence_kind: "derived",
+      extension: null,
+    });
+  },
+);
+
+it("keeps target_extension and differing icon unknown when LinkInfo declared Unicode offsets are truncated", async () => {
+  const prefix = windowsShortcutBytes({
+    flags:
+      LINK_FLAG.HasLinkTargetIDList |
+      LINK_FLAG.HasLinkInfo |
+      LINK_FLAG.IsUnicode,
+    idList: [{ kind: "file", shortName: "decoy.pdf" }],
+    linkInfo: null,
+    extraData: [],
+    terminalBlock: false,
+  });
+  const shortLinkInfo = Buffer.alloc(0x1c);
+  shortLinkInfo.writeUInt32LE(0x1c, 0);
+  shortLinkInfo.writeUInt32LE(0x24, 4);
+  shortLinkInfo.writeUInt32LE(0x1, 8);
+  const bytes = Buffer.concat([prefix, shortLinkInfo, Buffer.alloc(4)]);
+  const report = await parse(bytes);
+  expect(report.link_info).not.toBeNull();
+  expect(report.link_info?.header_size).toBe(0x24);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({
+      code: "malformed_structure",
+      offset: prefix.length + 4,
+    }),
+  );
+  expect(report.observations).toContainEqual({
+    kind: "target_extension",
+    evidence_kind: "derived",
+    extension: null,
+  });
+
+  // Also verify icon_location_differs_from_target stays unknown when a lower-precedence
+  // environment target differs from the icon while LinkInfo Unicode offsets were truncated.
+  const withIconAndEnv = windowsShortcutBytes({
+    flags:
+      LINK_FLAG.HasLinkInfo |
+      LINK_FLAG.HasIconLocation |
+      LINK_FLAG.IsUnicode |
+      LINK_FLAG.HasExpString,
+    idList: null,
+    linkInfo: null,
+    iconLocation: "C:\\Tools\\icon.exe",
+    extraData: [{ kind: "environment", unicode: "C:\\Tools\\other.dll" }],
+  });
+  const spliced = Buffer.concat([
+    withIconAndEnv.subarray(0, 76),
+    shortLinkInfo,
+    withIconAndEnv.subarray(76),
+  ]);
+  const envReport = await parse(spliced);
+  expect(envReport.coverage.status).toBe("partial");
+  expect(iconDifference(envReport)).toBeNull();
+  expect(envReport.observations).toContainEqual({
+    kind: "target_extension",
+    evidence_kind: "derived",
+    extension: null,
+  });
+});
+
+it.each([
+  {
+    label: "truncated RELATIVE_PATH payload",
+    build: () =>
+      windowsShortcutBytes({
+        flags:
+          LINK_FLAG.HasLinkTargetIDList |
+          LINK_FLAG.HasRelativePath |
+          LINK_FLAG.IsUnicode,
+        idList: [{ kind: "file", shortName: "decoy.pdf" }],
+        linkInfo: null,
+        relativePath: ".\\payload.exe",
+        extraData: [],
+        terminalBlock: false,
+        omitStringBytes: 6,
+      }),
+  },
+  {
+    label: "truncated preceding NAME_STRING",
+    build: () => {
+      const full = windowsShortcutBytes({
+        flags:
+          LINK_FLAG.HasLinkTargetIDList |
+          LINK_FLAG.HasName |
+          LINK_FLAG.HasRelativePath |
+          LINK_FLAG.IsUnicode,
+        idList: [{ kind: "file", shortName: "decoy.pdf" }],
+        linkInfo: null,
+        name: "My Shortcut",
+        relativePath: ".\\payload.exe",
+        extraData: [],
+        terminalBlock: false,
+      });
+      const idListSize = full.readUInt16LE(76);
+      const nameOffset = 76 + 2 + idListSize;
+      return full.subarray(0, nameOffset + 6);
+    },
+  },
+] as const)(
+  "keeps target_extension unknown when declared RELATIVE_PATH is unread ($label)",
+  async ({ build }) => {
+    const report = await parse(build());
+    expect(report.string_data.relative_path).toBeNull();
+    expect(report.id_list?.items[0]).toMatchObject({
+      kind: "file_entry",
+      short_name: "decoy.pdf",
+    });
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues.some((issue) => issue.code === "truncated")).toBe(
+      true,
+    );
+    expect(report.observations).toContainEqual({
+      kind: "target_extension",
+      evidence_kind: "derived",
+      extension: null,
+    });
+  },
+);

@@ -7,11 +7,8 @@ import {
 import type { BrowserScenarioStep as Step } from "../browserScenarioCaptureValues.js";
 import { incrementCount } from "../valueCounts.js";
 import { sortedCountEntries } from "./analysisViewCounts.js";
-import { err, ok } from "../result.js";
-import {
-  analysisViewInputError,
-  invalidAnalysisView,
-} from "./analysisViewErrors.js";
+import { ok } from "../result.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -347,14 +344,9 @@ export const projectBrowserScenarioView = (
     view.collection === "text" &&
     capture.steps[view.step_index] === undefined
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "step_index"],
-          reason: "invalid_value",
-          message: "The selected step is not present in the retained capture.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "The selected step is not present in the retained capture.",
+      "step_index",
     );
   const page =
     view.collection === "text"

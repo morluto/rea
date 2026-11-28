@@ -24,6 +24,7 @@ import {
 import {
   cells,
   devicetreeFixture,
+  dtString,
 } from "../domain/firmware/devicetree.fixture.js";
 import {
   createTestTempDirectory,
@@ -717,4 +718,44 @@ it("preserves a final validation failure when cancellation overlaps it", async (
 artifactPreparationRecoveryCases({
   image: () => FIT_EMBEDDED,
   createReader: (path, admitted) => new FitArtifactReader(path, admitted),
+});
+
+/**
+ * An image field the structure reader could not decode leaves the inventory
+ * unknown, the same way `NtfsMftArtifactReader` reports a recorded limitation.
+ */
+it("reports unknown coverage when an image field could not be decoded", async () => {
+  const file = fitFixture({
+    images: [
+      {
+        name: "kernel",
+        data: FIT_KERNEL,
+        // Three cells is not a 1- or 2-cell address, so `load` stays undecoded.
+        properties: {
+          description: dtString("Linux kernel"),
+          type: dtString("kernel"),
+          load: cells(0, 1, 2),
+        },
+      },
+    ],
+  });
+  const snapshot = await scanCanonicalArtifactInventory(
+    await writeFit("undecodable.itb", file),
+  );
+  const root = snapshot.occurrences.find((row) => row.logical_path === ".");
+  const image = snapshot.occurrences.find((row) =>
+    row.logical_path.startsWith("images/kernel"),
+  );
+  expect(
+    (image?.format_metadata as { unreadable_fields?: string[] })
+      ?.unreadable_fields,
+  ).toContain("load");
+  expect(root).toBeDefined();
+  expect(snapshot.coverage).toMatchObject({ status: "unknown" });
+  // The reason travels with the status, so a coverage consumer can name the field.
+  expect(
+    snapshot.limitations.some(
+      (line) => line.includes("kernel") && line.includes("load"),
+    ),
+  ).toBe(true);
 });
