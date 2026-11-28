@@ -1,4 +1,4 @@
-import { correlateVsixCommandsInputSchema } from "../../../src/domain/vsix/vsixCommandCorrelation.js";
+import { correlateVsixRegistrationsInputSchema } from "../../../src/domain/vsix/vsixRegistrationCorrelation.js";
 import { EVIDENCE_FORMAT_REVISION } from "../../../src/domain/evidenceFormat.js";
 import { beforeAll, expect, it } from "vitest";
 import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
@@ -86,8 +86,8 @@ const documents: readonly {
     callerPaths: [["reference", "path"]],
   },
   {
-    command: cliCommandFor("correlate_vsix_commands"),
-    schema: frame(correlateVsixCommandsInputSchema),
+    command: cliCommandFor("correlate_vsix_registrations"),
+    schema: frame(correlateVsixRegistrationsInputSchema),
   },
   {
     command: cliCommandFor("compare_javascript_export_shapes"),

@@ -75,7 +75,7 @@ runtime load inventory.
 
 ## Commands and their handlers
 
-`correlate_vsix_commands` (CLI `correlate-vsix-commands`) joins the declared
+`correlate_vsix_registrations` (CLI `correlate-vsix-registrations`) joins the declared
 commands to `vscode.commands.registerCommand` and
 `registerTextEditorCommand` calls. It needs two complete Evidence records:
 `inspect_vsix_package` for the package and `analyze_javascript_application`
@@ -88,7 +88,7 @@ rea analyze-javascript-application /absolute/extracted/extension --detail comple
 ```
 
 Pass both records as `vsix_package` and `javascript_application` in one JSON
-document to `rea correlate-vsix-commands request.json --json`. MCP also accepts
+document to `rea correlate-vsix-registrations request.json --json`. MCP also accepts
 exact retained-Evidence references.
 
 | `status`                | Meaning                                                                             |

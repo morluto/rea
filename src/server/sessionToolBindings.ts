@@ -1,4 +1,4 @@
-import { correlateVsixCommandsExecution } from "../application/vsix/VsixCommandCorrelationService.js";
+import { correlateVsixRegistrationsExecution } from "../application/vsix/VsixRegistrationCorrelationService.js";
 import type { AnalysisViewRetention } from "../application/analysisView/AnalysisViewRetention.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import {
@@ -321,11 +321,11 @@ export const bindApplicationWorkflowTools = (
           signal,
         }),
     },
-    correlate_vsix_commands: {
+    correlate_vsix_registrations: {
       admission: "sdk",
       workflow: async (input, { signal }) =>
         settledResult(
-          correlateVsixCommandsExecution(input, evidenceById, { signal }),
+          correlateVsixRegistrationsExecution(input, evidenceById, { signal }),
         ),
     },
     compare_javascript_export_shapes: {

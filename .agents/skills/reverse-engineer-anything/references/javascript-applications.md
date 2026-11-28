@@ -281,7 +281,7 @@ semantic unknown records remain in the complete parent Evidence and trace tools.
 
 ## VS Code extension commands
 
-Use `correlate_vsix_commands` to join `inspect_vsix_package` Evidence with
+Use `correlate_vsix_registrations` to join `inspect_vsix_package` Evidence with
 `analyze_javascript_application` Evidence of the extracted extension. Check
 `entry_points` before reading `not_found` as absence
 ([VSIX guide](https://github.com/morluto/rea/blob/main/docs/guides/managed/vsix-package.md)).

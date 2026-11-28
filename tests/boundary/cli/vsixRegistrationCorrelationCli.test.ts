@@ -2,7 +2,7 @@ import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import { vsixCommandCorrelationSchema } from "../../../src/domain/vsix/vsixCommandCorrelation.js";
+import { vsixRegistrationCorrelationSchema } from "../../../src/domain/vsix/vsixRegistrationCorrelation.js";
 import { vsixPackageFixture } from "../../../src/vsix/VsixPackage.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -46,16 +46,16 @@ cliTest(
         input_path: extracted,
       }),
     };
-    const response = await call("correlate_vsix_commands", request);
+    const response = await call("correlate_vsix_registrations", request);
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     const document = join(root, "request.json");
     await writeFile(document, JSON.stringify(request));
     const result = await cli.run({
-      arguments: ["correlate-vsix-commands", document, "--json"],
+      arguments: ["correlate-vsix-registrations", document, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     for (const value of [result.json, response.structuredContent]) {
-      const report = vsixCommandCorrelationSchema.parse(
+      const report = vsixRegistrationCorrelationSchema.parse(
         (value as { normalized_result: unknown }).normalized_result,
       );
       expect(

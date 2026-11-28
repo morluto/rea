@@ -196,7 +196,7 @@ export const CAPABILITY_DECLARATIONS = {
         "compare_application_versions",
         "compare_javascript_export_shapes",
         "compare_source_to_bundle",
-        "correlate_vsix_commands",
+        "correlate_vsix_registrations",
         "evaluate_reconstruction_coverage",
         "guided_workflows",
         "read_guidance_section",

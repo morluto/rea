@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { graphForJavaScript } from "../../../tests/fixtures/javascriptSemanticGraph.js";
-import { correlateVsixCommands } from "./vsixCommandCorrelation.js";
+import { correlateVsixRegistrations } from "./vsixRegistrationCorrelation.js";
 
 const contributes = (
   commands: readonly string[],
@@ -21,7 +21,7 @@ const correlate = (
   declared: ReturnType<typeof contributes>,
   entryPoints: readonly string[] = ["app.js"],
 ) =>
-  correlateVsixCommands({
+  correlateVsixRegistrations({
     contributes: declared,
     entryPoints,
     semanticGraph: graphForJavaScript(source),
@@ -135,7 +135,7 @@ describe("VS Code command correlation", () => {
         },
       ],
     } as unknown as typeof graph;
-    const result = correlateVsixCommands({
+    const result = correlateVsixRegistrations({
       contributes: contributes(["demo.a"]),
       entryPoints: ["app.js"],
       semanticGraph: omitted,

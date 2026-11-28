@@ -6,7 +6,7 @@ import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { VsixPackage } from "./vsixPackage.js";
 
 /** Inline or exact retained Evidence for both sides of the correlation. */
-export const correlateVsixCommandsInputSchema = z.strictObject({
+export const correlateVsixRegistrationsInputSchema = z.strictObject({
   vsix_package: evidenceInputSchema.describe(
     "Complete inspect_vsix_package Evidence",
   ),
@@ -59,7 +59,7 @@ const correlationShape = {
   semantic_graph_truncated: z.boolean(),
 };
 
-export const vsixCommandCorrelationSchema = z.strictObject({
+export const vsixRegistrationCorrelationSchema = z.strictObject({
   ...correlationShape,
   source_evidence: z.strictObject({
     vsix_package_evidence_id: z.string(),
@@ -161,7 +161,7 @@ const analyzedEntry = (graph: JavaScriptSemanticGraph) => {
  * Join declared command identifiers with literal VS Code registrations. A
  * missing registration is not proof that the command has no handler.
  */
-export const correlateVsixCommands = ({
+export const correlateVsixRegistrations = ({
   contributes,
   entryPoints,
   semanticGraph,

@@ -13,10 +13,10 @@ import {
 } from "../../domain/investigationProviders.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
-  correlateVsixCommands,
-  correlateVsixCommandsInputSchema,
-  vsixCommandCorrelationSchema,
-} from "../../domain/vsix/vsixCommandCorrelation.js";
+  correlateVsixRegistrations,
+  correlateVsixRegistrationsInputSchema,
+  vsixRegistrationCorrelationSchema,
+} from "../../domain/vsix/vsixRegistrationCorrelation.js";
 import { vsixPackageSchema } from "../../domain/vsix/vsixPackage.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
@@ -28,7 +28,7 @@ import {
   parseApplicationGraphEvidence,
 } from "../javascript/JavaScriptApplicationEvidenceGraph.js";
 
-const OPERATION = "correlate_vsix_commands";
+const OPERATION = "correlate_vsix_registrations";
 
 const LIMITATIONS = [
   "REA does not verify that the JavaScript analysis covers the files of the selected package; entry_points only says whether a declared entry path was analyzed.",
@@ -72,7 +72,7 @@ const readPackageSource = (input: unknown) => {
 };
 
 /** Join one package's declared commands to one application's registrations. */
-export const correlateVsixCommandsExecution = (
+export const correlateVsixRegistrationsExecution = (
   rawInput: unknown,
   lookup?: EvidenceLookup,
   options: Pick<ExecutionOptions, "signal"> = {},
@@ -83,7 +83,7 @@ export const correlateVsixCommandsExecution = (
   const request = resolveEvidenceRequest(
     OPERATION,
     rawInput,
-    correlateVsixCommandsInputSchema,
+    correlateVsixRegistrationsInputSchema,
     lookup,
     options,
   );
@@ -115,8 +115,8 @@ export const correlateVsixCommandsExecution = (
     vsix_package_evidence_id: packageEvidence.evidence_id,
     javascript_application_evidence_id: source.evidence_id,
   };
-  const result = vsixCommandCorrelationSchema.parse({
-    ...correlateVsixCommands({
+  const result = vsixRegistrationCorrelationSchema.parse({
+    ...correlateVsixRegistrations({
       contributes: report.contributes,
       entryPoints: [
         report.entry_points.main,
@@ -132,7 +132,7 @@ export const correlateVsixCommandsExecution = (
       evidenceSubjectInput(packageEvidence.subject),
       JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
       {
-        predicateType: "rea.vsix-command-correlation",
+        predicateType: "rea.vsix-registration-correlation",
         operation: OPERATION,
         parameters: identities,
         result,
