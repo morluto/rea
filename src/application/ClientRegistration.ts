@@ -35,9 +35,11 @@ import {
   classifyClientRegistrationCommand,
   equivalentClientRegistrationCommands,
   type ClientRegistrationCommandIdentity,
+  type ClientRegistrationCommandLookup,
 } from "./ClientRegistrationIdentity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { dshToolCallTimeout } from "./DshCordisPatch.js";
+import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 
 const tomlTimeoutSchema = z.union([
   z.number().positive(),
@@ -193,6 +195,75 @@ export const parseClientRegistrationLauncher = (
     : err(registrationError(parsed.error));
 };
 
+/**
+ * Clients that expand `$VAR` / `${VAR}` in recorded env values. A PATH
+ * expression cannot be resolved from this process.
+ */
+const VAR_EXPANDING_OWNERSHIP_CLIENTS: ReadonlySet<string> = new Set([
+  "qwen_code",
+]);
+
+const ENVIRONMENT_EXPRESSION =
+  /\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})/u;
+
+/** Recorded string env map from a registration value, or undefined when malformed. */
+const recordedRegistrationEnvironment = (
+  value: unknown,
+  client: SetupClient,
+): Readonly<Record<string, string>> | undefined => {
+  const source = clientRegistrationSource(value, client.registrationProfile);
+  if (source.connection === undefined) return {};
+  const field =
+    client.format === "goose"
+      ? gooseEnvironmentField(source.connection)
+      : ok(
+          client.format === "opencode" ||
+            client.format === "fx" ||
+            client.format === "kilo"
+            ? "environment"
+            : "env",
+        );
+  if (!field.ok) return undefined;
+  const raw = source.connection[field.value];
+  if (raw === undefined) return {};
+  const parsed = clientConfigurationRecordSchema.safeParse(raw);
+  if (!parsed.success) return undefined;
+  const entries: [string, string][] = [];
+  for (const [key, entry] of Object.entries(parsed.data)) {
+    if (typeof entry !== "string") return undefined;
+    entries.push([key, entry]);
+  }
+  return Object.fromEntries(entries);
+};
+
+/**
+ * PATH lookup for ownership: merge the registration's recorded env over the
+ * inherited process environment, and mark PATH unknown when the client expands
+ * an expression there.
+ */
+export const clientRegistrationCommandLookup = (
+  value: unknown,
+  client: SetupClient,
+  inherited: Readonly<NodeJS.ProcessEnv> = process.env,
+): ClientRegistrationCommandLookup => {
+  const recorded = recordedRegistrationEnvironment(value, client);
+  // A malformed env block cannot prove PATH for bare commands; package and
+  // absolute launchers still classify without it.
+  if (recorded === undefined) return { unresolvedPath: true };
+  const platform = HOST_PLATFORM.platform;
+  return {
+    environment: mergeEnvironmentOverrides(inherited, recorded, platform),
+    unresolvedPath:
+      VAR_EXPANDING_OWNERSHIP_CLIENTS.has(client.name) &&
+      Object.entries(recorded).some(
+        ([key, entry]) =>
+          (platform === "win32"
+            ? key.toLowerCase() === "path"
+            : key === "PATH") && ENVIRONMENT_EXPRESSION.test(entry),
+      ),
+  };
+};
+
 /** Launcher ownership is independent of readiness and caller-owned policy. */
 export const clientRegistrationOwnership = (
   value: unknown,
@@ -204,12 +275,12 @@ export const clientRegistrationOwnership = (
     dialect: client.format ?? "json",
     profile: client.registrationProfile,
   });
-  return parsed.ok
-    ? classifyClientRegistrationCommand(
-        [parsed.value.command, ...parsed.value.args],
-        currentCommandPath,
-      )
-    : "unknown";
+  if (!parsed.ok) return "unknown";
+  return classifyClientRegistrationCommand(
+    [parsed.value.command, ...parsed.value.args],
+    currentCommandPath,
+    clientRegistrationCommandLookup(value, client),
+  );
 };
 
 /** Explain the same ownership admission decision in setup and doctor. */

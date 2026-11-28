@@ -3,10 +3,12 @@ import {
   accessSync,
   constants,
   lstatSync,
+  readFileSync,
   readlinkSync,
   realpathSync,
+  statSync,
 } from "node:fs";
-import { isAbsolute, posix } from "node:path";
+import { dirname, isAbsolute, join, posix, win32 } from "node:path";
 import {
   CURRENT_ENTRYPOINT_PATH,
   normalizeEntrypointPath,
@@ -17,7 +19,10 @@ import {
   javaScriptRuntime,
   type JavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
-import { posixPathCandidates } from "../process/executableSearch.js";
+import {
+  posixPathCandidates,
+  windowsPathCandidates,
+} from "../process/executableSearch.js";
 import {
   absoluteCallerPath,
   appendCallerPath,
@@ -170,13 +175,173 @@ export const currentClientRegistrationCommand = (
     : [runtime, script, "mcp"];
 };
 
+/** Command spelling may be path-qualified; Windows and POSIX separators both appear. */
+const commandFileName = (path: string): string =>
+  (path.split(/[/\\]/u).at(-1) ?? path).toLowerCase();
+
 const unwrapCmdCommand = (command: readonly string[]): readonly string[] => {
-  const executable = command[0]?.toLowerCase();
-  if (executable !== "cmd" && executable !== "cmd.exe") return command;
+  const executable = command[0];
+  if (executable === undefined) return command;
+  const name = commandFileName(executable);
+  if (name !== "cmd" && name !== "cmd.exe") return command;
   if (command[1]?.toLowerCase() === "/c") return command.slice(2);
   if (command[1]?.toLowerCase() === "/d" && command[2]?.toLowerCase() === "/c")
     return command.slice(3);
   return [];
+};
+
+/**
+ * npm's cmd-shim is a short generated batch file. Larger files are not that
+ * format; refuse them before allocating their contents for ownership.
+ */
+const NPM_CMD_SHIM_BYTES = 64 * 1024;
+
+const readBoundedRegularFile = (
+  path: string,
+  maximumBytes: number,
+): string | undefined => {
+  try {
+    const stat = statSync(path);
+    if (!stat.isFile() || stat.size === 0 || stat.size > maximumBytes)
+      return undefined;
+    const contents = readFileSync(path, {
+      flag: constants.O_RDONLY | constants.O_NONBLOCK,
+    });
+    return contents.length <= maximumBytes
+      ? contents.toString("utf8")
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const NPM_CMD_SHIM_PREAMBLE =
+  /^(?:@?\s*echo\s+off|@?\s*goto\s+[\w-]+|:[\w-]+|@?\s*call\s+:[\w-]+|@?\s*exit\s+\/b|@?\s*setlocal|@?\s*set\s+[^&|<>]+|@?\s*if\s+exist\s+"%dp0%[\\/]node\.exe"\s*\(|\)\s*else\s*\(|\))$/iu;
+
+const NPM_CMD_SHIM_LAUNCH =
+  /^(?:(?:endLocal\s*&\s*(?:goto\s+#_undefined_#\s+2>NUL\s*\|\|\s*title\s+%COMSPEC%\s*&\s*)?)?(?:@\s*)?)"%_prog%"\s+"%dp0%([\\/][^"]+)"\s+%\*$/iu;
+
+/**
+ * Recover the script an npm Windows `rea.cmd` shim launches. Ownership follows
+ * only the recognized npm cmd-shim wrapper structure and its single launch
+ * statement (`"%_prog%" "%dp0%\…" %*`), rejecting custom or chained wrappers.
+ */
+const windowsReaCmdScript = (cmdPath: string): string | undefined => {
+  if (commandFileName(cmdPath) !== `${PRODUCT_IDENTITY.cliBinary}.cmd`)
+    return undefined;
+  const text = readBoundedRegularFile(cmdPath, NPM_CMD_SHIM_BYTES);
+  if (text === undefined) return undefined;
+  const packageName = PRODUCT_IDENTITY.packageName.toLowerCase();
+  let relative: string | undefined;
+  for (const line of text.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (trimmed === "" || /^(?:@?\s*rem\b|::)/iu.test(trimmed)) continue;
+    if (relative !== undefined) return undefined;
+    const match = NPM_CMD_SHIM_LAUNCH.exec(trimmed);
+    if (match === null) {
+      if (!NPM_CMD_SHIM_PREAMBLE.test(trimmed)) return undefined;
+      continue;
+    }
+    const candidate = match[1]!.replace(/^[\\/]/u, "");
+    const parts = candidate.split(/[/\\]/u).map((part) => part.toLowerCase());
+    const modules = parts.indexOf("node_modules");
+    if (
+      modules >= 0 &&
+      parts[modules + 1] === packageName &&
+      !parts.slice(modules + 1).includes("..")
+    )
+      relative = candidate;
+    else return undefined;
+  }
+  if (relative === undefined) return undefined;
+  if (HOST_PLATFORM.platform === "win32")
+    return win32.join(win32.dirname(cmdPath), relative.replace(/\//gu, "\\"));
+  return posix.join(posix.dirname(cmdPath), relative.replace(/\\/gu, "/"));
+};
+
+const isRegularFile = (path: string): boolean => {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * First PATH hit for a bare CLI name that is a regular file. A working-
+ * directory-dependent PATH entry reached before a hit keeps the result
+ * unknown: the client's cwd is not known here.
+ */
+const resolveBareCliOnPath = (
+  name: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): string | "unknown" | undefined => {
+  if (HOST_PLATFORM.platform === "win32") {
+    const search = windowsPathCandidates(name, environment, {
+      allowBatch: true,
+      cwd: "C:\\",
+    });
+    if (!search.ok) return "unknown";
+    for (const candidate of search.value) {
+      if (candidate.relativeEntry) return "unknown";
+      if (!isRegularFile(candidate.path)) continue;
+      return candidate.path;
+    }
+    return undefined;
+  }
+  for (const candidate of posixPathCandidates(name, environment.PATH ?? "", {
+    relativeEntries: "resolve",
+    unreadableWorkingDirectory: "as-written",
+  })) {
+    if (candidate.relativeEntry) return "unknown";
+    try {
+      accessSync(candidate.path, constants.X_OK);
+    } catch {
+      continue;
+    }
+    if (!isRegularFile(candidate.path)) continue;
+    return candidate.path;
+  }
+  return undefined;
+};
+
+/**
+ * True when the file selected by executable lookup belongs to this package.
+ * Walk from the realpath of that file (or its spelled path when realpath fails);
+ * do not reinterpret a native launcher as a Node script argument.
+ */
+const launcherBelongsToProduct = (launcher: string): boolean => {
+  let resolved = launcher;
+  try {
+    resolved = realpathSync.native(launcher);
+  } catch {
+    // Keep the spelled path when realpath cannot prove the leaf.
+  }
+  let directory = dirname(resolved);
+  for (let depth = 0; depth < 8; depth++) {
+    try {
+      const name = (
+        JSON.parse(readFileSync(join(directory, "package.json"), "utf8")) as {
+          name?: unknown;
+        }
+      ).name;
+      if (typeof name === "string")
+        return name === PRODUCT_IDENTITY.packageName;
+    } catch {
+      // Climb until a package.json is readable or the root is reached.
+    }
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return false;
+};
+
+/** The script a PATH hit launches: npm `rea.cmd` unwrap, else the file itself. */
+const bareCliLaunchTarget = (resolved: string): string | undefined => {
+  if (commandFileName(resolved) === `${PRODUCT_IDENTITY.cliBinary}.cmd`)
+    return windowsReaCmdScript(resolved);
+  return resolved;
 };
 
 /** Preserve the package argument from a supported package-runner command. */
@@ -475,10 +640,22 @@ export interface ClientRegistrationCommandFacts {
     | undefined;
 }
 
+/** Optional lookup context for bare PATH commands. */
+export interface ClientRegistrationCommandLookup {
+  /** Effective environment for PATH resolution; defaults to `process.env`. */
+  readonly environment?: Readonly<NodeJS.ProcessEnv>;
+  /**
+   * True when the registration's PATH is an expression the client expands
+   * (for example Qwen `${PATH}`), so this process cannot name the launcher.
+   */
+  readonly unresolvedPath?: boolean;
+}
+
 /** Parse package identity once, retaining exact source spelling and version facts. */
 export const inspectClientRegistrationCommand = (
   command: readonly string[],
   currentCommandPath: string | undefined,
+  lookup: ClientRegistrationCommandLookup = {},
 ): ClientRegistrationCommandFacts => {
   const reference = clientRegistrationPackageReference(command);
   if (reference !== undefined) {
@@ -502,19 +679,22 @@ export const inspectClientRegistrationCommand = (
       },
     };
   }
-  return inspectDirectRegistrationCommand(command, currentCommandPath);
+  return inspectDirectRegistrationCommand(command, currentCommandPath, lookup);
 };
 
 /** Ownership-only consumers share the same parsed command facts. */
 export const classifyClientRegistrationCommand = (
   command: readonly string[],
   currentCommandPath: string | undefined,
+  lookup: ClientRegistrationCommandLookup = {},
 ): ClientRegistrationCommandIdentity =>
-  inspectClientRegistrationCommand(command, currentCommandPath).identity;
+  inspectClientRegistrationCommand(command, currentCommandPath, lookup)
+    .identity;
 
 const inspectDirectRegistrationCommand = (
   command: readonly string[],
   currentCommandPath: string | undefined,
+  lookup: ClientRegistrationCommandLookup,
 ): ClientRegistrationCommandFacts => {
   const currentPathAvailable =
     currentCommandPath !== undefined && currentCommandPath.length > 0;
@@ -579,13 +759,59 @@ const inspectDirectRegistrationCommand = (
   }
   if (command.length === 2 && command[1] === "mcp") {
     const executable = command[0] ?? "";
-    if (executable === PRODUCT_IDENTITY.cliBinary)
+    if (executable === PRODUCT_IDENTITY.cliBinary) {
+      if (lookup.unresolvedPath === true)
+        return {
+          identity: "unknown",
+          launch: "direct",
+          entrypoint: undefined,
+          package: undefined,
+        };
+      const resolved = resolveBareCliOnPath(
+        executable,
+        lookup.environment ?? process.env,
+      );
+      if (resolved === undefined || resolved === "unknown")
+        return {
+          identity: "unknown",
+          launch: "direct",
+          entrypoint: undefined,
+          package: undefined,
+        };
+      const target = bareCliLaunchTarget(resolved);
+      if (target === undefined)
+        return {
+          identity: "unknown",
+          launch: "direct",
+          entrypoint: undefined,
+          package: undefined,
+        };
+      if (currentPathAvailable) {
+        const pathIdentity = directEntrypointIdentity(
+          target,
+          currentCommandPath,
+        );
+        if (pathIdentity === "owned" || launcherBelongsToProduct(target))
+          return {
+            launch: "direct",
+            identity: "owned",
+            entrypoint: target,
+            package: undefined,
+          };
+        return {
+          launch: "direct",
+          identity: pathIdentity,
+          entrypoint: target,
+          package: undefined,
+        };
+      }
       return {
-        identity: "owned",
         launch: "direct",
-        entrypoint: undefined,
+        identity: launcherBelongsToProduct(target) ? "owned" : "unknown",
+        entrypoint: target,
         package: undefined,
       };
+    }
     const managedTarget =
       HOST_PLATFORM.platform !== "win32" &&
       javaScriptRuntime(process.versions).id === "node"

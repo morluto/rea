@@ -18,8 +18,12 @@ import {
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../../../src/process/CurrentEntrypointPath.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+const ownedCommand = currentClientRegistrationCommand();
+const staleOwnedCommand = ["npx", "-y", "rea-agents@6.6.0", "mcp"] as const;
 
 describe.each(["vscode", "copilot_cli", "opencode", "commandcode"])(
   "client configuration for %s",
@@ -175,7 +179,7 @@ it("preserves BOM-prefixed JSONC values and comments through update and removal"
 
   if (CURRENT_ENTRYPOINT_PATH === undefined)
     throw new Error("test runner entrypoint is unavailable");
-  const firstCommand = ["rea", "mcp"];
+  const firstCommand = [...staleOwnedCommand];
   const updatedCommand = [process.execPath, CURRENT_ENTRYPOINT_PATH, "mcp"];
   expect(
     await configureClientConfiguration(client, {}, firstCommand),
@@ -226,7 +230,7 @@ it.each(["", "\n  \n", "\uFEFF"])(
       throw new Error("missing Antigravity JSON config");
     await mkdir(dirname(client.configPath), { recursive: true });
     await writeFile(client.configPath, original);
-    const command = ["rea", "mcp"];
+    const command = [...ownedCommand];
 
     expect(await inspectClientConfiguration(client, {}, command)).toEqual({
       status: "update",

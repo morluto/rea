@@ -188,7 +188,12 @@ it("stops uninstall and retains the backup read owner when its close fails", asy
   } as const;
   await writeFile(path, '{"keep":"before setup"}\n');
   expect(
-    await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+    await configureClientConfiguration(client, {}, [
+      "npx",
+      "-y",
+      "rea-agents@6.6.0",
+      "mcp",
+    ]),
   ).toMatchObject({ status: "configured" });
   const configured = await readFile(path, "utf8");
   const { closeAttempts, release } = holdReadHandle(
@@ -219,7 +224,7 @@ it("reports a completed uninstall edit while publication cleanup remains owned",
   const path = join(home, ".cursor", "mcp.json");
   const cache = join(home, ".rea", "cache", "marker");
   const original =
-    '{"mcpServers":{"rea":{"command":"rea","args":["mcp"]},"peer":{}}}\n';
+    '{"mcpServers":{"rea":{"command":"npx","args":["-y","rea-agents@6.6.0","mcp"]},"peer":{}}}\n';
   await mkdir(dirname(path), { recursive: true });
   await mkdir(dirname(cache), { recursive: true });
   await writeFile(path, original);
@@ -287,12 +292,17 @@ it.each(["owned registration", "shadowed duplicate"] as const)(
     if (scenario === "shadowed duplicate") {
       await writeFile(
         path,
-        '{"mcpServers":{"rea":{"command":"foreign-server","args":[]},"rea":{"command":"rea","args":["mcp"]}}}',
+        '{"mcpServers":{"rea":{"command":"foreign-server","args":[]},"rea":{"command":"npx","args":["-y","rea-agents@6.6.0","mcp"]}}}',
       );
     } else {
       await writeFile(path, '{"mcpServers":{"other":{"command":"other"}}}');
       expect(
-        await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+        await configureClientConfiguration(client, {}, [
+          "npx",
+          "-y",
+          "rea-agents@6.6.0",
+          "mcp",
+        ]),
       ).toMatchObject({ status: "configured" });
     }
     const registration = await readFile(path, "utf8");
@@ -392,7 +402,8 @@ it("keeps the shared registration fail-closed when ZCode's probe is unresolved",
   const fallback = join(home, ".agents", "mcp.json");
   const profile = join(home, ".zcode", "cli");
   const cursor = join(home, ".cursor", "mcp.json");
-  const original = '{"mcpServers":{"rea":{"command":"rea","args":["mcp"]}}}';
+  const original =
+    '{"mcpServers":{"rea":{"command":"npx","args":["-y","rea-agents@6.6.0","mcp"]}}}';
   await mkdir(dirname(fallback), { recursive: true });
   await mkdir(dirname(cursor), { recursive: true });
   await writeFile(fallback, "{ malformed");
@@ -473,7 +484,7 @@ it("removes a shared registration once and reports that outcome to both clients"
         configPath: shared,
       },
       {},
-      ["rea", "mcp"],
+      ["npx", "-y", "rea-agents@6.6.0", "mcp"],
     ),
   ).toMatchObject({ status: "configured" });
   const host = systemUninstallHost(home, undefined, { HOME: home }, "linux");
@@ -525,14 +536,18 @@ it.each([true, false])(
         mcp: {
           rea: {
             type: "local",
-            command: [sharedOwned ? "foreign-server" : "rea", "mcp"],
+            command: sharedOwned
+              ? ["foreign-server", "mcp"]
+              : ["npx", "-y", "rea-agents@6.6.0", "mcp"],
           },
         },
         mcpServers: {
-          rea: {
-            command: sharedOwned ? "rea" : "foreign-server",
-            args: ["mcp"],
-          },
+          rea: sharedOwned
+            ? {
+                command: "npx",
+                args: ["-y", "rea-agents@6.6.0", "mcp"],
+              }
+            : { command: "foreign-server", args: ["mcp"] },
         },
       }),
     );
@@ -610,7 +625,7 @@ it("does not treat a dangling FreeBuff profile link as installed", async () => {
         configPath: cursor,
       },
       {},
-      ["rea", "mcp"],
+      ["npx", "-y", "rea-agents@6.6.0", "mcp"],
     ),
   ).toMatchObject({ status: "configured" });
   lstatMock.mockImplementation((path) =>
@@ -687,7 +702,7 @@ it("serves a completed removal reread when its close retry releases the handle",
       // Another writer registers REA between preflight and removal.
       await writeFile(
         client.configPath,
-        '{"mcpServers":{"rea":{"command":"rea","args":["mcp"]}}}',
+        '{"mcpServers":{"rea":{"command":"npx","args":["-y","rea-agents@6.6.0","mcp"]}}}',
       );
       hold();
       return base.inspectSkill?.();
@@ -733,8 +748,18 @@ describe("ZCode fallback cleanup ownership", () => {
       try {
         const action =
           operation === "preflight"
-            ? host.inspectClientConfiguration?.(client, {}, ["rea", "mcp"])
-            : host.configureClient(client, {}, ["rea", "mcp"]);
+            ? host.inspectClientConfiguration?.(client, {}, [
+                "npx",
+                "-y",
+                "rea-agents@6.6.0",
+                "mcp",
+              ])
+            : host.configureClient(client, {}, [
+                "npx",
+                "-y",
+                "rea-agents@6.6.0",
+                "mcp",
+              ]);
         if (action === undefined) throw new Error("setup preflight missing");
         await expect(action).rejects.toMatchObject({
           _tag: "ConfigurationError",
@@ -778,14 +803,14 @@ describe("setup client configuration cleanup ownership", () => {
           host,
           [client],
           { providerEnvironment: {} },
-          ["rea", "mcp"],
+          ["npx", "-y", "rea-agents@6.6.0", "mcp"],
         )
           .then((detectedClients) =>
             configureDetectedClients({
               host,
               detectedClients,
               providerEnvironment: {},
-              command: ["rea", "mcp"],
+              command: ["npx", "-y", "rea-agents@6.6.0", "mcp"],
               clients: {},
               appliedActions: [],
             }),
@@ -852,7 +877,12 @@ describe("setup client configuration cleanup ownership", () => {
     });
 
     let hostCloseFinished = false;
-    const alignment = host.clientNeedsConfigure(client, {}, ["rea", "mcp"]);
+    const alignment = host.clientNeedsConfigure(client, {}, [
+      "npx",
+      "-y",
+      "rea-agents@6.6.0",
+      "mcp",
+    ]);
     let closeResult: ReturnType<NonNullable<typeof host.close>> | undefined;
     await withVerifierCleanup(async () => {
       await configurationRead.reached(alignment, "configuration read");
@@ -865,7 +895,12 @@ describe("setup client configuration cleanup ownership", () => {
       });
 
       const lateAdmission = await host
-        .clientNeedsConfigure(client, {}, ["rea", "mcp"])
+        .clientNeedsConfigure(client, {}, [
+          "npx",
+          "-y",
+          "rea-agents@6.6.0",
+          "mcp",
+        ])
         .then(
           () => undefined,
           (cause: unknown) => cause,
@@ -945,7 +980,7 @@ it.each(unscopedRegistrationReaders)(
     );
     await mkdir(dirname(config), { recursive: true });
     const registration =
-      '{"mcpServers":{"rea":{"command":"rea","args":["mcp"]}}}\n';
+      '{"mcpServers":{"rea":{"command":"npx","args":["-y","rea-agents@6.6.0","mcp"]}}}\n';
     await writeFile(config, registration);
     const heldPath = source === "policy" ? join(home, "system.json") : config;
     const heldText = source === "policy" ? "{}\n" : registration;
@@ -1011,7 +1046,7 @@ it("keeps a supplied registration scope responsible for diagnostics and cleanup 
   await mkdir(dirname(config), { recursive: true });
   await writeFile(
     config,
-    '{"mcpServers":{"rea":{"command":"rea","args":["mcp"]}}}',
+    '{"mcpServers":{"rea":{"command":"npx","args":["-y","rea-agents@6.6.0","mcp"]}}}',
   );
   const held = holdReadHandle(config, "held scoped registration descriptor");
   const resources = new ArtifactResourceScope();

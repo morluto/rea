@@ -183,8 +183,8 @@ describe("ZCode .agents fallback preservation", () => {
             mcpServers: {
               other: { command: "other-server", env: { TOKEN: "x" } },
               rea: {
-                command: "rea",
-                args: ["mcp"],
+                command: "npx",
+                args: ["-y", "rea-agents@6.6.0", "mcp"],
                 env: {
                   REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
                   GHIDRA_INSTALL_DIR: "/caller/ghidra",
@@ -431,7 +431,9 @@ describe("ZCode fallback admission", () => {
       const { home, client } = await zcodeClient();
       await mkdir(join(home, ".agents"), { recursive: true });
       const original = JSON.stringify({
-        mcpServers: { rea: { command: "rea", args: ["mcp"], env } },
+        mcpServers: {
+          rea: { command: "npx", args: ["-y", "rea-agents@6.6.0", "mcp"], env },
+        },
       });
       await writeFile(fallbackPath(home), original);
       expect(

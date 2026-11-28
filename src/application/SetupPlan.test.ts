@@ -4,6 +4,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
+import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { runDoctor } from "./Doctor.js";
 import { createDoctorHostFixture } from "./Doctor.fixture.js";
 import { FakeSetupHost } from "./Setup.fixture.js";
@@ -14,6 +15,8 @@ import {
   removeTestWorkspace,
 } from "../../tests/support/workspace/workspaceFixture.js";
 import { supportedClientRegistrationProfile } from "../../tests/fixtures/clientRegistrationProfile.js";
+
+const command = currentClientRegistrationCommand();
 
 /** Keep a workspace child under its root before any filesystem call. */
 const pathInside = (root: string, ...parts: string[]): string => {
@@ -101,7 +104,7 @@ it.skipIf(process.platform === "win32")(
 it.each([
   {
     settings: { startup_timeout_sec: 0 },
-    launcher: { command: "rea", args: ["mcp"] },
+    launcher: { command: command[0]!, args: command.slice(1) },
     state: "invalid",
     identity: "owned",
     status: "invalid",

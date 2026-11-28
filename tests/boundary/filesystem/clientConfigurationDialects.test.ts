@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
+import { clientRegistrationOwnership } from "../../../src/application/ClientRegistration.js";
 import {
   currentClientRegistrationCommand,
   classifyClientRegistrationCommand,
 } from "../../../src/application/ClientRegistrationIdentity.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { delimiter, dirname, join, relative, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
@@ -257,7 +259,7 @@ describe("OpenCode JSONC registration edits", () => {
   });
 });
 
-const ownedCursorRow = '"rea": { "command": "rea", "args": ["mcp"] }';
+const ownedCursorRow = `"rea": { "command": ${JSON.stringify(command[0])}, "args": ${JSON.stringify(command.slice(1))} }`;
 const cursorPeer = '"peer": { "command": "peer" }';
 const cursorFollowing = '"following": { "command": "following" }';
 const peer = { peer: { command: "peer" } };
@@ -923,9 +925,6 @@ describe("client launcher traversal semantics", () => {
   );
 
   it("recognizes prior exact REA releases while rejecting foreign package commands", () => {
-    expect(classifyClientRegistrationCommand(["rea", "mcp"], undefined)).toBe(
-      "owned",
-    );
     const cwdMatchingEntry = resolve("./rea");
     expect(
       classifyClientRegistrationCommand(["./rea", "mcp"], cwdMatchingEntry),
@@ -973,4 +972,147 @@ describe("client launcher traversal semantics", () => {
       ),
     ).toBe("unknown");
   });
+
+  it.skipIf(process.platform === "win32")(
+    "owns a bare rea command only when PATH resolves to this package",
+    async () => {
+      const root = await createTestTempDirectory("rea-bare-path-");
+      const packageRoot = join(
+        root,
+        "node_modules",
+        PRODUCT_IDENTITY.packageName,
+      );
+      const script = join(packageRoot, "scripts", "rea.mjs");
+      await mkdir(dirname(script), { recursive: true });
+      await writeFile(
+        join(packageRoot, "package.json"),
+        JSON.stringify({
+          name: PRODUCT_IDENTITY.packageName,
+          version: "0.0.0",
+        }),
+      );
+      await writeFile(script, "#!/usr/bin/env node\n");
+      const bin = join(root, "bin");
+      await mkdir(bin, { recursive: true });
+      const launcher = join(bin, PRODUCT_IDENTITY.cliBinary);
+      await symlink(script, launcher);
+      const { chmod } = await import("node:fs/promises");
+      await chmod(script, 0o755);
+      await chmod(launcher, 0o755);
+
+      const ownedPath = `${bin}${delimiter}${process.env.PATH ?? ""}`;
+      expect(
+        classifyClientRegistrationCommand(["rea", "mcp"], undefined, {
+          environment: { ...process.env, PATH: ownedPath },
+        }),
+      ).toBe("owned");
+      expect(
+        classifyClientRegistrationCommand(["rea", "mcp"], script, {
+          environment: { ...process.env, PATH: ownedPath },
+        }),
+      ).toBe("owned");
+
+      const foreignRoot = await createTestTempDirectory("rea-bare-foreign-");
+      const foreignBin = join(foreignRoot, "bin");
+      await mkdir(foreignBin, { recursive: true });
+      const foreign = join(foreignBin, PRODUCT_IDENTITY.cliBinary);
+      await writeFile(foreign, "#!/bin/sh\necho foreign\n");
+      await chmod(foreign, 0o755);
+      const foreignPath = `${foreignBin}${delimiter}${process.env.PATH ?? ""}`;
+      expect(
+        classifyClientRegistrationCommand(["rea", "mcp"], undefined, {
+          environment: { ...process.env, PATH: foreignPath },
+        }),
+      ).toBe("unknown");
+      expect(
+        classifyClientRegistrationCommand(["rea", "mcp"], script, {
+          environment: { ...process.env, PATH: foreignPath },
+        }),
+      ).toBe("foreign");
+
+      expect(
+        classifyClientRegistrationCommand(["rea", "mcp"], script, {
+          environment: {
+            ...process.env,
+            PATH: `.${delimiter}${bin}`,
+          },
+        }),
+      ).toBe("unknown");
+
+      const cwdSpy = vi.spyOn(process, "cwd").mockImplementation(() => {
+        throw Object.assign(new Error("cwd removed"), { code: "ENOENT" });
+      });
+      try {
+        expect(
+          classifyClientRegistrationCommand(["rea", "mcp"], script, {
+            environment: {
+              ...process.env,
+              PATH: `..${delimiter}${bin}`,
+            },
+          }),
+        ).toBe("unknown");
+      } finally {
+        cwdSpy.mockRestore();
+      }
+
+      expect(
+        classifyClientRegistrationCommand(["rea", "mcp"], script, {
+          unresolvedPath: true,
+        }),
+      ).toBe("unknown");
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "owns a bare rea command through a registration PATH override",
+    async () => {
+      const root = await createTestTempDirectory("rea-bare-env-path-");
+      const packageRoot = join(
+        root,
+        "node_modules",
+        PRODUCT_IDENTITY.packageName,
+      );
+      const script = join(packageRoot, "scripts", "rea.mjs");
+      await mkdir(dirname(script), { recursive: true });
+      await writeFile(
+        join(packageRoot, "package.json"),
+        JSON.stringify({
+          name: PRODUCT_IDENTITY.packageName,
+          version: "0.0.0",
+        }),
+      );
+      await writeFile(script, "#!/usr/bin/env node\n");
+      const bin = join(root, "bin");
+      await mkdir(bin, { recursive: true });
+      const launcher = join(bin, PRODUCT_IDENTITY.cliBinary);
+      await symlink(script, launcher);
+      const { chmod } = await import("node:fs/promises");
+      await chmod(script, 0o755);
+      await chmod(launcher, 0o755);
+
+      expect(
+        classifyClientRegistrationCommand(["rea", "mcp"], script, {
+          environment: { PATH: bin },
+        }),
+      ).toBe("owned");
+
+      const fxClient = {
+        name: "fx",
+        registrationProfile: supportedClientRegistrationProfile("fx"),
+        format: "fx",
+        configPath: join(root, "fx.json"),
+      } as const;
+      expect(
+        clientRegistrationOwnership(
+          {
+            type: "local",
+            command: ["rea", "mcp"],
+            environment: { PATH: bin },
+          },
+          fxClient,
+          script,
+        ),
+      ).toBe("owned");
+    },
+  );
 });

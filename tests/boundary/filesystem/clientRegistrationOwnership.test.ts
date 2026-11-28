@@ -10,12 +10,19 @@ import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+const ownedLauncher = [
+  "npx",
+  "-y",
+  `${PRODUCT_IDENTITY.packageName}@6.6.0`,
+  "mcp",
+] as const;
+
 const codexSource = (invalid: string): string =>
   [
     'caller_root = "keep"',
     "[mcp_servers.rea]",
-    `command = "${PRODUCT_IDENTITY.cliBinary}"`,
-    'args = ["mcp"]',
+    `command = "${ownedLauncher[0]}"`,
+    `args = ${JSON.stringify(ownedLauncher.slice(1))}`,
     invalid,
     "[mcp_servers.peer]",
     'command = "peer"',
@@ -56,7 +63,7 @@ it.each([
         servers: {
           rea: {
             type: "local",
-            command: [PRODUCT_IDENTITY.cliBinary, "mcp"],
+            command: [...ownedLauncher],
             environment: { CALLER_SETTING: 42 },
           },
           peer: { type: "local", command: ["peer"] },
@@ -124,7 +131,7 @@ it("removes the owned OpenCode launcher despite invalid transport", async () => 
         rea: {
           type: "remote",
           url: "https://caller.example/mcp",
-          command: [PRODUCT_IDENTITY.cliBinary, "mcp"],
+          command: [...ownedLauncher],
         },
         peer: { type: "local", command: ["peer"] },
       },
