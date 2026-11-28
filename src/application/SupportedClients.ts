@@ -52,6 +52,7 @@ import {
   MCPORTER_URL_FIELDS,
   ampLocation,
   fxLocation,
+  kiroLocation,
   junieLocation,
   gooseLocation,
   gooseConfigPaths,
@@ -1067,8 +1068,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     },
     // The IDE, CLI and web clients share the user file.
     displayName: "Kiro",
-    configPath: [".kiro", "settings", "mcp.json"],
-    markerPath: [".kiro"],
+    location: kiroLocation,
     format: "json",
   }),
   defineClient({

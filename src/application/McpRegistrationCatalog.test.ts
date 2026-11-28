@@ -682,6 +682,146 @@ it.each([
 
 it.each([
   {
+    name: "unset",
+    env: {},
+    configPath: "/home/alice/.kiro/settings/mcp.json",
+    markerPath: "/home/alice/.kiro",
+  },
+  {
+    name: "absolute KIRO_HOME",
+    env: { KIRO_HOME: "/work/kiro-profile" },
+    configPath: "/work/kiro-profile/settings/mcp.json",
+    markerPath: "/work/kiro-profile",
+  },
+  {
+    name: "trailing slash",
+    env: { KIRO_HOME: "/work/kiro-profile/" },
+    configPath: "/work/kiro-profile/settings/mcp.json",
+    markerPath: "/work/kiro-profile",
+  },
+  {
+    name: "folder inside home",
+    env: { KIRO_HOME: "/home/alice/profile" },
+    configPath: "/home/alice/profile/settings/mcp.json",
+    markerPath: "/home/alice/profile",
+  },
+  {
+    name: "sibling sharing a name prefix",
+    env: { KIRO_HOME: "/home/al" },
+    configPath: "/home/al/settings/mcp.json",
+    markerPath: "/home/al",
+  },
+  {
+    name: "empty",
+    env: { KIRO_HOME: "" },
+    configPath: "/home/alice/.kiro/settings/mcp.json",
+    markerPath: "/home/alice/.kiro",
+  },
+  {
+    name: "relative",
+    env: { KIRO_HOME: "relative/kiro" },
+    configPath: "/home/alice/.kiro/settings/mcp.json",
+    markerPath: "/home/alice/.kiro",
+  },
+  {
+    name: "filesystem root",
+    env: { KIRO_HOME: "/" },
+    configPath: "/home/alice/.kiro/settings/mcp.json",
+    markerPath: "/home/alice/.kiro",
+  },
+  {
+    name: "home folder",
+    env: { KIRO_HOME: "/home/alice" },
+    configPath: "/home/alice/.kiro/settings/mcp.json",
+    markerPath: "/home/alice/.kiro",
+  },
+  {
+    name: "ancestor of home",
+    env: { KIRO_HOME: "/home" },
+    configPath: "/home/alice/.kiro/settings/mcp.json",
+    markerPath: "/home/alice/.kiro",
+  },
+  {
+    name: "home alias through ..",
+    env: { KIRO_HOME: "/home/alice/profile/.." },
+    configPath: "/home/alice/.kiro/settings/mcp.json",
+    markerPath: "/home/alice/.kiro",
+  },
+])(
+  "resolves the Kiro root Kiro reads ($name)",
+  ({ env, configPath, markerPath }) => {
+    const [client] = supportedClients("/home/alice", "linux", env, {}, "kiro");
+    expect(client).toMatchObject({ name: "kiro", configPath, markerPath });
+    expect(client?.configPathError).toBeUndefined();
+  },
+);
+
+it.each([
+  {
+    name: "absolute KIRO_HOME",
+    env: { KIRO_HOME: "C:\\work\\kiro" },
+    configPath: "C:\\work\\kiro\\settings\\mcp.json",
+    markerPath: "C:\\work\\kiro",
+  },
+  {
+    name: "forward slashes",
+    env: { KIRO_HOME: "C:/work/kiro/" },
+    configPath: "C:\\work\\kiro\\settings\\mcp.json",
+    markerPath: "C:\\work\\kiro",
+  },
+  {
+    name: "another drive",
+    env: { KIRO_HOME: "D:\\kiro" },
+    configPath: "D:\\kiro\\settings\\mcp.json",
+    markerPath: "D:\\kiro",
+  },
+  {
+    name: "drive root",
+    env: { KIRO_HOME: "C:\\" },
+    configPath: "C:\\Users\\alice\\.kiro\\settings\\mcp.json",
+    markerPath: "C:\\Users\\alice\\.kiro",
+  },
+  {
+    name: "home folder in another case",
+    env: { KIRO_HOME: "c:\\users\\ALICE" },
+    configPath: "C:\\Users\\alice\\.kiro\\settings\\mcp.json",
+    markerPath: "C:\\Users\\alice\\.kiro",
+  },
+  {
+    name: "ancestor of home",
+    env: { KIRO_HOME: "C:\\Users" },
+    configPath: "C:\\Users\\alice\\.kiro\\settings\\mcp.json",
+    markerPath: "C:\\Users\\alice\\.kiro",
+  },
+  {
+    name: "drive-less rooted path",
+    env: { KIRO_HOME: "\\kiro" },
+    configPath: "C:\\Users\\alice\\.kiro\\settings\\mcp.json",
+    markerPath: "C:\\Users\\alice\\.kiro",
+  },
+  {
+    name: "drive-relative path",
+    env: { KIRO_HOME: "C:kiro" },
+    configPath: "C:\\Users\\alice\\.kiro\\settings\\mcp.json",
+    markerPath: "C:\\Users\\alice\\.kiro",
+  },
+])(
+  "resolves the Windows Kiro root Kiro reads ($name)",
+  ({ env, configPath, markerPath }) => {
+    const [client] = supportedClients(
+      "C:\\Users\\alice",
+      "win32",
+      env,
+      {},
+      "kiro",
+    );
+    expect(client).toMatchObject({ name: "kiro", configPath, markerPath });
+    expect(client?.configPathError).toBeUndefined();
+  },
+);
+
+it.each([
+  {
     name: "legacy default",
     env: {},
     existing: [],
