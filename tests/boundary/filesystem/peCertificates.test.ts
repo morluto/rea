@@ -35,7 +35,7 @@ describe("PE certificate stable filesystem boundary", () => {
     const result = await createPeCertificatesService().inspect({ path });
     if (result.ok) throw new Error("Expected malformed target refusal");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
       operation: "inspect_pe_certificates",
       path,
       failure: { kind: "malformed", format: "pe-certificate-table" },

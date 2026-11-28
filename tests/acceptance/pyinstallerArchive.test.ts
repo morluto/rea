@@ -1,3 +1,4 @@
+import { int32LE as int32 } from "../../src/native/BinaryInteger.fixture.js";
 import { createHash } from "node:crypto";
 import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -91,12 +92,6 @@ const onefile = async (
     }),
   );
   return path;
-};
-
-const int32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeInt32LE(value);
-  return bytes;
 };
 
 const marshalInt = (value: number): Buffer =>
@@ -255,9 +250,14 @@ cliTest(
       scope: "container-entries",
       status: "complete",
     });
-    expect(extracted.limitations).toContainEqual(
+    // The reconstructed header belongs to the file it describes.
+    expect(
+      extracted.artifacts.find(
+        ({ relative_path }) => relative_path === "PYZ.pyz/app.pyc",
+      )?.limitations,
+    ).toContainEqual(
       expect.stringMatching(
-        /^PYZ\.pyz\/app\.pyc:.*header.*reconstructed.*archive.*magic.*digest.*derived file/iu,
+        /header.*reconstructed.*archive.*magic.*digest.*derived file/iu,
       ),
     );
     const expected = new Map([
@@ -707,7 +707,7 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      code: "truncated",
+      code: "partial",
       details: {
         reason: "limit",
         detail: expect.stringContaining(

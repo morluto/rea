@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { uniqueSorted } from "./canonicalOrdering.js";
+import { firstDuplicateIndex, uniqueSorted } from "./canonicalOrdering.js";
 import {
   compositeKey,
   compareUnicodeCodePoints,
@@ -429,16 +429,6 @@ const compareFindings = (left: Finding, right: Finding): number =>
     compositeKey([left.scope, left.dimension, left.source_comparison_id]),
     compositeKey([right.scope, right.dimension, right.source_comparison_id]),
   );
-
-const firstDuplicateIndex = (values: readonly string[]): number | undefined => {
-  const seen = new Set<string>();
-  const index = values.findIndex((value) => {
-    if (seen.has(value)) return true;
-    seen.add(value);
-    return false;
-  });
-  return index < 0 ? undefined : index;
-};
 
 const OPERATION = "find_changed_behavior";
 

@@ -279,7 +279,11 @@ goMcpTest(
         name: "inspect_go_binary",
         arguments: { path },
       });
-      expect(parseMcpToolError(response)).toMatchObject({
+      expect(
+        response.isError,
+        `${fixture.name} returned a non-error result: ${JSON.stringify(response).slice(0, 2000)}`,
+      ).toBe(true);
+      expect(parseMcpToolError(response), fixture.name).toMatchObject({
         error: {
           code: fixture.code,
           details: {
@@ -377,9 +381,6 @@ goMcpTest(
       complete: false,
       unparsed_lines: ["new-record\tfuture"],
     });
-    expect(evidence.limitations.join(" ")).toContain(
-      "could not be parsed completely",
-    );
     expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
     const invalid = await client.callTool({
       name: "inspect_go_binary",

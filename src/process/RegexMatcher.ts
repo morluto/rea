@@ -938,6 +938,7 @@ const acquireRegexWorker = async (
   heapMiB: number,
   signal: AbortSignal | undefined,
 ): Promise<PooledRegexWorker | undefined> => {
+  if (signal?.aborted) return undefined;
   const idle = regexWorkerPool.find(
     (entry) => isIdleRegexWorker(entry) && entry.heapMiB === heapMiB,
   );
@@ -1109,7 +1110,11 @@ export const matchRegexValues = async (input: {
         Math.max(0, deadline.deadlineMs - (performance.now() - startedAt)),
       );
       input.signal?.addEventListener("abort", onAbort, { once: true });
-      if (input.signal?.aborted) onAbort();
+      if (input.signal?.aborted) {
+        reusable = true;
+        onAbort();
+        return;
+      }
       pooled.onMessage = (message: unknown) => {
         const reply = parseWorkerReply(message, input.values.length);
         switch (reply.kind) {
@@ -1221,7 +1226,9 @@ export const matchRegexValues = async (input: {
   }
   clearRegexWorkerHandlers(pooled);
   const stopFailure = await ensureRegexWorkerStopped(input.operation, pooled);
-  if (stopFailure !== undefined && !outcome.ok)
-    outcome.error.retainSecondaryFailure(stopFailure);
+  if (stopFailure !== undefined) {
+    if (!outcome.ok) outcome.error.retainSecondaryFailure(stopFailure);
+    else outcome = err(stopFailure);
+  }
   return outcome;
 };

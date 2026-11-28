@@ -128,13 +128,15 @@ export const readMarshalSubset = (
     if (cause instanceof PyzMarshalLimit)
       return err(pyInstallerFailure("limit", cause.message));
     if (cause instanceof MarshalDefectError)
-      return err(pyInstallerFailure("format", FORMAT_MESSAGES[cause.defect]));
+      return err(
+        pyInstallerFailure("malformed", FORMAT_MESSAGES[cause.defect]),
+      );
     throw cause;
   }
   if (reader.offset !== bytes.length)
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "PYZ marshal value did not consume its table of contents",
       ),
     );

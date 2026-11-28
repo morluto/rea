@@ -8,6 +8,7 @@ import { CdpConnection } from "../../dist/browser/CdpConnection.js";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { artifactCliEvidence } from "./artifact-e2e.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 /** Verify real V8 source labels, which retain spelling that navigation normalizes. */
 export async function verifyBrowserUrlUserInfo(endpoint, origin) {
@@ -96,7 +97,9 @@ export async function verifyBrowserUrlUserInfo(endpoint, origin) {
       env: { ...process.env, REA_LOG_LEVEL: "silent" },
       stderr: "pipe",
     });
-    client = new Client({ name: "browser-url-userinfo-e2e", version: "1" });
+    client = completeEvidenceClient(
+      new Client({ name: "browser-url-userinfo-e2e", version: "1" }),
+    );
     await client.connect(transport);
     const mcp = await client.callTool({
       name: "inspect_web_page",
@@ -106,7 +109,6 @@ export async function verifyBrowserUrlUserInfo(endpoint, origin) {
         target_id: target.id,
         include_script_sources: true,
         observation_ms: 0,
-        detail: "complete",
       },
     });
     assert.notEqual(mcp.isError, true, JSON.stringify(mcp));

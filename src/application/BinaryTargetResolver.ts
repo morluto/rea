@@ -1,8 +1,5 @@
 import { probeUefiFlashImage } from "../uefi/UefiFormatProbe.js";
-import {
-  BINARY_TARGET_FORMAT_KINDS,
-  type TargetFormatHint,
-} from "../domain/targetFormats.js";
+import { BINARY_TARGET_FORMAT_KINDS } from "../domain/targetFormats.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   artifactNameForClassification,
@@ -34,7 +31,7 @@ import {
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
-import { constants, type Stats } from "node:fs";
+import { constants } from "node:fs";
 import { access, realpath, stat, type FileHandle } from "node:fs/promises";
 import { extname } from "node:path";
 
@@ -86,6 +83,7 @@ import {
 } from "../domain/apple/appleArchiveFormat.js";
 import { hasDiskImageSignature } from "../domain/apple/diskImageFormat.js";
 import { recognizeArtifactFormat } from "../domain/artifactFormatRecognition.js";
+import { gzipTarExtraFieldProbeBytes } from "../domain/tarFormat.js";
 import {
   ISO9660_DESCRIPTOR_OFFSET,
   ISO9660_SIGNATURE_BYTES,
@@ -96,6 +94,7 @@ import {
   type EspFlashSelection,
 } from "../domain/firmware/espFlashLocation.js";
 import { espFlashSelectionError } from "../domain/firmware/espFlashSelection.js";
+import { zipDeclaresAndroidPackage } from "../domain/zip/androidPackageDirectory.js";
 import {
   hasTrailingZipArchive,
   zipRootPackageFormat,
@@ -104,7 +103,6 @@ import {
 import { claimsExecutableHeader } from "../domain/binaryTarget.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { localPathStringSchema } from "../domain/localPath.js";
-import type { JsonValue } from "../domain/jsonValue.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const XML_PLIST_PROBE_CHUNK_BYTES = 64 * 1024;
@@ -543,12 +541,18 @@ const readOpenedBinaryTarget = async (
       (await hasTrailingZipArchive(metadata.size, (position, length) =>
         readHandleRange(handle, position, length, signal),
       ))
-    )
+    ) {
+      const format = await zipRootFormatByContent(
+        classificationPath,
+        metadata.size,
+        (position, length) => readHandleRange(handle, position, length, signal),
+      );
       return ok({
         ...(await artifactIdentity()),
         kind: "archive",
-        format: zipRootPackageFormat(classificationPath),
+        format,
       });
+    }
     const reason =
       typeof detected.error === "string"
         ? detected.error
@@ -705,6 +709,21 @@ const detectDatabaseEngine = async (
   return path.toLowerCase().endsWith(".hop") ? "hopper" : null;
 };
 
+/**
+ * Named ZIP suffixes win. A generic ZIP root is an APK when its central
+ * directory lists a root Android package entry. An `.aab` stays a ZIP:
+ * an Android App Bundle is not a standalone APK.
+ */
+const zipRootFormatByContent = async (
+  path: string,
+  size: number,
+  read: (position: number, length: number) => Promise<Uint8Array>,
+) => {
+  const named = zipRootPackageFormat(path);
+  if (named !== "zip" || path.toLowerCase().endsWith(".aab")) return named;
+  return (await zipDeclaresAndroidPackage(size, read)) === true ? "apk" : named;
+};
+
 const detectArtifactFormat = async (
   path: string,
   source: StableRegularFileDescriptor,
@@ -762,6 +781,17 @@ const detectArtifactFormat = async (
     initial.size,
     () => throwIfTargetResolutionCancelled(signal),
   );
+  const gzipProbeBytes = Math.min(
+    initial.size,
+    gzipTarExtraFieldProbeBytes(magic),
+  );
+  const recognitionPrefix =
+    gzipProbeBytes > magic.length
+      ? Buffer.concat([
+          magic,
+          await readCachedRange(magic.length, gzipProbeBytes - magic.length),
+        ])
+      : magic;
   // The shared recognizer table decides; this route reads the trailer or
   // locates an ESP flash layout only when a recognizer asks for it, and
   // refuses a file whose header names a format it cannot open.
@@ -769,7 +799,7 @@ const detectArtifactFormat = async (
   let espFlashLayout: boolean | undefined;
   let iso9660Descriptor: Uint8Array | undefined;
   const recognitionInput = () => ({
-    prefix: magic,
+    prefix: recognitionPrefix,
     fileSize: initial.size,
     suffix,
     espFlashLayout,
@@ -780,7 +810,9 @@ const detectArtifactFormat = async (
     throwIfTargetResolutionCancelled(signal);
     if (recognition.state === "recognized")
       return recognition.format === "zip"
-        ? zipRootPackageFormat(lower)
+        ? zipRootFormatByContent(lower, initial.size, (position, length) =>
+            readHandleRange(handle, position, length, signal),
+          )
         : recognition.format;
     if (recognition.state === "refused")
       throw new BinaryTargetError(path, recognition.reason, {

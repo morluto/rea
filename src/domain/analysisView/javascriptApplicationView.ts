@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { isJavaScriptModuleUnit } from "../javascript/javascriptModuleUnits.js";
 import {
@@ -112,19 +113,13 @@ const buildModuleIndex = (nodes: readonly ApplicationNode[]): ModuleIndex => {
       byNodeId.has(entry.node.node_id) ? null : entry,
     );
     if (entry.paths.length === 0) {
-      const existing = nodesByPath.get(null);
-      if (existing === undefined) nodesByPath.set(null, [entry]);
-      else existing.push(entry);
+      appendToMapList(nodesByPath, null, entry);
     } else {
       for (const path of entry.paths) {
-        const existing = nodesByPath.get(path);
-        if (existing === undefined) nodesByPath.set(path, [entry]);
-        else existing.push(entry);
+        appendToMapList(nodesByPath, path, entry);
       }
     }
-    const kindList = nodesByKind.get(entry.node.kind);
-    if (kindList === undefined) nodesByKind.set(entry.node.kind, [entry]);
-    else kindList.push(entry);
+    appendToMapList(nodesByKind, entry.node.kind, entry);
   }
   return { moduleEntries: entries, byNodeId, nodesByPath, nodesByKind };
 };
@@ -383,14 +378,10 @@ const selectModule = (
         ? index.byNodeId.get(selector.node_id)
         : findSingleNodeById(analysis.graph.nodes, selector.node_id);
     if (selected !== undefined && selected !== null) return ok(selected);
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "selector", "node_id"],
-          reason: "invalid_value",
-          message: `No module has node_id ${JSON.stringify(selector.node_id)}. Page the modules collection to inspect available identities.`,
-        },
-      ]),
+    return invalidAnalysisView(
+      `No module has node_id ${JSON.stringify(selector.node_id)}. Page the modules collection to inspect available identities.`,
+      "selector",
+      "node_id",
     );
   }
   if ("path" in selector) {
@@ -408,14 +399,10 @@ const selectModule = (
         return ok({ ...selected, path: selector.path });
     }
     if (matches.length === 0)
-      return err(
-        analysisViewInputError([
-          {
-            path: ["view", "selector", "path"],
-            reason: "invalid_value",
-            message: `No module has path ${JSON.stringify(selector.path)}. Page the modules collection to inspect exact paths and node_id values.`,
-          },
-        ]),
+      return invalidAnalysisView(
+        `No module has path ${JSON.stringify(selector.path)}. Page the modules collection to inspect exact paths and node_id values.`,
+        "selector",
+        "path",
       );
     return err(
       analysisViewInputError([

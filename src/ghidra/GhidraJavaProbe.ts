@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../kernel/reportedSystemCode.js";
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { launcherFailureOf } from "../process/launchFailure.js";
@@ -27,7 +28,7 @@ import {
 } from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
-import { constants, accessSync, statSync } from "node:fs";
+import { isExecutableFileSync } from "../filesystem/regularFileProbe.js";
 import { posix, win32 } from "node:path";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
@@ -116,14 +117,6 @@ const capturedProbeOutput = (
   };
 };
 
-const executablePath = (path: string): boolean => {
-  try {
-    accessSync(path, constants.X_OK);
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-};
 export interface GhidraJavaProbeOptions {
   readonly resourceOwner: RetainedResourceScope;
   readonly signal?: AbortSignal;
@@ -307,7 +300,7 @@ const observeGhidraJava = async (
           ? "ETIMEDOUT"
           : commandFailure?.reason === "output-limit"
             ? "ENOBUFS"
-            : systemCode(commandFailure?.processError ?? cause);
+            : systemCodeFromError(commandFailure?.processError ?? cause);
       const failed: GhidraJavaProbeFailure = {
         _tag: "GhidraJavaProbeFailure",
         code:
@@ -341,10 +334,6 @@ const observeGhidraJava = async (
   }
 };
 
-const systemCode = (cause: unknown): string | undefined =>
-  cause instanceof Error && "code" in cause && typeof cause.code === "string"
-    ? cause.code
-    : undefined;
 const probeFailureError = (
   failure: GhidraJavaProbeFailure,
   cause: unknown,
@@ -407,7 +396,7 @@ export const parseGhidraJavaOutput = (
     ...(reportedBits === null || bits !== null
       ? {}
       : { unparsedBits: reportedBits }),
-    runtime: executablePath(
+    runtime: isExecutableFileSync(
       (HOST_PLATFORM.platform === "win32" ? win32 : posix).join(
         home,
         "bin",

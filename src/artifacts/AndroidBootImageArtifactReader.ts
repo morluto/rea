@@ -62,6 +62,7 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
   ): Promise<PositionalArtifactEntries<AndroidBootImageMetadata>> {
     const { handle, initial } = await this.verifyCarrier(signal);
     const headerBytes = await readArtifactFileBytes(
+      "android-boot-image",
       handle,
       0,
       Math.min(initial.size, ANDROID_BOOT_HEADER_PROBE_BYTES),
@@ -102,12 +103,17 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
         throw formatFailure(`duplicate component path ${plan.path}`);
       entries.set(entry.adapterKey, entry);
     }
-    const degraded = tableResult.degraded || footerResult.degraded;
+    // Unexposed layout bytes leave coverage unknown, as unparsed metadata does.
+    const unknownCoverage =
+      tableResult.degraded ||
+      footerResult.degraded ||
+      header.unexposedLayoutBytes ||
+      tableResult.table?.unexposedSectionBytes === true;
     return {
       entries: [...entries.values()],
       formatMetadata: toMetadata(header, footerResult.avb, plans.length),
       coverage: {
-        status: degraded ? "unknown" : "complete",
+        status: unknownCoverage ? "unknown" : "complete",
         limitations: [
           ...header.limitations,
           ...(tableResult.table?.limitations ?? []),
@@ -140,6 +146,7 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
       throw formatFailure("vendor ramdisk table is missing its section");
     this.assertOpen(signal);
     const bytes = await readArtifactFileBytes(
+      "android-boot-image",
       handle,
       range.offset,
       range.size,
@@ -183,6 +190,7 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
     const tail =
       offset !== null
         ? await readArtifactFileBytes(
+            "android-boot-image",
             handle,
             offset,
             AVB_FOOTER_SIZE,
@@ -233,6 +241,7 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
     for (const plan of plans) {
       this.assertOpen(signal);
       const prefix = await readArtifactFileBytes(
+        "android-boot-image",
         handle,
         plan.offset,
         Math.min(4, plan.size),

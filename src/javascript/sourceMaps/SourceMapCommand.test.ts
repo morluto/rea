@@ -8,6 +8,7 @@ import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import {
   createSystemProcessOwnershipHost,
@@ -320,6 +321,68 @@ it("retains a physical process admission error alongside cancellation", async ()
     AnalysisCancelledError,
   );
   expect(result.error.secondaryFailures[0]?.cause).toBe(reason);
+});
+
+it("reports details.limit and adjustable_budget refusal when the codec reaches codec_heap_mib", async () => {
+  const result = await runSourceMapCommand(
+    "{}",
+    "/probe/source.map",
+    undefined,
+    {
+      prepareOwnership: async () => {},
+      launcher: async (options) => {
+        const spawned = await spawnOwnedProviderProcess({
+          ...options,
+          arguments: [
+            "-e",
+            'process.stderr.write("memory limit reached", () => process.exit(3))',
+          ],
+        });
+        Object.defineProperty(spawned.process, "memoryLimitReached", {
+          get: () => spawned.process.exitCode !== null,
+        });
+        return spawned;
+      },
+    },
+    unexpectedCleanup,
+  );
+  if (result.ok) throw new Error("expected memory-limit refusal");
+  if (!(result.error instanceof AnalysisResourceConstraintError))
+    throw new Error("expected AnalysisResourceConstraintError");
+  expect(result.error.remediationAction).toBeUndefined();
+  expect(result.error).toMatchObject({
+    resource: "memory",
+    limit: {
+      control_kind: "parameter",
+      parameter: "source_map_limits.codec_heap_mib",
+      effective_value: 192,
+      unit: "MiB",
+      minimum: 128,
+      maximum: 16384,
+      default_value: 192,
+      applies_at: "next_call",
+    },
+  });
+  const projected = projectAnalysisError(result.error);
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      limit: result.error.limit,
+      refusal: {
+        kind: "adjustable_budget",
+        operation: "trace_web_source_location",
+        control: "source_map_limits.codec_heap_mib",
+        effective_value: 192,
+        unit: "MiB",
+        range: { minimum: 128, maximum: 16384 },
+        default_value: 192,
+      },
+    },
+  });
+  expect(projected.remediation?.action).toContain(
+    "source_map_limits.codec_heap_mib",
+  );
+  expect(projected.remediation?.action).toContain("128..16384 MiB");
 });
 
 it.each([

@@ -1,7 +1,6 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RuleTester } from "oxlint/plugins-dev";
-import { describe, it } from "vitest";
+import { createRuleTester } from "../support/createRuleTester.js";
 
 import rule from "../../scripts/lint/rules/no-evidence-json-preadmission.mjs";
 
@@ -29,9 +28,7 @@ const invalid = (name: string, code: string, field: string) => ({
   output: null,
 });
 
-RuleTester.describe = describe;
-RuleTester.it = it;
-new RuleTester({
+createRuleTester({
   languageOptions: { sourceType: "module", parserOptions: { lang: "ts" } },
 }).run("no-evidence-json-preadmission", rule, {
   valid: [

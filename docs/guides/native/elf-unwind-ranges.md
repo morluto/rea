@@ -20,7 +20,8 @@ requires an absolute filesystem path and preserves that exact selection:
 ```
 
 Pass `--offset` and `--limit` (MCP `offset` and `limit`) to page the ranges.
-The default page starts at 0 and returns at most 256 ranges.
+The default page starts at 0 and returns at most 64 ranges, as
+`inspect_pe_unwind_ranges` does.
 
 ## Observations
 

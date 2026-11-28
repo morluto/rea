@@ -1,6 +1,7 @@
 import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { buffer } from "node:stream/consumers";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -365,6 +366,49 @@ describe("ESP flash layout coverage and selection", () => {
     expect(nvs?.source_location).toEqual({ offset: 0x8000, length: 0x4000 });
   });
 
+  it("marks coverage unknown when a caller-selected table precedes the located bootloader", async () => {
+    const esp32 = espImage({
+      segments: ESP32C3_BOOTLOADER_SEGMENTS,
+      chipId: 0x0000,
+    });
+    // Cover the bootloader bytes with a declared partition so no undescribed gap
+    // masks the omitted bootloader region's effect on coverage.
+    const dump = espFlashDump({
+      size: 0x1_0000,
+      bootloader: { at: 0x1000, bytes: esp32 },
+      tableAt: 0x0,
+      table: partitionTable([
+        {
+          label: "data",
+          type: 0x01,
+          subtype: 0x82,
+          offset: 0x1000,
+          size: 0x3000,
+        },
+      ]),
+    });
+    const snapshot = await scanCanonicalArtifactInventory(
+      await writeDump(dump),
+      { espFlashSelection: { partitionTableOffset: 0x0 } },
+    );
+    expect(snapshot.coverage).toEqual({
+      scope: "container-entries",
+      status: "unknown",
+    });
+    expect(
+      snapshot.occurrences.map(({ logical_path }) => logical_path),
+    ).toEqual([".", "partition-table.bin", "partitions/data.bin"]);
+    expect(root(snapshot)).toMatchObject({
+      chip: { target: "esp32" },
+      bootloader: null,
+      partition_table: { flash_address: 0x0, method: "caller" },
+      undescribed: [],
+    });
+    expect(snapshot.limitations).toContain(
+      "The partition table at 0x0 does not follow the bootloader at 0x1000; the bootloader region is not described.",
+    );
+  });
+
   it("refuses a selected dump without a readable table as not recognized", async () => {
     const reader = new EspFlashImageArtifactReader(
       await writeDump(pattern(0x2_0000, 7)),
@@ -432,10 +476,7 @@ describe("ESP flash layout reader identity", () => {
       );
       if (entry === undefined) throw new Error("Missing entry");
       expect(entry).toMatchObject({ byteOffset: cut.length, declaredSize: 0 });
-      const chunks: Buffer[] = [];
-      for await (const chunk of await reader.open(entry))
-        chunks.push(chunk as Buffer);
-      expect(Buffer.concat(chunks)).toHaveLength(0);
+      expect(await buffer(await reader.open(entry))).toHaveLength(0);
     } finally {
       await reader.close();
     }

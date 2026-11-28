@@ -1,7 +1,8 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
 import {
   isStandaloneArtifactFormat,
-  recognizeArtifactFormat,
+  recognizeBoundedArtifactFormat,
 } from "../../domain/artifactFormatRecognition.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import {
@@ -74,10 +75,7 @@ export const indexDestinationOccurrencesByPath = (
   const byPath = new Map<string, MutableOccurrence[]>();
   for (const occurrence of occurrences) {
     if (!hasDestinationPath(occurrence.entry_kind)) continue;
-    const matches = byPath.get(occurrence.logical_path);
-    if (matches === undefined)
-      byPath.set(occurrence.logical_path, [occurrence]);
-    else matches.push(occurrence);
+    appendToMapList(byPath, occurrence.logical_path, occurrence);
   }
   return byPath;
 };
@@ -193,10 +191,11 @@ export const materializeDirectoryNodes = (
   const childrenByParent = new Map<string, MutableOccurrence[]>();
   for (const occurrence of occurrences) {
     if (occurrence.parent_occurrence_id === null) continue;
-    const children = childrenByParent.get(occurrence.parent_occurrence_id);
-    if (children === undefined)
-      childrenByParent.set(occurrence.parent_occurrence_id, [occurrence]);
-    else children.push(occurrence);
+    appendToMapList(
+      childrenByParent,
+      occurrence.parent_occurrence_id,
+      occurrence,
+    );
   }
   for (const directory of directories) {
     const children = (childrenByParent.get(directory.occurrence_id) ?? [])
@@ -612,8 +611,9 @@ const artifactRoleForFormat = (
   if (format === "uefi" || isStandaloneArtifactFormat(format))
     return { kind: "resource", format };
   if (format === "plist") return { kind: "plist", format };
-  if (artifactFormatDescriptor(format)?.roleContainer === true)
-    return { kind: "container", format };
+  const descriptor = artifactFormatDescriptor(format);
+  if (descriptor?.roleContainer === true) return { kind: "container", format };
+  if (descriptor?.role !== undefined) return { kind: descriptor.role, format };
   return {
     kind: ["native-addon", "dynamic-library"].includes(byPath.kind)
       ? byPath.kind
@@ -649,24 +649,18 @@ export const classifyArtifactHeader = (
     format,
     architecture: null,
   });
-  // A refused claim falls through: a header-only iNES region, for example,
-  // has the signature but not the declared cartridge extent, so it stays a
-  // file instead of becoming another container. A claim that needs more
-  // bytes falls through too: the scan holds a bounded prefix, the trailer and
-  // the ISO 9660 descriptor signature, so it cannot locate an ESP flash
-  // partition table, and a flash dump is classified by its first image.
-  const input = { prefix, fileSize, suffix, iso9660Descriptor };
-  for (
-    let recognition = recognizeArtifactFormat(input);
-    recognition !== undefined;
-    recognition = recognizeArtifactFormat(input, recognition.index + 1)
-  )
-    if (
-      recognition.state === "recognized" &&
-      recognition.format !== "esp-flash-image"
-    )
-      return only(recognition.format);
-  if (evidence.xmlPlistSignature) return only("plist");
+  // A refused or incomplete claim stays a file instead of another container.
+  // The scan holds a bounded prefix, the trailer and the ISO 9660 descriptor
+  // signature, so it cannot locate an ESP flash partition table, and a flash
+  // dump is classified by its first image.
+  const recognized = recognizeBoundedArtifactFormat({
+    prefix,
+    fileSize,
+    suffix,
+    iso9660Descriptor,
+    xmlPlistSignature: evidence.xmlPlistSignature,
+  });
+  if (recognized !== undefined) return only(recognized);
   const fatFormat = classifyFatArtifact(evidence);
   if (fatFormat !== null) return only(fatFormat);
   // Admit ELF and thin Mach-O as target resolution does: a magic number

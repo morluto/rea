@@ -344,7 +344,7 @@ it.each([
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Mismatched FAT slice was admitted");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
       failure: {
         detail: expect.stringContaining(
           "Selected lipo slice does not identify exactly one FAT entry",

@@ -2,22 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
-import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
-import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import {
   buildManagedMemberPointerFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
-
-const metadataLayout = (bytes: Buffer) => {
-  const pe = readManagedPeLayout(bytes);
-  if (pe.cli === null) throw new Error("Fixture omitted CLI metadata");
-  return readManagedMetadataLayout(
-    bytes,
-    pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "cli.metadata"),
-    pe.cli.metadata.size,
-  );
-};
+import { readManagedFixtureMetadataLayout } from "./ManagedPeMetadata.fixture.js";
 
 describe("managed member pointer ownership", () => {
   it.each([
@@ -86,7 +75,7 @@ describe("invalid managed member pointers", () => {
         "preserves member facts and independent ownership for $label",
         ({ rows, owners }) => {
           const bytes = buildManagedMemberPointerFixture({ [pointers]: rows });
-          const layout = metadataLayout(bytes);
+          const layout = readManagedFixtureMetadataLayout(bytes);
           const pointerTable = layout.table(table === "fields" ? 3 : 5);
           if (pointerTable === undefined)
             throw new Error("Fixture omitted pointer table");
@@ -184,7 +173,7 @@ describe("managed constructor ownership and pointer stream extent", () => {
     { name: "MethodPtr", table: 5 },
   ])("rejects a table stream ending inside a $name row", ({ table }) => {
     const bytes = buildManagedMemberPointerFixture();
-    const layout = metadataLayout(bytes);
+    const layout = readManagedFixtureMetadataLayout(bytes);
     const pointers = layout.table(table);
     if (pointers === undefined)
       throw new Error("Fixture omitted pointer table");

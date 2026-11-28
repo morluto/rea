@@ -65,6 +65,8 @@ import {
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
+  DEFAULT_NATIVE_STRUCTURE_BYTES,
+  nativeStructureFailure,
   BinaryReader,
 } from "../../domain/binaryContainer.js";
 import {
@@ -139,8 +141,8 @@ const budgetFailure = (count: number, label: string): BinaryResourceFailure =>
   new BinaryResourceFailure(
     "structure",
     MAX_BINARY_HARDENING_TABLE_ENTRIES,
-    `${label} has ${String(count)} entries, above the ${String(MAX_BINARY_HARDENING_TABLE_ENTRIES)}-entry structural budget. This release has no runtime override.`,
-    "structure",
+    `${label} has ${String(count)} entries, above the ${String(MAX_BINARY_HARDENING_TABLE_ENTRIES)}-entry table allowance. This release has no runtime override.`,
+    "hardening-table-entries",
     "entries",
   );
 
@@ -210,11 +212,19 @@ function* readSlice(
 export const readElfHardening = (
   bytes: Buffer,
   signal?: AbortSignal,
+  structureBytes?: number,
 ): BinaryHardeningImage => {
   assertArtifactReadActive(signal);
-  const directory = readElfDirectoryFromBuffer(bytes, OPERATION);
+  const directory = readElfDirectoryFromBuffer(bytes, OPERATION, {
+    structureBytes,
+  });
   assertElfDeclaredRangesFromBuffer(bytes);
-  const steps = elfHardeningSteps(bytes.length, directory, signal);
+  const steps = elfHardeningSteps(
+    bytes.length,
+    directory,
+    signal,
+    structureBytes ?? DEFAULT_NATIVE_STRUCTURE_BYTES,
+  );
   let next = steps.next();
   while (!next.done) {
     const step = next.value;
@@ -228,12 +238,14 @@ export const readElfHardening = (
 export const readElfHardeningFromHandle = async (
   source: ByteSource,
   signal?: AbortSignal,
+  structureBytes?: number,
 ): Promise<BinaryHardeningImage> => {
   assertArtifactReadActive(signal);
   const directory = await readElfDirectoryFromReader(
     source,
     () => yieldArtifactRead(signal),
     OPERATION,
+    { structureBytes },
   );
   assertArtifactReadActive(signal);
   await assertElfDeclaredRangesFromReader(source);
@@ -242,7 +254,12 @@ export const readElfHardeningFromHandle = async (
     source.prefix !== undefined && offset + length <= source.prefix.length
       ? Promise.resolve(source.prefix.subarray(offset, offset + length))
       : source.readRange(offset, length);
-  const steps = elfHardeningSteps(source.size, directory, signal);
+  const steps = elfHardeningSteps(
+    source.size,
+    directory,
+    signal,
+    structureBytes ?? DEFAULT_NATIVE_STRUCTURE_BYTES,
+  );
   let next = steps.next();
   while (!next.done) {
     assertArtifactReadActive(signal);
@@ -255,7 +272,8 @@ export const readElfHardeningFromHandle = async (
 function* elfHardeningSteps(
   fileSize: number,
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  structureBytes: number,
 ): Generator<HardeningStep, BinaryHardeningImage, HardeningStepResult> {
   const { bits, little, machine, programs, sections } = directory;
   const headerWidth = bits === 64 ? 56 : 32;
@@ -294,7 +312,14 @@ function* elfHardeningSteps(
   const dynamic =
     dynamicPrograms[0] === undefined
       ? null
-      : yield* readDynamic(fileSize, dynamicPrograms[0], bits, little, mapVa);
+      : yield* readDynamic(
+          fileSize,
+          dynamicPrograms[0],
+          bits,
+          little,
+          mapVa,
+          structureBytes,
+        );
   let symbols: SymbolScan;
   try {
     symbols = yield* readSymbols(
@@ -509,12 +534,16 @@ function* readDynamic(
   bits: 32 | 64,
   little: boolean,
   mapVa: MapVa,
+  structureBytes: number,
 ): Generator<HardeningStep, DynamicTable, HardeningStepResult> {
   const offset = exact(program.offset, "PT_DYNAMIC offset");
   const size = exact(program.size, "PT_DYNAMIC size");
   const { width, trailingBytes } = elfDynamicTableGeometry(size, bits);
   if (trailingBytes !== 0)
     malformed("ELF PT_DYNAMIC size is not a whole number of entries");
+  // A malformed table is refused as malformed; only whole rows meet the budget.
+  if (size > structureBytes)
+    throw nativeStructureFailure("The ELF dynamic table", size, structureBytes);
   const count = size / width;
   budget(count, "ELF dynamic table");
   const entries = new Map<bigint, DynamicEntry>();

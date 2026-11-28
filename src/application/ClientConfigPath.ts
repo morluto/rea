@@ -31,7 +31,7 @@ export const resolveClientConfigTransactionPath = async (
   try {
     requestedStats = await fileSystem.lstat(requestedPath);
   } catch (cause: unknown) {
-    if (!isMissing(cause)) return undefined;
+    if (!isEnoentError(cause)) return undefined;
   }
   if (requestedStats?.isSymbolicLink() === true)
     return resolveOwnedConfigSymlink(requestedPath, requestedStats, fileSystem);
@@ -97,7 +97,8 @@ const canonicalRegularConfigPath = async (
   }
 };
 
-const isMissing = (cause: unknown): boolean =>
+/** Only ENOENT means a missing entry can qualify for first-run configuration. */
+export const isEnoentError = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 
 /** A candidate cannot exist when the entry is missing or an ancestor is a file. */

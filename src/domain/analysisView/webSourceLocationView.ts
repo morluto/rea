@@ -20,10 +20,7 @@ import {
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import {
-  analysisViewInputError,
-  invalidAnalysisView,
-} from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   pageViewCoverage,
@@ -111,6 +108,11 @@ const metadata = (
     content: { ...identity, code_units: text.length },
   };
 };
+/**
+ * Refuse a page above its byte allowance. A page view selects
+ * `view.max_bytes`; a summary uses the fixed default and names that page
+ * control as its route.
+ */
 const tooLarge = (maxBytes: number, parentEvidenceId: string) =>
   err(
     new AnalysisResourceConstraintError(
@@ -125,6 +127,17 @@ const tooLarge = (maxBytes: number, parentEvidenceId: string) =>
         },
       },
       {
+        retryable: false,
+        limit: {
+          control_kind: "parameter",
+          parameter: "view.max_bytes",
+          effective_value: maxBytes,
+          unit: "bytes",
+          minimum: 1,
+          maximum: MAX_SOURCE_MAP_ENCODED_BYTES,
+          default_value: DEFAULT_PAGE_BYTES,
+          applies_at: "next_call",
+        },
         remediationAction:
           maxBytes < MAX_SOURCE_MAP_ENCODED_BYTES
             ? `Select a smaller source-location limit or increase view.max_bytes (maximum ${String(MAX_SOURCE_MAP_ENCODED_BYTES)}) and retry this retained parent. A single metadata row may require a larger allowance; complete Evidence remains available for export.`
@@ -173,14 +186,9 @@ const projectSourceText = (
 ) => {
   const match = matches[view.match_index];
   if (match === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "match_index"],
-          reason: "invalid_value",
-          message: "No match exists at this original match index.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "No match exists at this original match index.",
+      "match_index",
     );
   const selected = metadata(match, view.match_index);
   if (match.state === "generated-only" || match.content.state !== "embedded") {

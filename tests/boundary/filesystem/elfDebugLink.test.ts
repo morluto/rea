@@ -1,5 +1,5 @@
 import * as zlib from "node:zlib";
-import { createHash } from "node:crypto";
+import { sha256 as sha256Of } from "../../support/sha256.js";
 import { mkdir, open, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
@@ -43,9 +43,6 @@ import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFr
 
 vi.mock(import("node:zlib"), { spy: true });
 vi.mock(import("node:fs/promises"), { spy: true });
-
-const sha256Of = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 it("inflates section names once per artifact while preserving build-ID comparison", async () => {
   const root = await createTestTempDirectory("rea-elf-debug-link-name-reuse-");
@@ -189,7 +186,9 @@ describe("ELF debug-link stable filesystem boundary", () => {
       if (tooMany.ok) throw new Error("Expected entry budget failure");
       if (!(tooMany.error instanceof AnalysisResourceConstraintError))
         throw new Error("Expected entry budget failure");
-      expect(tooMany.error.remediationAction).toContain("smaller image");
+      expect(projectAnalysisError(tooMany.error).remediation.action).toBe(
+        "inspect_elf_debug_link reached its max_entries budget of 1. Pass a larger max_entries on the next inspect_elf_debug_link call (range 1..256), then retry.",
+      );
       expect(tooMany.error.limit).toEqual({
         control_kind: "parameter",
         parameter: "max_entries",

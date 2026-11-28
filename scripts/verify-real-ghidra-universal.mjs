@@ -7,10 +7,8 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import {
-  createGhidraVerifierMcpOperations,
-  resolveGhidraVerifierTimeouts,
-} from "./lib/ghidra-verifier-timeouts.mjs";
+import { createGhidraVerifierMcpOperations } from "./lib/ghidra-verifier-mcp.mjs";
+import { resolveGhidraVerifierTimeouts } from "./lib/ghidra-verifier-timeouts.mjs";
 import {
   mcpTextValue,
   requireMcpOperationResult,

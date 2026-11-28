@@ -1724,7 +1724,8 @@ describe("Ghidra checkpoint restore", () => {
         },
         { resourceScope: createTestArtifactResourceScope() },
       );
-      expect(tampered.ok).toBe(false);
+      if (tampered.ok) throw new Error("the tampered restore launched");
+      expect(tampered.error).toMatchObject({ checkpointRestoreFailed: true });
       expect(spawned).toHaveLength(1);
     },
   );

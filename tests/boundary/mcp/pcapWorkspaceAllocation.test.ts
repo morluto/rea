@@ -240,10 +240,18 @@ it("still reports a capture over the snapshot budget as a file-size limit", asyn
         effective_value: 2 * 1024 ** 3,
         default_value: 2 * 1024 ** 3,
         applies_at: "next_call",
+        required_value: 2 * 1024 ** 3 + 1,
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        control: "producer_limits.input_bytes",
+        required_value: 2 * 1024 ** 3 + 1,
       },
     },
+    remediation: {
+      action: `inspect_pcap_capture reached its producer_limits.input_bytes budget of ${String(2 * 1024 ** 3)} bytes. Pass a larger producer_limits.input_bytes on the next inspect_pcap_capture call (at least ${String(2 * 1024 ** 3 + 1)} bytes; range 1..${String(Number.MAX_SAFE_INTEGER)} bytes), then retry.`,
+    },
   });
-  expect(error).not.toHaveProperty("details.refusal");
   expect(
     (await readdir(root)).filter((name) => name.startsWith("rea-pcap-")),
   ).toEqual([]);

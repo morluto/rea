@@ -1,17 +1,18 @@
 import { readStableArtifact } from "../../resources/index.js";
 import {
   selectedSourceMapLimits,
-  sourceMapLimitRecovery,
   sourceMapLimitsSchema,
 } from "../../domain/sourceMapLimits.js";
 import { traceSourceMap } from "./TraceSourceMap.js";
 import {
   isSourceMapFailure,
+  isSourceMapLimit,
   SOURCE_MAP_FORMAT,
   sourceMapLimitFailure,
 } from "../../domain/sourceMapFormat.js";
 import { malformedInput } from "../../domain/parseFailure.js";
 import {
+  codecSourceMapLimitFieldSchema,
   sourceMapCodecInputSchema,
   sourceMapCodecReplySchema,
 } from "./SourceMapCodecProtocol.js";
@@ -64,15 +65,26 @@ const execute = async (): Promise<string> => {
       )
     )
       throw cause;
+    const parsedLimit = isSourceMapLimit(cause)
+      ? codecSourceMapLimitFieldSchema.safeParse(cause.failure.limit.name)
+      : undefined;
     return JSON.stringify({
       state: "failure",
       reason:
         !isSourceMapFailure(cause) ||
         cause.kind === "malformed" ||
         cause.kind === "truncated"
-          ? "format"
+          ? "malformed"
           : cause.kind,
       message: cause.message,
+      ...(parsedLimit?.success && isSourceMapLimit(cause)
+        ? {
+            limit: {
+              field: parsedLimit.data,
+              maximum: cause.failure.limit.maximum,
+            },
+          }
+        : {}),
     });
   }
 };

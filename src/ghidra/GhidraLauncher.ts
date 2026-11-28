@@ -146,6 +146,8 @@ export class GhidraLaunchError extends Error {
   readonly cleanupFailure: AnalysisError | undefined;
   /** Known producer outcome, independent of a signal that changes during finalization. */
   readonly primaryFailure: AnalysisError | undefined;
+  /** The launch failed while copying or verifying the checkpoint's packed Program. */
+  readonly checkpointRestoreFailed: boolean;
 
   constructor(
     message: string,
@@ -156,9 +158,11 @@ export class GhidraLaunchError extends Error {
       readonly primaryFailure?: AnalysisError;
       readonly capturedOutput?: AnalysisCapturedOutput;
       readonly launchSupport?: readonly GhidraLaunchSupportDiagnostic[];
+      readonly checkpointRestoreFailed?: boolean;
     },
   ) {
     const {
+      checkpointRestoreFailed,
       partialLaunch,
       capturedOutput,
       launchSupport,
@@ -170,6 +174,10 @@ export class GhidraLaunchError extends Error {
     super(message, errorOptions);
     this.name = "GhidraLaunchError";
     this.#partialLaunch = partialLaunch;
+    this.checkpointRestoreFailed =
+      checkpointRestoreFailed ??
+      (errorOptions.cause instanceof GhidraLaunchError &&
+        errorOptions.cause.checkpointRestoreFailed);
     this.rollbackFailure = rollbackFailure;
     this.primaryFailure =
       primaryFailure ??
@@ -323,6 +331,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
     const platform = this.options.platform ?? HOST_PLATFORM.platform;
     const existingProject = this.options.existingProject;
     let started: SpawnedOwnedProviderProcess | undefined;
+    // Set only while the private checkpoint restore runs, so a caller can
+    // tell a failed restore from any other launch failure.
+    let restoringCheckpoint = false;
     let configuredMaxHeap: string | undefined;
     const launchSupport: GhidraLaunchSupportDiagnostic[] = [];
     try {
@@ -369,6 +380,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
       let packedProgramPath: string | undefined;
       if (session.packedProgram !== undefined) {
         packedProgramPath = join(session.runtimeRoot, "restored-program.gzf");
+        restoringCheckpoint = true;
         const packedHash = createHash("sha256");
         try {
           await copyGhidraRegularFile(
@@ -393,6 +405,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           throw new GhidraLaunchError(
             "Ghidra checkpoint changed before its private import; reopen the target.",
           );
+        restoringCheckpoint = false;
       }
       // Copy-first: open the caller's project only through the owned copy so
       // Ghidra never touches the original project files.
@@ -680,6 +693,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           ...(retained.cleanupIncomplete ? { cleanupFailure: retained } : {}),
           launchSupport,
           ...(capturedOutput === undefined ? {} : { capturedOutput }),
+          checkpointRestoreFailed: restoringCheckpoint,
         },
       );
       if (started === undefined) return err(launchFailure);
@@ -729,6 +743,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
                 : { cleanupFailure: launchFailure.cleanupFailure }),
               launchSupport,
               ...(capturedOutput === undefined ? {} : { capturedOutput }),
+              checkpointRestoreFailed: restoringCheckpoint,
             },
           ),
         );
