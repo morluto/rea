@@ -29,7 +29,7 @@ export const traceFailure = (
   cause: unknown,
   path: string,
   limits: PlaywrightTraceLimits,
-  memberCount: ArtifactMemberCount,
+  memberCount: ArtifactMemberCount | undefined,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof ArtifactReaderFailure) {
@@ -46,7 +46,10 @@ export const traceFailure = (
           cause.fixedAllowance,
           { cause },
         );
-      const count = zipMemberCountConstraint(operation, cause, memberCount);
+      const count =
+        memberCount === undefined
+          ? undefined
+          : zipMemberCountConstraint(operation, cause, memberCount);
       if (count !== undefined) return count;
       // The ZIP reader's plaintext-work budget grows with the archive size;
       // this tool selects no expansion control, so it is fixed per archive.

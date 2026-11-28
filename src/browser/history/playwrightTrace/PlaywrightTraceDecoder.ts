@@ -119,8 +119,7 @@ class TraceArchiveRead {
         this.primary ?? artifactFilePrimaryFacts(cause).cause,
         this.path,
         this.limits,
-        this.memberCount ??
-          operationZipMemberCount(this.environment, this.settings),
+        this.memberCount,
       );
       const partial =
         this.complete ??

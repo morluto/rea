@@ -4,6 +4,7 @@ import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../../tests/fixtures/temporaryDirectory.js";
 import { runWithAnalysisOperationSnapshot } from "../../../domain/analysisOperationSnapshot.js";
+import { ConfigurationError } from "../../../domain/configurationErrors.js";
 import { playwrightTraceLimits } from "../../../domain/playwrightTrace/playwrightTrace.js";
 import { ArtifactResourceScope } from "../../../resources/ArtifactResourceScope.js";
 import { PlaywrightTraceDecoder } from "./PlaywrightTraceDecoder.js";
@@ -49,6 +50,26 @@ it("reports a trace ZIP past the session member count as a count", async () => {
     source: "runtime",
   });
   expect(result.error.limit).not.toHaveProperty("parameter");
+});
+
+it("returns an invalid member-count seed as a configuration result", async () => {
+  const path = await zipWithMembers(["notes.txt"]);
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await new PlaywrightTraceDecoder(resources, {
+      ...process.env,
+      REA_ARTIFACT_MEMBER_COUNT: "not-a-count",
+    }).inspect(path, playwrightTraceLimits());
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(ConfigurationError);
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "file-snapshot-hash",
+      path,
+    });
+  } finally {
+    await resources.close();
+  }
 });
 
 it("keeps a one-member trace archive inside the session member count", async () => {
