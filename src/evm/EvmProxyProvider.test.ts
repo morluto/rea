@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { EvmProxyProvider } from "./EvmProxyProvider.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { inspectEvmProxyInputSchema } from "../domain/evm/evmProxy.js";
 
 const CLONE =
@@ -98,7 +99,7 @@ describe("inspect_evm_proxy", () => {
     expect(!failed.ok && failed.error).toMatchObject({
       _tag: "AnalysisTargetFailureError",
       path: broken,
-      partialObservation: { path: broken, bytes: 3 },
+      partialObservation: { failed_carrier: { path: broken, bytes: 3 } },
     });
   });
 
@@ -118,5 +119,48 @@ describe("inspect_evm_proxy", () => {
     expect(!result.ok && result.error).toMatchObject({
       limit: { required_value: CLONE.length },
     });
+  });
+
+  const chainRequest = async (relatedPath: string) => {
+    const snapshot = (byte: string) => ({
+      chain_id: 1,
+      block: 1,
+      account: `0x${byte.repeat(20)}`,
+      slots: {},
+    });
+    return {
+      path: await carrier(CLONE),
+      encoding: "hex",
+      snapshot: snapshot("11"),
+      related: [
+        {
+          path: await carrier("0x00"),
+          encoding: "hex",
+          snapshot: snapshot("22"),
+        },
+        { path: relatedPath, encoding: "hex", snapshot: snapshot("33") },
+      ],
+    };
+  };
+
+  it("keeps completed accounts when a later carrier fails", async () => {
+    const broken = await carrier("0x0");
+    const request = await chainRequest(broken);
+    const result = await inspect(request);
+    expect(!result.ok && result.error.partialObservation).toMatchObject({
+      kind: "evm-proxy-accounts",
+      accounts: [
+        { artifact: { path: request.path }, pattern: { kind: "erc1167" } },
+        { artifact: { path: request.related[0]?.path } },
+      ],
+      failed_carrier: { path: broken, bytes: 3 },
+    });
+  });
+
+  it("names the related entry whose file cannot be read", async () => {
+    const result = await inspect(await chainRequest("/rea-missing/a.hex"));
+    expect(
+      !result.ok && projectAnalysisError(result.error).details,
+    ).toMatchObject({ issues: [{ path: ["related", 1, "path"] }] });
   });
 });

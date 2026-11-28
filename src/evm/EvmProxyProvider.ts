@@ -22,6 +22,7 @@ import {
   closeArtifactResources,
   projectStableArtifactFailure,
   readStableArtifact,
+  type RequestField,
 } from "../resources/index.js";
 import {
   decodeEvmBytecodeCarrier,
@@ -51,9 +52,11 @@ export class EvmProxyProvider implements EvmProxyPort {
   }
 
   async inspect(input: InspectEvmProxyInput, options?: ExecutionOptions) {
-    // The file being read and, once read, its identity: both name a failure.
+    // The file being read names a failure; completed accounts survive it.
     let path = input.path;
+    let field: RequestField = "path";
     let observed: { sha256: string; bytes: number } | undefined;
+    const completed: ReturnType<typeof followedAccount>[] = [];
     const read = async (selected: Parameters<typeof followedAccount>[0]) => {
       path = selected.path;
       observed = undefined;
@@ -66,14 +69,19 @@ export class EvmProxyProvider implements EvmProxyPort {
       );
       observed = { sha256: carrier.sha256, bytes: carrier.bytes.length };
       assertArtifactReadActive(options?.signal);
-      return followedAccount(selected, carrier);
+      const account = followedAccount(selected, carrier);
+      completed.push(account);
+      observed = undefined;
+      return account;
     };
     try {
       return await this.#resources.run(async () => {
         const root = await read(input);
         const accounts = [];
-        for (const entry of input.related ?? [])
+        for (const [index, entry] of (input.related ?? []).entries()) {
+          field = ["related", index, "path"];
           accounts.push(await read(entry));
+        }
         const { chain, reached } = followProxyChain(root, accounts);
         return ok({
           ...root,
@@ -87,14 +95,21 @@ export class EvmProxyProvider implements EvmProxyPort {
       });
     } catch (cause) {
       const facts = artifactFilePrimaryFacts(cause);
-      const selected = { path, max_file_bytes: input.max_file_bytes };
+      const selected = { path, field, max_file_bytes: input.max_file_bytes };
+      const primary = classifyProviderFailure(
+        facts.cause,
+        evmProxyDialect(facts, selected),
+      );
+      if (completed.length > 0)
+        primary.retainPartialObservation({
+          kind: "evm-proxy-accounts",
+          accounts: completed,
+          failed_carrier: observed === undefined ? null : { path, ...observed },
+        });
       return err(
         projectStableArtifactFailure(
           cause,
-          classifyProviderFailure(
-            facts.cause,
-            evmProxyDialect(facts, selected),
-          ),
+          primary,
           path,
           EVM_PROXY_PROVIDER.id,
           OPERATION,
@@ -125,12 +140,15 @@ const followedAccount = (
 
 const evmProxyDialect = (
   facts: ArtifactFilePrimaryFacts,
-  input: Pick<InspectEvmProxyInput, "path" | "max_file_bytes">,
+  input: Pick<InspectEvmProxyInput, "path" | "max_file_bytes"> & {
+    readonly field: RequestField;
+  },
 ) =>
   offlineArtifactFailureDialect(facts, {
     providerId: EVM_PROXY_PROVIDER.id,
     operation: OPERATION,
     path: input.path,
+    field: input.field,
     description: "bytecode carrier",
     fallbackMessage: "EVM proxy inspection failed.",
     recognise: (failure) =>

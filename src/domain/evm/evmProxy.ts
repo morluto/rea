@@ -201,6 +201,19 @@ export const evmProxySchema = z.strictObject({
 });
 export type EvmProxy = z.output<typeof evmProxySchema>;
 
+/** Accounts fully read before a later carrier or step failed; no chain claim. */
+export interface EvmProxyPartialObservation {
+  readonly kind: "evm-proxy-accounts";
+  /** The root first, then related accounts in request order. */
+  readonly accounts: readonly Omit<EvmProxy["related"][number], "reached">[];
+  /** The carrier that was read but could not be decoded, when one was. */
+  readonly failed_carrier: {
+    readonly path: string;
+    readonly sha256: string;
+    readonly bytes: number;
+  } | null;
+}
+
 /** ERC-1167 runtime: fixed prefix, 20-byte target, fixed suffix. */
 const ERC1167_PREFIX = Buffer.from("363d3d373d3d3d363d73", "hex");
 const ERC1167_SUFFIX = Buffer.from("5af43d82803e903d91602b57fd5bf3", "hex");
