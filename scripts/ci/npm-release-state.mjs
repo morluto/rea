@@ -1,31 +1,76 @@
 import { verifyPublishedPackageIntegrity } from "./qualified-package-envelope.mjs";
 
+const registry = "https://registry.npmjs.org";
+const packageName = "rea-agents";
+
+function readRegistry(request, path, accept = "application/json") {
+  return request(`${registry}/${path}`, {
+    headers: { Accept: accept, "Cache-Control": "no-cache" },
+    signal: AbortSignal.timeout(30_000),
+  });
+}
+
 /** Parse fresh registry state using the channel already owned by qualification. */
 export async function readQualifiedNpmRelease(version, tag, request = fetch) {
   if (!["latest", "next"].includes(tag))
     throw new Error("Invalid qualified npm channel");
-  const response = await request("https://registry.npmjs.org/rea-agents", {
-    headers: {
-      Accept: "application/vnd.npm.install-v1+json",
-      "Cache-Control": "no-cache",
-    },
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (response.status === 404) return { status: "absent" };
-  if (!response.ok)
-    throw new Error(`npm registry lookup failed: HTTP ${response.status}`);
-  const metadata = requireRecord(await response.json());
-  if (metadata.name !== "rea-agents")
-    throw new Error("Unexpected npm package name");
-  const versions = requireRecord(metadata.versions);
-  const tags = requireRecord(metadata["dist-tags"]);
+  const response = await readRegistry(
+    request,
+    packageName,
+    "application/vnd.npm.install-v1+json",
+  );
+  if (response.status !== 404) {
+    if (!response.ok)
+      throw new Error(`npm registry lookup failed: HTTP ${response.status}`);
+    const metadata = requireRecord(await response.json());
+    if (metadata.name !== packageName)
+      throw new Error("Unexpected npm package name");
+    const versions = requireRecord(metadata.versions);
+    const tags = requireTags(metadata["dist-tags"]);
+    if (Object.hasOwn(versions, version))
+      return publishedState(
+        version,
+        tag,
+        requireRecord(versions[version]),
+        tags,
+      );
+  }
+
+  // The cacheable package index can omit a version that the registry serves
+  // directly. Confirm absence independently before authorizing publication.
+  const exact = await readRegistry(
+    request,
+    `${packageName}/${encodeURIComponent(version)}`,
+  );
+  if (exact.status === 404) return { status: "absent" };
+  if (!exact.ok)
+    throw new Error(`npm version lookup failed: HTTP ${exact.status}`);
+  const published = requireRecord(await exact.json());
+  const tags = await readRegistry(
+    request,
+    `-/package/${packageName}/dist-tags`,
+  );
+  if (!tags.ok)
+    throw new Error(`npm dist-tag lookup failed: HTTP ${tags.status}`);
+  return publishedState(
+    version,
+    tag,
+    published,
+    requireTags(await tags.json()),
+  );
+}
+
+function requireTags(value) {
+  const tags = requireRecord(value);
   if (Object.values(tags).some((value) => typeof value !== "string"))
     throw new Error("Invalid npm dist-tags");
-  if (!Object.hasOwn(versions, version)) return { status: "absent" };
-  const published = requireRecord(versions[version]);
+  return tags;
+}
+
+function publishedState(version, tag, published, tags) {
   const dist = requireRecord(published.dist);
   if (
-    published.name !== "rea-agents" ||
+    published.name !== packageName ||
     published.version !== version ||
     typeof dist.integrity !== "string" ||
     dist.integrity.length === 0
