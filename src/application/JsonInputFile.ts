@@ -41,6 +41,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -177,11 +178,25 @@ export const nativeJsonParseRequiredBytes = (
   // whose individual container allocations cannot be intercepted.
   (inputBytes * 72 + READ_CHUNK_BYTES) * (snapshot ? 2 : 1);
 
+type JsonInputHeapSample = Pick<
+  ReturnType<typeof getHeapStatistics>,
+  "total_available_size" | "heap_size_limit"
+>;
+
+export interface JsonInputRuntimeProbes {
+  readonly getHeapStatistics?: () => JsonInputHeapSample;
+  readonly maxStringCodeUnits?: number;
+}
+
 /** Snapshot mode also reserves one projection for cooperative sealing bookkeeping. */
-const nativeParseFits = (inputBytes: number, snapshot = false): boolean =>
+const nativeParseFits = (
+  inputBytes: number,
+  snapshot = false,
+  readHeap: () => JsonInputHeapSample = getHeapStatistics,
+): boolean =>
   inputBytes <= NATIVE_PARSE_READ_BUDGET &&
   nativeJsonParseRequiredBytes(inputBytes, snapshot) <=
-    getHeapStatistics().total_available_size;
+    readHeap().total_available_size;
 
 /** One selected root member; repeated keys begin again with last-value semantics. */
 export interface JsonObjectMemberReader {
@@ -399,8 +414,12 @@ export const readJsonInputFile = (
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
   snapshot = false,
-): Promise<Result<unknown, JsonInputFileFailure>> =>
-  withJsonInputFile(
+  runtime?: JsonInputRuntimeProbes,
+): Promise<Result<unknown, JsonInputFileFailure>> => {
+  const readHeap = runtime?.getHeapStatistics ?? getHeapStatistics;
+  const maxStringCodeUnits =
+    runtime?.maxStringCodeUnits ?? constants.MAX_STRING_LENGTH;
+  return withJsonInputFile(
     path,
     async (handle, stats) => {
       let found = false;
@@ -415,6 +434,7 @@ export const readJsonInputFile = (
           signal,
           snapshot,
           physicalRead,
+          readHeap,
         );
         if (native !== undefined)
           return native.ok && snapshot
@@ -436,12 +456,16 @@ export const readJsonInputFile = (
             asStream(
               fun(
                 jsonTokenizers(operation, stats.size, path),
-                packJsonScalars(operation, stats.size, path),
+                packJsonScalars(operation, stats.size, path, {
+                  readHeap,
+                  maxStringCodeUnits,
+                }),
                 admitJsonAssembly(
                   operation,
                   stats.size,
                   path,
                   snapshot ? 2 : 1,
+                  readHeap,
                 ),
                 streamValues(),
                 (row: unknown): typeof none => {
@@ -480,6 +504,7 @@ export const readJsonInputFile = (
       ...(resources === undefined ? {} : { resources }),
     },
   );
+};
 
 /** Keep parser failures inside the tokenizer while retaining synchronous stage fusion. */
 const jsonTokenizers = (
@@ -544,7 +569,16 @@ const jsonReadFailure = (
       },
       {
         cause,
-        remediationAction: JSON_INPUT_RESOURCE_REMEDIATION,
+        ...fixedAllowanceOptions(
+          "The JavaScript runtime single-string length limit",
+          "parser",
+          {
+            limit: constants.MAX_STRING_LENGTH,
+            unit: "code_units",
+            narrowing:
+              "For Evidence workflows, re-analyze a smaller selection of the original target and use its complete Evidence instead of splitting JSON text or trimming fields.",
+          },
+        ),
       },
     );
   return undefined;
@@ -554,7 +588,14 @@ const packJsonScalars = (
   operation: string,
   inputFileBytes: number,
   path: string,
+  options: {
+    readonly readHeap?: () => JsonInputHeapSample;
+    readonly maxStringCodeUnits?: number;
+  } = {},
 ) => {
+  const readHeap = options.readHeap ?? getHeapStatistics;
+  const maxStringCodeUnits =
+    options.maxStringCodeUnits ?? constants.MAX_STRING_LENGTH;
   let kind: "keyValue" | "stringValue" | "numberValue" | undefined;
   let length = 0;
   let value = "";
@@ -580,7 +621,7 @@ const packJsonScalars = (
         )
           throw new Error("Unexpected JSON scalar fragment");
         length += token.value.length;
-        if (length > constants.MAX_STRING_LENGTH)
+        if (length > maxStringCodeUnits)
           throw new RangeError("Invalid string length");
         parts.push(token.value);
         partLength += token.value.length;
@@ -593,6 +634,7 @@ const packJsonScalars = (
             inputFileBytes,
             path,
             length,
+            readHeap,
           );
           value += parts.join("");
           parts = [];
@@ -603,7 +645,13 @@ const packJsonScalars = (
       case "endString":
       case "endNumber": {
         if (kind === undefined) throw new Error("Unexpected JSON scalar end");
-        requireStringAssemblyHeadroom(operation, inputFileBytes, path, length);
+        requireStringAssemblyHeadroom(
+          operation,
+          inputFileBytes,
+          path,
+          length,
+          readHeap,
+        );
         const packed = { name: kind, value: value + parts.join("") };
         kind = undefined;
         length = 0;
@@ -625,6 +673,7 @@ const admitJsonAssembly = (
   inputFileBytes: number,
   path: string,
   retainedMultiplier = 1,
+  readHeap: () => JsonInputHeapSample = getHeapStatistics,
 ) => {
   let projectedBytes = 0;
   let nextCheck = 0;
@@ -646,7 +695,7 @@ const admitJsonAssembly = (
       projectedBytes += 64;
     }
     if (projectedBytes >= nextCheck) {
-      const heap = getHeapStatistics();
+      const heap = readHeap();
       // Conservative capacity for containers, property/array slots and UTF-16
       // values. Keep another whole projection available for container growth,
       // plus the next chunk of estimates between samples. This is admission
@@ -666,7 +715,10 @@ const admitJsonAssembly = (
             available_heap_bytes: heap.total_available_size,
             heap_size_limit_bytes: heap.heap_size_limit,
           },
-          { remediationAction: JSON_INPUT_RESOURCE_REMEDIATION },
+          {
+            measuredExhaustion: true,
+            remediationAction: JSON_INPUT_RESOURCE_REMEDIATION,
+          },
         );
       nextCheck = projectedBytes + READ_CHUNK_BYTES;
     }
@@ -679,9 +731,10 @@ const requireStringAssemblyHeadroom = (
   inputFileBytes: number,
   path: string,
   stringCodeUnits: number,
+  readHeap: () => JsonInputHeapSample = getHeapStatistics,
 ): void => {
   if (stringCodeUnits < PACKED_TOKEN_PART_CODE_UNITS) return;
-  const heap = getHeapStatistics();
+  const heap = readHeap();
   // Concatenation or key interning may flatten the retained rope. Reserve its
   // UTF-16 representation and the next coalesced part before that allocation.
   const requiredBytes = 2 * (stringCodeUnits + PACKED_TOKEN_PART_CODE_UNITS);
@@ -699,6 +752,7 @@ const requireStringAssemblyHeadroom = (
         heap_size_limit_bytes: heap.heap_size_limit,
       },
       {
+        measuredExhaustion: true,
         remediationAction: JSON_INPUT_RESOURCE_REMEDIATION,
       },
     );
@@ -797,8 +851,9 @@ const readNativeJson = async (
   signal?: AbortSignal,
   snapshot = false,
   physicalRead: JsonInputPhysicalReadObservation = {},
+  readHeap: () => JsonInputHeapSample = getHeapStatistics,
 ): Promise<Result<unknown, JsonInputFileFailure> | undefined> => {
-  if (!nativeParseFits(size, snapshot)) return undefined;
+  if (!nativeParseFits(size, snapshot, readHeap)) return undefined;
   const prefix = await readPrefix(handle, size + 1, signal, physicalRead);
   if (!prefix.complete || prefix.bytes.length !== size)
     throw new RegularFileChangedError(path);
