@@ -1,8 +1,9 @@
 $ rea inspect-byte-entropy <workspace>/sample.bin --no-such-flag
 exit: 1
 --- stdout
-code: UNKNOWN
+code: PARSE_ERROR
 message: "Unknown flag: --no-such-flag"
+retryable: false
 <end>
 --- stderr
 <end>
