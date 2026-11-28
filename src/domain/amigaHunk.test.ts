@@ -259,32 +259,45 @@ it("records chip, fast and extended memory flags", () => {
   ]);
 });
 
-it("numbers hunks from the header and reports a missing reloc target", () => {
-  const file = parseAmigaHunk(
-    amigaLoadFile({
-      firstHunk: 2,
-      hunks: [
-        {
-          type: "code",
-          bytes: CODE,
-          relocs: [
-            { kind: "reloc32", target: 2, offsets: [0] },
-            { kind: "reloc32", target: 0, offsets: [0] },
-          ],
-        },
-      ],
-    }),
-  );
-  expect(file.hunks[0]?.index).toBe(2);
-  expect(file.hunks[0]?.relocations).toEqual([
-    { kind: "reloc32", targetHunk: 2, count: 1 },
-    { kind: "reloc32", targetHunk: 0, count: 1 },
-  ]);
-  expect(file.entries[0]?.path).toBe("hunk-2-code.bin");
-  expect(file.limitations.map((item) => item.kind)).toEqual([
-    "relocation-target",
-  ]);
-});
+it.each([
+  { tableSize: 3, target: 0, limitations: [] },
+  { tableSize: 4, target: 3, limitations: [] },
+  {
+    tableSize: 3,
+    target: 3,
+    limitations: [
+      {
+        kind: "relocation-target",
+        detail: expect.stringContaining("table size 3"),
+      },
+    ],
+  },
+])(
+  "validates load relocation target $target with table size $tableSize",
+  ({ tableSize, target, limitations }) => {
+    const file = parseAmigaHunk(
+      amigaLoadFile({
+        tableSize,
+        firstHunk: 1,
+        lastHunk: 2,
+        hunks: [
+          {
+            type: "code",
+            bytes: CODE,
+            relocs: [{ kind: "reloc32", target, offsets: [0] }],
+          },
+          { type: "data", bytes: DATA },
+        ],
+      }),
+    );
+    expect(file.hunks.map((hunk) => hunk.index)).toEqual([1, 2]);
+    expect(file.hunks[0]?.relocations).toEqual([
+      { kind: "reloc32", targetHunk: target, count: 1 },
+    ]);
+    expect(file.entries[0]?.path).toBe("hunk-1-code.bin");
+    expect(file.limitations).toMatchObject(limitations);
+  },
+);
 
 it("accepts a reloc inside the header size and past the stored bytes", () => {
   const file = parseAmigaHunk(

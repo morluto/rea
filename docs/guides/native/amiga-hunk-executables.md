@@ -33,6 +33,10 @@ header size word, not from those bits. In a load file, `HUNK_DREL32`
 `HUNK_RELOC32SHORT`, padded to a longword. The kind stays `drel32`.
 `HUNK_RELOC32` uses 32-bit words.
 
+In a load file, a relocation can target any slot below the header's hunk
+table size. Slots outside the first-to-last hunk range are recorded as
+target numbers with no corresponding body in this file.
+
 The root `format_metadata` (`kind: "amiga-hunk"`, `file_kind: "load"`)
 reports resident libraries, the table size, the first and last hunk, and one
 record per hunk:
@@ -112,8 +116,9 @@ Anything else leaves coverage `unknown` and keeps the facts that still hold:
 - a block that stores more longwords than the header allocates
   (`size-mismatch`; a smaller stored size is the loader's zero-filled tail
   and is not a limitation);
-- a relocation whose target hunk is outside the header range, or whose
-  offset does not fit in the hunk;
+- a load-file relocation whose target is at or above the hunk table size,
+  an object-file relocation whose target is outside its unit, or a
+  relocation whose offset does not fit in the hunk;
 - trailing bytes after the last hunk;
 - a header problem (first hunk after last, a block past the listed hunks, or
   the file ending before every listed hunk);

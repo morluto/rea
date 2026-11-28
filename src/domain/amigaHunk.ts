@@ -603,8 +603,7 @@ class AmigaHunkParser {
         `Amiga Hunk file lists ${count} hunks, above ${this.limits.maxHunks}.`,
         { name: AMIGA_HUNK_HUNK_LIMIT, maximum: this.limits.maxHunks },
       );
-    // The table size is the highest hunk number plus one, so the last hunk
-    // must index inside it.
+    // The bodies supplied by this file must index inside the hunk table.
     if (last >= tableSize)
       this.note(
         "header",
@@ -1032,15 +1031,15 @@ class AmigaHunkParser {
 
   private noteRelocTarget(hunk: HunkDraft, target: number): void {
     if (this.fileKind !== "load" || hunk.badTarget) return;
-    const first = this.firstHunk;
-    const last = this.lastHunk;
-    if (first !== null && last !== null && target >= first && target <= last)
-      return;
+    const tableSize = this.tableSize;
+    if (tableSize !== null && target < tableSize) return;
     hunk.badTarget = true;
     this.note(
       "relocation-target",
       hunk.blockOffset,
-      `Hunk ${hunk.index} has a relocation targeting hunk ${target}, which is outside hunks ${first ?? 0} through ${last ?? 0}.`,
+      tableSize === null
+        ? `Hunk ${hunk.index} has a relocation targeting slot ${target}, but the hunk table size is unknown.`
+        : `Hunk ${hunk.index} has a relocation targeting slot ${target}, which is outside the hunk table (table size ${tableSize}).`,
     );
   }
 
