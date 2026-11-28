@@ -11,6 +11,7 @@ import { nativeInstructionReferencesRequestSchema } from "./nativeInstructionRef
 import { devicetreeViewRequestSchema } from "./devicetreeView.js";
 import { espNvsViewRequestSchema } from "./espNvsView.js";
 import { firmwareLiteralPoolsViewRequestSchema } from "./firmwareLiteralPoolsView.js";
+import { firmwareVectorTableViewRequestSchema } from "./firmwareVectorTableView.js";
 import { labviewArtifactViewRequestSchema } from "./labviewArtifactView.js";
 import { uefiExtractionViewRequestSchema } from "./uefiExtractionView.js";
 import { uefiFirmwareViewRequestSchema } from "./uefiFirmwareView.js";
@@ -105,6 +106,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   devicetreeViewRequestSchema,
   espNvsViewRequestSchema,
   firmwareLiteralPoolsViewRequestSchema,
+  firmwareVectorTableViewRequestSchema,
   labviewArtifactViewRequestSchema,
   uefiFirmwareViewRequestSchema,
   uefiExtractionViewRequestSchema,

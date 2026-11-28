@@ -6,6 +6,7 @@ import { binaryLayoutSummaryViewResultSchema } from "../../domain/analysisView/s
 import { devicetreeSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/devicetreeSummarySchema.js";
 import { espNvsSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/espNvsSummarySchema.js";
 import { firmwareLiteralPoolsSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/firmwareLiteralPoolsSummarySchema.js";
+import { firmwareVectorTableSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/firmwareVectorTableSummarySchema.js";
 import { elfDependenciesSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/elfDependenciesSummarySchema.js";
 import { nativeExportsSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/nativeExportsSummarySchema.js";
 import {
@@ -113,6 +114,10 @@ import {
   firmwareLiteralPoolsReportSchema,
   inspectFirmwareLiteralPoolsInputSchema,
 } from "../../domain/firmware/firmwareLiteralPools.js";
+import {
+  firmwareVectorTableSchema,
+  inspectFirmwareVectorTableInputSchema,
+} from "../../domain/firmware/firmwareVectorTable.js";
 
 /** Caller-selected delivery of completed binary layout Evidence. */
 export const inspectBinaryLayoutRequestSchema =
@@ -661,6 +666,40 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
           isa: "xtensa",
           base_address: "0x400d0000",
           max_scan_bytes: 262144,
+        },
+      },
+    ],
+  },
+  {
+    name: "inspect_firmware_vector_table",
+    cli: true,
+    ...toolContractMetadata("inspect_firmware_vector_table", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Decode an ARM M-profile (armv6-m, armv7-m, armv7e-m, armv8-m.base, armv8-m.main, armv8.1-m.main) interrupt vector table or RISC-V mtvec trap table from a local firmware binary at an explicit base_address and optional vector_table_offset without opening a session or executing code. Reports InitialSP, profile-specific architectural system exceptions (Reset, NMI, HardFault, SVCall, PendSV, SysTick; MemManage/BusFault/UsageFault/DebugMonitor on ARMv7-M and ARMv8-M Mainline; SecureFault on ARMv8-M Mainline), external IRQ handler addresses, Thumb bit-0 violations, shared default-handler stubs, and RISC-V JAL/C.J/AUIPC+JALR jump slots with trap_entry_address (keeping reset_code_address null on RISC-V). Optional svd_xml binds external IRQ numbers to CMSIS-SVD peripheral interrupt names within max_svd_xml_nodes and max_svd_expanded_chars; unmapped IRQs keep name: null. Complete detail returns all decoded slots inline; summary (or omitted detail over the agent result budget) retains complete Evidence for inspect_analysis_view kind firmware-vector-table (collections arm_entries, riscv_slots, shared_handler_groups, anomalies) or evidence-json.",
+    inputSchema: inspectFirmwareVectorTableInputSchema.extend({
+      detail: analysisDetailSchema,
+    }),
+    outputSchema: analysisDetailOutputSchemaOf(
+      firmwareVectorTableSchema,
+      firmwareVectorTableSummaryViewResultSchema,
+    ),
+    examples: [
+      {
+        title: "Decode an STM32 Cortex-M4 vector table at 0x08000000",
+        input: {
+          path: "/artifacts/firmware.bin",
+          architecture: "armv7-m",
+          base_address: "0x08000000",
+        },
+      },
+      {
+        title: "Retain the decoded vector table and return its bounded summary",
+        input: {
+          path: "/artifacts/firmware.bin",
+          architecture: "armv7-m",
+          base_address: "0x08000000",
+          detail: "summary",
         },
       },
     ],

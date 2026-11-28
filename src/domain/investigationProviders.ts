@@ -278,3 +278,9 @@ export const FIRMWARE_LITERAL_POOLS_PROVIDER = Object.freeze({
   name: "REA firmware literal-pool MMIO disassembler",
   version: "1",
 } as const);
+
+export const FIRMWARE_VECTOR_TABLE_PROVIDER = Object.freeze({
+  id: "rea-firmware-vector-table",
+  name: "REA firmware vector table decoder",
+  version: "1",
+} as const);

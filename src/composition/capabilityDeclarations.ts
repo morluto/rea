@@ -58,6 +58,7 @@ import {
   FIRMWARE_LITERAL_POOLS_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
   ESP_NVS_PROVIDER,
+  FIRMWARE_VECTOR_TABLE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
   WINDOWS_SHORTCUT_PROVIDER,
 } from "../domain/investigationProviders.js";
@@ -329,6 +330,13 @@ export const CAPABILITY_DECLARATIONS = {
   },
   espNvs: {
     providers: [providerBinding(ESP_NVS_PROVIDER, ["inspect_esp_nvs"])],
+  },
+  firmwareVectorTable: {
+    providers: [
+      providerBinding(FIRMWARE_VECTOR_TABLE_PROVIDER, [
+        "inspect_firmware_vector_table",
+      ]),
+    ],
   },
   uefiAnalysis: {
     providers: [

@@ -45,6 +45,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   "ubi-image": "archive",
   iso9660: "archive",
   "qualcomm-mbn": "archive",
+  "apple-img4": "archive",
   dmg: "archive",
   pkg: "archive",
   "intel-hex": "archive",

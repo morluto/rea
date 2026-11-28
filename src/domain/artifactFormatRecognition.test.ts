@@ -1,5 +1,7 @@
 import { expect, it } from "vitest";
 
+import { im4p } from "./apple/image4.fixture.js";
+
 import {
   ESP32C3_APP_SEGMENTS,
   esp8266Image,
@@ -347,6 +349,12 @@ it("recognizes a UBI image by its erase-counter header", () => {
     state: "recognized",
     format: "ubi-image",
   });
+});
+
+it("recognizes an Image4 IM4P container", () => {
+  expect(
+    recognize(im4p({ payload: Buffer.from("kernel-bytes") })),
+  ).toMatchObject({ state: "recognized", format: "apple-img4" });
 });
 
 it("recognizes the descriptor signature at sector 16 or asks for it", () => {
