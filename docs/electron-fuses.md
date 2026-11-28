@@ -80,8 +80,13 @@ application code.
 
 The selected file must be a regular file, or a bundle that resolves to one.
 Symlinks are followed only inside `Electron Framework.framework`. The reader
-admits at most 1 GiB, searches with 256 KiB windows, and keeps at most 32
-sentinels per slice. A real nine-fuse, one-slice result is about 1,200 CLI
-tokens; a two-slice result is about 1,300 tokens. Exact size varies with path
-lengths and limitations. This inspection creates no temporary files and does
-not modify the selected bytes.
+admits at most 1 GiB by default (`max_file_bytes` / `--max-file-bytes`, 32 bytes
+to 4 GiB), searches with 256 KiB windows, keeps at most 32 sentinels per
+slice by default (`max_sentinels_per_slice` / `--max-sentinels-per-slice`, 1 to
+1,024), and bounds estimated decoded fuse data across all slices to 8 MiB by
+default (`max_decoded_bytes` / `--max-decoded-bytes`, 1 KiB to 16 MiB) before
+allocating fuse objects. Refusals report the controlling parameter in
+`details.limit`. A real
+nine-fuse, one-slice result is about 1,200 CLI tokens; a two-slice result is
+about 1,300 tokens. Exact size varies with path lengths and limitations. This
+inspection creates no temporary files and does not modify the selected bytes.

@@ -21,7 +21,7 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import { electronFuseBudgetLimit } from "../domain/electron/electronFuses.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ZodError } from "zod";
 import {
@@ -52,7 +52,10 @@ export const electronFuseFailure = (
       const cancellation = artifactFileCompletion(cause)?.cancellation;
       const primary =
         outcome.kind === "failed"
-          ? electronFuseFailure(outcome.cause, path, operation)
+          ? operation !== OPERATION &&
+            outcome.cause instanceof ElectronFuseResourceFailure
+            ? undefined
+            : electronFuseFailure(outcome.cause, path, operation)
           : cancellation === undefined
             ? undefined
             : cancelledBy(operation, carriedReason(cancellation.reason));
@@ -75,23 +78,48 @@ export const electronFuseFailure = (
       { path: ["path"], reason: cause.reason, message: cause.message },
     ]);
   if (cause instanceof ElectronFuseResourceFailure) {
-    const { name, maximum } = cause.limit;
+    const { name, maximum, required } = cause.limit;
+    if (operation !== OPERATION)
+      return new ProviderAdapterError(
+        ELECTRON_FUSE_PROVIDER_IDENTITY.id,
+        operation,
+        {
+          cause,
+          diagnostics: {
+            path,
+            reason: cause.message,
+            [name]: maximum,
+          },
+        },
+      );
     const fileSize = name === "maximum_input_bytes";
-    return parseLimitConstraint(
-      operation,
-      fileSize ? "file-size" : "capacity",
-      cause,
-      {
-        legacyMaximumKey: name,
-        ...fixedAllowanceOptions(
-          fileSize
-            ? "the Electron fuse input allowance"
-            : "The Electron fuse sentinel inventory",
-          fileSize ? "input" : "count",
-          { limit: maximum, unit: fileSize ? "bytes" : "sentinels per slice" },
-        ),
+    const decodedBytes = name === "maximum_decoded_bytes";
+    const parameter = fileSize
+      ? "max_file_bytes"
+      : decodedBytes
+        ? "max_decoded_bytes"
+        : "max_sentinels_per_slice";
+    const resource = fileSize
+      ? "file-size"
+      : decodedBytes
+        ? "memory"
+        : "capacity";
+    const requiredValue =
+      typeof required === "bigint"
+        ? required <= BigInt(Number.MAX_SAFE_INTEGER)
+          ? Number(required)
+          : undefined
+        : required;
+    return parseLimitConstraint(operation, resource, cause, {
+      legacyMaximumKey: name,
+      retryable: false,
+      limit: {
+        ...electronFuseBudgetLimit(parameter, maximum),
+        ...(requiredValue === undefined
+          ? {}
+          : { required_value: requiredValue }),
       },
-    );
+    });
   }
   const formatFailure = parseFailureAnalysisError(operation, path, cause);
   if (formatFailure !== undefined) return formatFailure;

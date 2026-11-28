@@ -243,6 +243,9 @@ These parameters report that limit:
 | `inspect_rust_binary`                         | `max_compressed_dependency_bytes` | 1048576    |     1 |        `buffer.constants.MAX_LENGTH` | `src/domain/rust/rustDependencyBudget.ts` |
 | `inspect_rust_binary`                         | `max_inflated_dependency_bytes`   | 8388608    |     1 | `buffer.constants.MAX_STRING_LENGTH` | `src/domain/rust/rustDependencyBudget.ts` |
 | `inspect_rust_binary`                         | `max_dependency_inflate_ratio`    | 64         |     1 |            `Number.MAX_SAFE_INTEGER` | `src/domain/rust/rustDependencyBudget.ts` |
+| `inspect_electron_fuses`                      | `max_file_bytes`                  | 1073741824 |    32 |                           4294967296 | `src/domain/electron/electronFuses.ts`    |
+| `inspect_electron_fuses`                      | `max_sentinels_per_slice`         | 32         |     1 |                                 1024 | `src/domain/electron/electronFuses.ts`    |
+| `inspect_electron_fuses`                      | `max_decoded_bytes`               | 8388608    |  1024 |                             16777216 | `src/domain/electron/electronFuses.ts`    |
 
 Refusals that still name a per-call control only in prose are counted by
 `scripts/verify/fixed-ceilings.mjs` against

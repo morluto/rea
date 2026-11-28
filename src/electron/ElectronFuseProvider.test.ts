@@ -27,9 +27,11 @@ import {
 } from "../../tests/fixtures/electron/fuseImage.js";
 import { ELECTRON_FUSE_STATE_BYTES } from "../domain/electron/electronFuses.js";
 import { ElectronFuseProvider } from "./ElectronFuseProvider.js";
+import { electronFuseFailure } from "./ElectronFuseFailures.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   ELECTRON_FUSE_LIMITS,
+  ElectronFuseResourceFailure,
   readElectronFuseImage,
 } from "./ElectronFuseReader.js";
 
@@ -844,31 +846,45 @@ it("enforces the 32 sentinel boundary with typed and public limit details", asyn
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error._tag).toBe("AnalysisResourceConstraintError");
-        expect(projectAnalysisError(result.error)).toMatchObject({
+        const projected = projectAnalysisError(result.error);
+        expect(projected).toMatchObject({
           code: "resource_constraint",
           retryable: false,
           details: {
             reported_limits: { maximum_sentinels_per_slice: 32 },
-            refusal: {
-              kind: "fixed_ceiling",
-              allowance_kind: "count",
-              limit: 32,
-              unit: "sentinels per slice",
+            limit: {
+              control_kind: "parameter",
+              parameter: "max_sentinels_per_slice",
+              effective_value: 32,
+              minimum: 1,
+              maximum: 1024,
+              default_value: 32,
+              unit: "count",
+              applies_at: "next_call",
             },
           },
-          remediation: {
-            action: expect.stringContaining("sentinel inventory"),
-          },
         });
-        expect(
-          projectAnalysisError(result.error).remediation.action,
-        ).not.toMatch(/Wait for an active analysis/u);
+        expect(projected.details?.limit).not.toHaveProperty("required_value");
+        expect(projected.remediation.action).not.toMatch(
+          /Wait for an active analysis/u,
+        );
+      }
+      const raised = await provider.inspect({
+        path,
+        max_sentinels_per_slice: 33,
+      });
+      expect(raised.ok).toBe(true);
+      if (raised.ok) {
+        expect(raised.value.slices[0]?.sentinel_count).toBe(33);
+        expect(raised.value.limitations).toContainEqual(
+          expect.stringContaining("at most 33 sentinels"),
+        );
       }
     }
   }
 });
 
-it("rejects a sparse artifact over 1 GiB before scanning", async () => {
+it("rejects a sparse artifact over 1 GiB before scanning and honors max_file_bytes", async () => {
   const root = await createTestTempDirectory("rea-electron-input-limit-");
   const path = join(root, "large");
   await writeFile(path, thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes);
@@ -894,14 +910,51 @@ it("rejects a sparse artifact over 1 GiB before scanning", async () => {
       retryable: false,
       details: {
         reported_limits: { maximum_input_bytes: 1024 * 1024 * 1024 },
-        refusal: {
-          kind: "fixed_ceiling",
-          allowance_kind: "input",
-          limit: 1024 * 1024 * 1024,
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 1024 * 1024 * 1024,
+          minimum: 32,
+          maximum: 4 * 1024 * 1024 * 1024,
+          default_value: 1024 * 1024 * 1024,
           unit: "bytes",
+          applies_at: "next_call",
+          required_value: 1_073_741_825,
         },
       },
     });
+  }
+  const smallPath = join(root, "small");
+  const smallBytes = thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes;
+  await writeFile(smallPath, smallBytes);
+  const tight = await provider.inspect({
+    path: smallPath,
+    max_file_bytes: 64,
+  });
+  expect(tight.ok).toBe(false);
+  if (!tight.ok) {
+    expect(projectAnalysisError(tight.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        reported_limits: { maximum_input_bytes: 64 },
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64,
+          required_value: smallBytes.length,
+        },
+      },
+    });
+  }
+  const exact = await provider.inspect({
+    path: smallPath,
+    max_file_bytes: smallBytes.length,
+  });
+  expect(exact.ok).toBe(true);
+  if (exact.ok) {
+    expect(exact.value.limitations).toContainEqual(
+      expect.stringContaining(`at most ${String(smallBytes.length)} bytes`),
+    );
   }
 });
 
@@ -1005,4 +1058,237 @@ it("retains the identity of a directory removed by a terminal parent segment", a
   await expect(
     readElectronFuseImage(located.file.path, { selection: located.file }),
   ).rejects.toBeInstanceOf(RegularFileChangedError);
+});
+
+it("omits required_value when a bigint size exceeds MAX_SAFE_INTEGER and keeps budget controls scoped to inspect_electron_fuses", () => {
+  const huge = new ElectronFuseResourceFailure(
+    {
+      name: "maximum_input_bytes",
+      maximum: 1024,
+      required: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
+    },
+    "Selected artifact exceeds the 1024-byte Electron fuse read budget.",
+  );
+  const projected = projectAnalysisError(electronFuseFailure(huge, "/app"));
+  expect(projected.details).toMatchObject({
+    limit: {
+      control_kind: "parameter",
+      parameter: "max_file_bytes",
+      effective_value: 1024,
+    },
+  });
+  expect(
+    (projected.details as { limit?: Record<string, unknown> }).limit,
+  ).not.toHaveProperty("required_value");
+
+  const otherOp = projectAnalysisError(
+    electronFuseFailure(huge, "/app", "capture_electron_scenario"),
+  );
+  expect(otherOp.code).toBe("execution_failure");
+  expect(otherOp.details).not.toHaveProperty("limit");
+});
+
+it("refuses multi-slice fuse expansion before allocating objects and honors max_decoded_bytes", async () => {
+  const root = await createTestTempDirectory("rea-electron-decoded-budget-");
+  const maxFuseWire = Buffer.concat([
+    FUSE_SENTINEL,
+    fuseWire(
+      2,
+      Array.from({ length: 255 }, () => ELECTRON_FUSE_STATE_BYTES.enabled),
+    ),
+  ]);
+  // 128 slices * 16 sentinels * 255 fuses would expand to 522,240 fuse objects
+  // (~67 MiB estimated), far above the 8 MiB default max_decoded_bytes, while
+  // staying well within max_sentinels_per_slice: 1024.
+  const sliceBody = Buffer.concat(
+    Array.from({ length: 16 }, () => maxFuseWire),
+  );
+  const singleSlice = thinMacho(0x0100000c, sliceBody);
+  const sliceCount = 128;
+  const tableEnd = 8 + sliceCount * 20;
+  const table = Buffer.alloc(tableEnd);
+  table.writeUInt32BE(0xcafebabe, 0);
+  table.writeUInt32BE(sliceCount, 4);
+  for (let i = 0; i < sliceCount; i += 1) {
+    const base = 8 + i * 20;
+    table.writeUInt32BE(0x0100000c, base);
+    table.writeUInt32BE(0, base + 4);
+    table.writeUInt32BE(tableEnd + i * singleSlice.length, base + 8);
+    table.writeUInt32BE(singleSlice.length, base + 12);
+    table.writeUInt32BE(0, base + 16);
+  }
+  const fatPath = join(root, "fat-128-slices");
+  await writeFile(
+    fatPath,
+    Buffer.concat([
+      table,
+      ...Array.from({ length: sliceCount }, () => singleSlice),
+    ]),
+  );
+
+  const fatRefused = await provider.inspect({
+    path: fatPath,
+    max_sentinels_per_slice: 1024,
+  });
+  expect(fatRefused.ok).toBe(false);
+  if (!fatRefused.ok) {
+    expect(fatRefused.error._tag).toBe("AnalysisResourceConstraintError");
+    const projected = projectAnalysisError(fatRefused.error);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        resource: "memory",
+        reported_limits: {
+          maximum_decoded_bytes: ELECTRON_FUSE_LIMITS.maximumDecodedBytes,
+        },
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_decoded_bytes",
+          effective_value: ELECTRON_FUSE_LIMITS.maximumDecodedBytes,
+          minimum: 1024,
+          maximum: 16 * 1024 * 1024,
+          default_value: ELECTRON_FUSE_LIMITS.maximumDecodedBytes,
+          unit: "bytes",
+          applies_at: "next_call",
+        },
+      },
+    });
+    expect(projected.details?.limit).not.toHaveProperty("required_value");
+  }
+
+  // Tight per-call max_decoded_bytes refuses a small image and succeeds once raised.
+  const smallPath = join(root, "small-thin");
+  await writeFile(smallPath, thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes);
+  const tightRefused = await provider.inspect({
+    path: smallPath,
+    max_decoded_bytes: 1024,
+  });
+  expect(tightRefused.ok).toBe(false);
+  if (!tightRefused.ok) {
+    expect(projectAnalysisError(tightRefused.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "memory",
+        limit: {
+          parameter: "max_decoded_bytes",
+          effective_value: 1024,
+        },
+      },
+    });
+  }
+  const raised = await provider.inspect({
+    path: smallPath,
+    max_decoded_bytes: 4096,
+  });
+  expect(raised.ok).toBe(true);
+  if (raised.ok) {
+    expect(raised.value.limitations).toContainEqual(
+      expect.stringContaining("4096 bytes"),
+    );
+  }
+
+  // Slice-level pre-allocation guard: 9 empty slices * 128 B = 1,152 B > 1,024 B.
+  const emptySlice = thinMacho(0x0100000c, Buffer.alloc(16));
+  const nineCount = 9;
+  const nineTableEnd = 8 + nineCount * 20;
+  const nineTable = Buffer.alloc(nineTableEnd);
+  nineTable.writeUInt32BE(0xcafebabe, 0);
+  nineTable.writeUInt32BE(nineCount, 4);
+  for (let i = 0; i < nineCount; i += 1) {
+    const base = 8 + i * 20;
+    nineTable.writeUInt32BE(0x0100000c, base);
+    nineTable.writeUInt32BE(0, base + 4);
+    nineTable.writeUInt32BE(nineTableEnd + i * emptySlice.length, base + 8);
+    nineTable.writeUInt32BE(emptySlice.length, base + 12);
+    nineTable.writeUInt32BE(0, base + 16);
+  }
+  const nineEmptyPath = join(root, "fat-9-empty-slices");
+  await writeFile(
+    nineEmptyPath,
+    Buffer.concat([
+      nineTable,
+      ...Array.from({ length: nineCount }, () => emptySlice),
+    ]),
+  );
+  const nineSliceRefused = await provider.inspect({
+    path: nineEmptyPath,
+    max_decoded_bytes: 1024,
+  });
+  expect(nineSliceRefused.ok).toBe(false);
+  if (!nineSliceRefused.ok) {
+    expect(projectAnalysisError(nineSliceRefused.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "memory",
+        limit: { parameter: "max_decoded_bytes", effective_value: 1024 },
+      },
+    });
+  }
+
+  // Sentinel-level pre-allocation guard with 0-fuse wires:
+  // 1 slice (128 B) + 2 empty sentinels (2 * 1,024 B) > 1,024 B before parseWire.
+  const zeroFuseWire = Buffer.concat([FUSE_SENTINEL, fuseWire(1, [])]);
+  const twoZeroPath = join(root, "two-zero-fuse-sentinels");
+  await writeFile(
+    twoZeroPath,
+    thinMacho(0x0100000c, Buffer.concat([zeroFuseWire, zeroFuseWire])),
+  );
+  const zeroSentinelRefused = await provider.inspect({
+    path: twoZeroPath,
+    max_decoded_bytes: 1024,
+  });
+  expect(zeroSentinelRefused.ok).toBe(false);
+  if (!zeroSentinelRefused.ok) {
+    expect(projectAnalysisError(zeroSentinelRefused.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "memory",
+        limit: { parameter: "max_decoded_bytes", effective_value: 1024 },
+      },
+    });
+  }
+
+  // High sentinel count with 0-fuse v1 wires (limitation amplification attack):
+  // 128 slices * 70 empty v1 sentinels = 8,960 sentinels (> 8 MiB at 1,024 B/sentinel).
+  const manyZeroSlice = thinMacho(
+    0x0100000c,
+    Buffer.concat(Array.from({ length: 70 }, () => zeroFuseWire)),
+  );
+  const manyZeroTable = Buffer.alloc(tableEnd);
+  manyZeroTable.writeUInt32BE(0xcafebabe, 0);
+  manyZeroTable.writeUInt32BE(sliceCount, 4);
+  for (let i = 0; i < sliceCount; i += 1) {
+    const base = 8 + i * 20;
+    manyZeroTable.writeUInt32BE(0x0100000c, base);
+    manyZeroTable.writeUInt32BE(0, base + 4);
+    manyZeroTable.writeUInt32BE(tableEnd + i * manyZeroSlice.length, base + 8);
+    manyZeroTable.writeUInt32BE(manyZeroSlice.length, base + 12);
+    manyZeroTable.writeUInt32BE(0, base + 16);
+  }
+  const manyZeroPath = join(root, "fat-128-empty-sentinels");
+  await writeFile(
+    manyZeroPath,
+    Buffer.concat([
+      manyZeroTable,
+      ...Array.from({ length: sliceCount }, () => manyZeroSlice),
+    ]),
+  );
+  const manyZeroRefused = await provider.inspect({
+    path: manyZeroPath,
+    max_sentinels_per_slice: 1024,
+  });
+  expect(manyZeroRefused.ok).toBe(false);
+  if (!manyZeroRefused.ok) {
+    expect(projectAnalysisError(manyZeroRefused.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "memory",
+        limit: {
+          parameter: "max_decoded_bytes",
+          effective_value: ELECTRON_FUSE_LIMITS.maximumDecodedBytes,
+        },
+      },
+    });
+  }
 });

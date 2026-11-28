@@ -5,6 +5,71 @@ import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
+import {
+  parameterBudgetLimitFor,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
+
+/** Default and hard ceilings on caller-selected Electron fuse inspection budgets. */
+export const DEFAULT_INSPECT_ELECTRON_FUSES_FILE_BYTES = 1024 * 1024 * 1024;
+export const MAX_INSPECT_ELECTRON_FUSES_FILE_BYTES = 4 * 1024 * 1024 * 1024;
+export const DEFAULT_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE = 32;
+export const MAX_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE = 1024;
+export const DEFAULT_INSPECT_ELECTRON_FUSES_DECODED_BYTES = 8 * 1024 * 1024;
+export const MAX_INSPECT_ELECTRON_FUSES_DECODED_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Conservative per-record decoded representation costs accounted before allocation.
+ * Each sentinel also expands into derived runtime_implications, Evidence locations,
+ * and duplicated limitations on both the report and Evidence envelope.
+ */
+export const ELECTRON_FUSE_SLICE_ESTIMATED_BYTES = 128;
+export const ELECTRON_FUSE_SENTINEL_ESTIMATED_BYTES = 1024;
+export const ELECTRON_FUSE_ENTRY_ESTIMATED_BYTES = 128;
+
+/** The per-call budgets of `inspect_electron_fuses`. */
+export const ELECTRON_FUSE_BUDGETS = {
+  max_file_bytes: {
+    minimum: 32,
+    maximum: MAX_INSPECT_ELECTRON_FUSES_FILE_BYTES,
+    default_value: DEFAULT_INSPECT_ELECTRON_FUSES_FILE_BYTES,
+    unit: "bytes",
+  },
+  max_sentinels_per_slice: {
+    minimum: 1,
+    maximum: MAX_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE,
+    default_value: DEFAULT_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE,
+    unit: "count",
+  },
+  /** Estimated bytes of decoded slices, sentinels, and fuse entries across all slices. */
+  max_decoded_bytes: {
+    minimum: 1024,
+    maximum: MAX_INSPECT_ELECTRON_FUSES_DECODED_BYTES,
+    default_value: DEFAULT_INSPECT_ELECTRON_FUSES_DECODED_BYTES,
+    unit: "bytes",
+  },
+} as const satisfies Record<string, ParameterBudget>;
+export type ElectronFuseBudget = keyof typeof ELECTRON_FUSE_BUDGETS;
+
+/** Estimated decoded representation bytes across all slices for one fuse report. */
+export const estimateElectronFuseDecodedBytes = (
+  slices: readonly {
+    readonly sentinels: readonly { readonly fuses: readonly unknown[] }[];
+  }[],
+): number => {
+  let bytes = slices.length * ELECTRON_FUSE_SLICE_ESTIMATED_BYTES;
+  for (const slice of slices) {
+    bytes += slice.sentinels.length * ELECTRON_FUSE_SENTINEL_ESTIMATED_BYTES;
+    for (const sentinel of slice.sentinels)
+      bytes += sentinel.fuses.length * ELECTRON_FUSE_ENTRY_ESTIMATED_BYTES;
+  }
+  return bytes;
+};
+
+/** The per-call budget that stopped an Electron fuse inspection. */
+export const electronFuseBudgetLimit =
+  parameterBudgetLimitFor<ElectronFuseBudget>(ELECTRON_FUSE_BUDGETS);
 
 /** ASCII sentinel that introduces an Electron fuse wire in an Electron binary. */
 export const ELECTRON_FUSE_SENTINEL = "dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX";
@@ -165,6 +230,21 @@ export const inspectElectronFusesInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to a macOS .app bundle, Electron Framework binary, Windows PE executable, or Linux ELF executable",
   ),
+  max_file_bytes: parameterBudgetSchema(
+    ELECTRON_FUSE_BUDGETS.max_file_bytes,
+  ).describe(
+    "Maximum regular-file bytes to admit and scan (default 1 GiB, maximum 4 GiB)",
+  ),
+  max_sentinels_per_slice: parameterBudgetSchema(
+    ELECTRON_FUSE_BUDGETS.max_sentinels_per_slice,
+  ).describe(
+    "Maximum Electron fuse sentinels retained per slice (default 32, maximum 1024); exceeding the budget fails without partial success",
+  ),
+  max_decoded_bytes: parameterBudgetSchema(
+    ELECTRON_FUSE_BUDGETS.max_decoded_bytes,
+  ).describe(
+    "Estimated bytes of decoded slices, sentinels, and fuse entries across all slices, accounted before allocating fuse objects (default 8 MiB, maximum 16 MiB); exceeding the budget fails without partial success",
+  ),
 });
 
 export type ElectronFuseState = z.infer<typeof fuseStateSchema>;
@@ -174,7 +254,7 @@ export type ElectronFuseImplication = z.infer<
   typeof electronFuseImplicationSchema
 >;
 export type ElectronFuseReport = z.infer<typeof electronFuseReportSchema>;
-export type InspectElectronFusesInput = z.infer<
+export type InspectElectronFusesRequest = z.input<
   typeof inspectElectronFusesInputSchema
 >;
 
@@ -306,6 +386,7 @@ const validateReportBounds = (
   context: z.RefinementCtx,
 ): void => {
   const size = report.artifact.bytes;
+  const sentinelOffsetsBySlice: Set<number>[] = [];
   for (const [sliceIndex, slice] of report.slices.entries()) {
     if (slice.index !== sliceIndex)
       context.addIssue({
@@ -325,8 +406,12 @@ const validateReportBounds = (
         path: ["slices", sliceIndex],
         message: "Slice range extends outside the selected artifact.",
       });
-    for (const [sentinelIndex, sentinel] of slice.sentinels.entries())
+    const offsets = new Set<number>();
+    for (const [sentinelIndex, sentinel] of slice.sentinels.entries()) {
+      offsets.add(sentinel.sentinel_offset);
       validateSentinel(slice, sentinel, sliceIndex, sentinelIndex, context);
+    }
+    sentinelOffsetsBySlice.push(offsets);
   }
   const expected = new Set(
     describeElectronFuseFindings(
@@ -342,10 +427,9 @@ const validateReportBounds = (
         message:
           "Runtime implication is not supported by the reported fuse bytes and applicability.",
       });
-    const slice = report.slices[implication.slice_index];
     if (
-      slice?.sentinels.some(
-        (sentinel) => sentinel.sentinel_offset === implication.sentinel_offset,
+      sentinelOffsetsBySlice[implication.slice_index]?.has(
+        implication.sentinel_offset,
       ) !== true
     )
       context.addIssue({

@@ -1,13 +1,22 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_INSPECT_ELECTRON_FUSES_DECODED_BYTES,
   describeElectronFuseFindings,
   electronFuseName,
   electronFuseReportSchema,
   electronFuseState,
+  ELECTRON_FUSE_ENTRY_ESTIMATED_BYTES,
   ELECTRON_FUSE_SENTINEL,
+  ELECTRON_FUSE_SENTINEL_ESTIMATED_BYTES,
+  ELECTRON_FUSE_SLICE_ESTIMATED_BYTES,
   ELECTRON_FUSE_STATE_BYTES,
   ELECTRON_FUSE_V1_NAMES,
+  estimateElectronFuseDecodedBytes,
+  inspectElectronFusesInputSchema,
+  MAX_INSPECT_ELECTRON_FUSES_DECODED_BYTES,
+  MAX_INSPECT_ELECTRON_FUSES_FILE_BYTES,
+  MAX_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE,
   type ElectronFuseSlice,
 } from "./electronFuses.js";
 
@@ -285,4 +294,60 @@ it("rejects claimed wire bytes outside their slice and unsupported derivations",
       ],
     }).success,
   ).toBe(false);
+});
+
+it("validates max_decoded_bytes bounds and estimates decoded representation across slices", () => {
+  const samplePath =
+    process.platform === "win32" ? "C:\\app\\Electron.exe" : "/app/Electron";
+  const parsed = inspectElectronFusesInputSchema.parse({ path: samplePath });
+  expect(parsed.max_decoded_bytes).toBe(
+    DEFAULT_INSPECT_ELECTRON_FUSES_DECODED_BYTES,
+  );
+  expect(
+    inspectElectronFusesInputSchema.safeParse({
+      path: samplePath,
+      max_decoded_bytes: 1023,
+    }).success,
+  ).toBe(false);
+  expect(
+    inspectElectronFusesInputSchema.safeParse({
+      path: samplePath,
+      max_decoded_bytes: MAX_INSPECT_ELECTRON_FUSES_DECODED_BYTES + 1,
+    }).success,
+  ).toBe(false);
+  expect(
+    inspectElectronFusesInputSchema.safeParse({
+      path: samplePath,
+      max_file_bytes: 31,
+    }).success,
+  ).toBe(false);
+  expect(
+    inspectElectronFusesInputSchema.safeParse({
+      path: samplePath,
+      max_file_bytes: MAX_INSPECT_ELECTRON_FUSES_FILE_BYTES + 1,
+    }).success,
+  ).toBe(false);
+  expect(
+    inspectElectronFusesInputSchema.safeParse({
+      path: samplePath,
+      max_sentinels_per_slice: 0,
+    }).success,
+  ).toBe(false);
+  expect(
+    inspectElectronFusesInputSchema.safeParse({
+      path: samplePath,
+      max_sentinels_per_slice:
+        MAX_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE + 1,
+    }).success,
+  ).toBe(false);
+  expect(
+    estimateElectronFuseDecodedBytes([
+      slice([sentinel(0, [0x30, 0x31])], 0),
+      slice([sentinel(0, [0x31])], 1),
+    ]),
+  ).toBe(
+    2 * ELECTRON_FUSE_SLICE_ESTIMATED_BYTES +
+      2 * ELECTRON_FUSE_SENTINEL_ESTIMATED_BYTES +
+      3 * ELECTRON_FUSE_ENTRY_ESTIMATED_BYTES,
+  );
 });

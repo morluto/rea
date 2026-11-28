@@ -5,7 +5,7 @@ import type {
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type {
   ElectronFuseReport,
-  InspectElectronFusesInput,
+  InspectElectronFusesRequest,
 } from "../../domain/electron/electronFuses.js";
 import type { Result } from "../../domain/result.js";
 
@@ -15,7 +15,7 @@ export interface ElectronFusePort {
   /** Release owned read resources, retrying retained cleanup failures. */
   close(): Promise<void>;
   inspect(
-    input: InspectElectronFusesInput,
+    input: InspectElectronFusesRequest,
     options?: ExecutionOptions,
   ): Promise<Result<ElectronFuseReport, AnalysisError>>;
 }
