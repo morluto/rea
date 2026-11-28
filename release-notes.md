@@ -326,6 +326,7 @@
 * **cli:** describe universal Mach-O slice selection without a single-dash flag ([#14912](https://github.com/morluto/rea/issues/14912)) ([3097263](https://github.com/morluto/rea/commit/3097263763611eb0c32c502d5a222060cf02f468))
 * **cli:** enforce the retained Evidence cap on bundle reuse ([#14838](https://github.com/morluto/rea/issues/14838)) ([807cd63](https://github.com/morluto/rea/commit/807cd6366c55aede5466f3f9f0c0e4410a85d8c7))
 * **cli:** isolate a synchronous resource-closer throw ([#14796](https://github.com/morluto/rea/issues/14796)) ([1c8b3b6](https://github.com/morluto/rea/commit/1c8b3b64e864f886b81d85b99f2ebe70536e781d))
+* **cli:** list --columns among the global options in help ([#14981](https://github.com/morluto/rea/issues/14981)) ([3c60922](https://github.com/morluto/rea/commit/3c60922615b3140d70454c5b4e4d814d9c278027))
 * **cli:** load Electron fuse inspection on demand ([#13922](https://github.com/morluto/rea/issues/13922)) ([b48b986](https://github.com/morluto/rea/commit/b48b9860a4e646793b9972d09b76fecb52e04d24))
 * **cli:** preserve doctor routing with empty output values ([#13262](https://github.com/morluto/rea/issues/13262)) ([a06e04b](https://github.com/morluto/rea/commit/a06e04b4dfcd994a426cc6b6ab77082260b95a3f))
 * **cli:** preserve explicit null output ([#13342](https://github.com/morluto/rea/issues/13342)) ([d4f78cb](https://github.com/morluto/rea/commit/d4f78cb5922d9fd83222514dda85db8bf5287f1b))
