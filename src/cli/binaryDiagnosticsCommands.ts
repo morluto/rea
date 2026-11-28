@@ -649,4 +649,48 @@ export const registerBinaryDiagnosticsCommands = (
       });
     },
   );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_firmware_vector_table"),
+    {
+      description:
+        "Decode an ARM M-profile or RISC-V mtvec interrupt/trap vector table without executing it",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      evidenceDelivery: true,
+      fields: {
+        path: { description: "Local firmware binary or flash dump" },
+        architecture: {
+          description:
+            "Target profile: an ARM M-profile variant (armv6-m, armv7-m, armv7e-m, armv8-m.base, armv8-m.main, armv8.1-m.main) or riscv",
+        },
+        base_address: {
+          description: "32-bit load base address for file offset 0",
+        },
+        vector_table_offset: {
+          description: "4-byte aligned byte offset of the vector table",
+        },
+        max_entries: { description: "Maximum 32-bit slots to decode" },
+        svd_xml: {
+          description: "Optional CMSIS-SVD XML text for external IRQ names",
+        },
+        max_svd_xml_nodes: {
+          description: "Maximum XML nodes admitted when parsing svd_xml",
+        },
+        max_svd_expanded_chars: {
+          description:
+            "Maximum cumulative CMSIS-SVD interrupt metadata characters",
+        },
+        max_file_bytes: { description: "Maximum input file size in bytes" },
+      },
+    },
+    deliverWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/firmwareVectorTable.js")
+        ).createFirmwareVectorTableService(),
+      "rea-firmware-vector-table",
+    ),
+  );
 };

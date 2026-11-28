@@ -434,6 +434,11 @@ export const documentationSections = [
         route: "/firmware-analysis",
       },
       {
+        text: "Firmware interrupt and trap vector tables",
+        source: "guides/firmware/firmware-vector-tables.md",
+        route: "/firmware-vector-tables",
+      },
+      {
         text: "Android OTA update payloads",
         source: "guides/firmware/android-ota-payload.md",
         route: "/android-ota-payload",

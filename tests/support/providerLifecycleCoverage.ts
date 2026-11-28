@@ -1375,6 +1375,24 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
   ),
+  "rea-firmware-vector-table": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/firmwareVectorTableMcpCli.test.ts",
+        "decodes an STM32 Cortex-M vector table with CLI and advertised MCP parity and enforces max_file_bytes",
+      ),
+    ),
+    covered(
+      test(
+        "src/firmware/vectorTable/FirmwareVectorTableProvider.test.ts",
+        "returns typed resource, integrity, and cancellation failures",
+      ),
+      test(
+        "src/application/binaryDiagnostics/FirmwareVectorTableService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
   "rea-harmony-application": inProcess(
     covered(
       test(
