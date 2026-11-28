@@ -5,10 +5,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   installLinuxHopper,
+  LINUX_HOPPER_SETUP_HOSTS,
   linuxHopperInstallDisclosure,
   linuxSharedLibrariesAvailable,
   parseLinuxDistribution,
   supportsReaHost,
+  unsupportedLinuxHopperSetupRemediation,
   LinuxHopperTemporaryCleanupOwner,
   systemLinuxHopperInstallHost,
   type LinuxDistribution,
@@ -219,6 +221,59 @@ describe("Linux Hopper host classification", () => {
     },
   );
 
+  it("names the detected host when automated Hopper setup does not apply", () => {
+    const bazzite = parseLinuxDistribution(
+      'ID=bazzite\nID_LIKE="fedora"\nVERSION_ID=43\n',
+      "x64",
+    );
+    expect(bazzite).toMatchObject({
+      id: "bazzite",
+      versionId: "43",
+      packageFamily: "rpm",
+      architecture: "x64",
+      hopperSetupSupported: false,
+    });
+    const bazziteRemediation = unsupportedLinuxHopperSetupRemediation(bazzite);
+    for (const fact of [
+      "bazzite",
+      "43",
+      "rpm",
+      "x64",
+      LINUX_HOPPER_SETUP_HOSTS,
+    ])
+      expect(bazziteRemediation).toContain(fact);
+    expect(bazziteRemediation).toMatch(/existing supported provider/i);
+
+    const ubuntuArm64 = parseLinuxDistribution(
+      'ID=ubuntu\nVERSION_ID="24.04"\n',
+      "arm64",
+    );
+    const ubuntuArm64Remediation =
+      unsupportedLinuxHopperSetupRemediation(ubuntuArm64);
+    for (const fact of [
+      "ubuntu",
+      "24.04",
+      "deb",
+      "arm64",
+      LINUX_HOPPER_SETUP_HOSTS,
+    ])
+      expect(ubuntuArm64Remediation).toContain(fact);
+    expect(ubuntuArm64Remediation).toMatch(/existing supported provider/i);
+
+    const nixos = parseLinuxDistribution("ID=nixos\n", "x64");
+    const nixosRemediation = unsupportedLinuxHopperSetupRemediation(nixos);
+    expect(nixosRemediation).toContain("nixos");
+    expect(nixosRemediation).toContain("x64");
+    expect(nixosRemediation).not.toContain("undefined");
+    expect(nixosRemediation).toContain(LINUX_HOPPER_SETUP_HOSTS);
+
+    const unreadableRemediation =
+      unsupportedLinuxHopperSetupRemediation(undefined);
+    expect(unreadableRemediation).toMatch(/could not be read/i);
+    expect(unreadableRemediation).toContain(LINUX_HOPPER_SETUP_HOSTS);
+    expect(unreadableRemediation).toMatch(/existing supported provider/i);
+  });
+
   it("withholds host support from a distribution with no package family", () => {
     expect(supportsReaHost(parseLinuxDistribution("ID=nixos\n", "x64"))).toBe(
       false,
@@ -368,6 +423,9 @@ describe("Linux Hopper installation failure classification", () => {
     expect(await installFixture(host)).toMatchObject({
       status: "failed",
       reason,
+      ...(scenario === "unsupported host"
+        ? { distribution: host.distributionValue }
+        : {}),
       ...(scenario === "package manager failure"
         ? { packageFailure: host.packageFailure }
         : {}),
