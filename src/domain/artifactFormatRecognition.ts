@@ -32,7 +32,10 @@ import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
 import { hasSystemdJournalHeader } from "./linux/systemdJournal.js";
 import { hasAuditdLogRecord } from "./linux/auditdLog.js";
-import { hasKubernetesAuditEvent } from "./linux/kubernetesAuditLog.js";
+import {
+  hasKubernetesAuditEvent,
+  kubernetesAuditNeedsMore,
+} from "./linux/kubernetesAuditEventProbe.js";
 import { hasWindowsShortcutHeader } from "./windows/windowsShortcutHeader.js";
 import { BinaryFormatFailure } from "./binaryContainer.js";
 import {
@@ -143,6 +146,8 @@ export interface ArtifactRecognitionInput {
    * route has read them and the prefix does not reach them.
    */
   readonly iso9660Descriptor?: Uint8Array | undefined;
+  /** Result of the bounded continuation when the fixed prefix was insufficient. */
+  readonly kubernetesAuditEvent?: boolean | undefined;
 }
 
 /**
@@ -339,10 +344,16 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("ntfs-mft", hasMftFileRecordHeader),
     when("systemd-journal", hasSystemdJournalHeader),
     when("auditd-log", hasAuditdLogRecord),
-    ({ prefix, fileSize }) =>
-      hasKubernetesAuditEvent(prefix, fileSize)
-        ? { state: "recognized", format: "kubernetes-audit-log" }
-        : undefined,
+    ({ prefix, fileSize, kubernetesAuditEvent }) => {
+      if (kubernetesAuditEvent ?? hasKubernetesAuditEvent(prefix, fileSize))
+        return { state: "recognized", format: "kubernetes-audit-log" };
+      if (
+        kubernetesAuditEvent === undefined &&
+        kubernetesAuditNeedsMore(prefix, fileSize)
+      )
+        return { state: "needs-input", format: "kubernetes-audit-log" };
+      return undefined;
+    },
     when("sqlite", hasSqliteHeader),
     when("windows-shortcut", hasWindowsShortcutHeader),
     when("deb", hasDebPackageHeader),

@@ -659,6 +659,7 @@ export const classifyArtifactHeader = (
     suffix,
     iso9660Descriptor,
     xmlPlistSignature: evidence.xmlPlistSignature,
+    kubernetesAuditEvent: evidence.kubernetesAuditEvent,
   });
   if (recognized !== undefined) return only(recognized);
   const fatFormat = classifyFatArtifact(evidence);

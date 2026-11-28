@@ -13,12 +13,12 @@ import {
   AUDITD_INLINE_EVENT_LIMIT,
   AUDITD_INLINE_EVENT_TYPE_LIMIT,
 } from "../linux/auditdLog.js";
+import { KUBERNETES_AUDIT_STAGES } from "../linux/kubernetesAuditEventProbe.js";
 import {
   KUBERNETES_AUDIT_INLINE_DIAGNOSTIC_LIMIT,
   KUBERNETES_AUDIT_INLINE_EVENT_LIMIT,
   KUBERNETES_AUDIT_INLINE_STAGE_LIMIT,
   KUBERNETES_AUDIT_INLINE_VERB_LIMIT,
-  KUBERNETES_AUDIT_STAGES,
 } from "../linux/kubernetesAuditLog.js";
 import { offset, uint32 } from "./primitives.js";
 

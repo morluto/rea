@@ -26,6 +26,7 @@ import {
   ISO9660_DESCRIPTOR_OFFSET,
   ISO9660_SIGNATURE_BYTES,
 } from "../domain/iso9660/iso9660Structures.js";
+import { KubernetesAuditEventProbe } from "../domain/linux/kubernetesAuditEventProbe.js";
 import { gzipTarExtraFieldProbeBytes } from "../domain/tarFormat.js";
 import {
   createAsarHeaderSignatureProbe,
@@ -44,6 +45,8 @@ export interface ArtifactClassificationEvidence {
   readonly suffix?: Buffer;
   /** The first ISO 9660 descriptor signature, when the stream reached it. */
   readonly iso9660Descriptor?: Buffer;
+  /** Whether the candidate first JSON line is a Kubernetes audit event. */
+  readonly kubernetesAuditEvent?: boolean;
   /** The probe matched an XML plist prolog in the retained prefix. */
   readonly xmlPlistSignature: boolean;
   readonly asarHeader: FinalAsarHeaderProbeObservation;
@@ -111,6 +114,7 @@ const finishClassificationEvidence = (
   sliceHeadersByOffset: Map<number, MachoHeaderPrefixFacts>,
   mzWindowsHeaderSignature: MzWindowsHeaderSignatureEvidence | undefined,
   mzWindowsHeaderRecord: MzWindowsHeaderRecordEvidence | undefined,
+  kubernetesAuditEvent: boolean | undefined,
 ): ArtifactClassificationEvidence => {
   const finalHeader = readFatContainerHeader(prefix, archiveBytes);
   if (finalHeader.state === "parsed") {
@@ -136,6 +140,7 @@ const finishClassificationEvidence = (
     ...(suffix === undefined ? {} : { suffix }),
     ...(iso9660Descriptor === undefined ? {} : { iso9660Descriptor }),
     xmlPlistSignature,
+    ...(kubernetesAuditEvent === undefined ? {} : { kubernetesAuditEvent }),
     asarHeader: finishAsar(archiveBytes),
     fatHeader: finalHeader,
     fatSliceHeadersByOffset:
@@ -155,6 +160,7 @@ export const createArtifactClassificationProbe = (
 ) => {
   const xml = createXmlPlistSignatureProbe();
   const asar = createAsarHeaderSignatureProbe(asarHeaderAdmission);
+  const kubernetesAudit = new KubernetesAuditEventProbe();
   const blocks: Buffer[] = [];
   let retainedBytes = 0;
   let observedBytes = 0;
@@ -310,11 +316,13 @@ export const createArtifactClassificationProbe = (
         signaturePrefixLimit(),
         xml.state === "pending" ? MAX_XML_PLIST_PROBE_BYTES : 0,
         asar.observation.state === "pending" ? asar.limit : 0,
+        kubernetesAudit.limit,
       );
     },
     write(bytes: Uint8Array): void {
       const streamOffset = observedBytes;
       asar.write(bytes);
+      kubernetesAudit.write(bytes);
       let offset = 0;
       while (offset < bytes.length) {
         const limit = Math.max(
@@ -396,6 +404,7 @@ export const createArtifactClassificationProbe = (
         fatSliceHeadersByOffset,
         mzWindowsHeaderSignature,
         mzWindowsHeaderRecord,
+        kubernetesAudit.finish(archiveBytes),
       );
     },
   };

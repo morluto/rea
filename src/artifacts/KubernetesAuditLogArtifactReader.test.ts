@@ -25,6 +25,7 @@ interface EventOverrides {
   readonly namespace?: string;
   readonly name?: string;
   readonly responseCode?: number;
+  readonly responseBody?: unknown;
   readonly requestReceivedTimestamp?: string;
 }
 
@@ -53,6 +54,9 @@ const auditEvent = (overrides: EventOverrides = {}): string =>
     ...(overrides.responseCode === undefined
       ? {}
       : { responseStatus: { code: overrides.responseCode } }),
+    ...(overrides.responseBody === undefined
+      ? {}
+      : { responseObject: overrides.responseBody }),
     requestReceivedTimestamp:
       overrides.requestReceivedTimestamp ?? "2026-11-20T10:00:00.000000Z",
   });
@@ -263,37 +267,40 @@ it("retains valid response facts when another stage has a fractional response co
   expect(metadata.events[0]?.response_code).toBe(403);
 });
 
-it("does not interpret an audit API version this reader does not model", async () => {
-  const metadata = await metadataOf(
-    `${JSON.stringify({
-      kind: "Event",
-      apiVersion: "audit.k8s.io/v0",
-      auditID: "00000000-0000-4000-8000-00000000000f",
-      stage: "RequestReceived",
-      requestURI: "/api/v1/pods",
-      verb: "list",
-      responseStatus: { code: 200 },
-      requestReceivedTimestamp: "2026-11-20T10:00:00Z",
-    })}\n`,
-  );
-  const [event] = metadata.events;
-  expect(event?.unsupported_version).toBe(true);
-  expect(event?.audit_id).toBe("00000000-0000-4000-8000-00000000000f");
-  expect(event?.stages.map((stage) => stage.stage)).toEqual([
-    "RequestReceived",
-  ]);
-  expect(event?.request_uri).toBeNull();
-  expect(event?.verb).toBeNull();
-  expect(event?.response_code).toBeNull();
-  expect(event?.stages[0]).toMatchObject({
-    request_received_timestamp: null,
-    response_code: null,
-  });
-  expect(metadata.verb_counts).toEqual([]);
-  expect(
-    metadata.limitations.some((line) => line.includes("does not model")),
-  ).toBe(true);
-});
+it.each(["audit.k8s.io/v0", null])(
+  "does not interpret an unmodelled audit API version (%s)",
+  async (apiVersion) => {
+    const metadata = await metadataOf(
+      `${JSON.stringify({
+        kind: "Event",
+        apiVersion,
+        auditID: "00000000-0000-4000-8000-00000000000f",
+        stage: "RequestReceived",
+        requestURI: "/api/v1/pods",
+        verb: "list",
+        responseStatus: { code: 200 },
+        requestReceivedTimestamp: "2026-11-20T10:00:00Z",
+      })}\n`,
+    );
+    const [event] = metadata.events;
+    expect(event?.unsupported_version).toBe(true);
+    expect(event?.audit_id).toBe("00000000-0000-4000-8000-00000000000f");
+    expect(event?.stages.map((stage) => stage.stage)).toEqual([
+      "RequestReceived",
+    ]);
+    expect(event?.request_uri).toBeNull();
+    expect(event?.verb).toBeNull();
+    expect(event?.response_code).toBeNull();
+    expect(event?.stages[0]).toMatchObject({
+      request_received_timestamp: null,
+      response_code: null,
+    });
+    expect(metadata.verb_counts).toEqual([]);
+    expect(
+      metadata.limitations.some((line) => line.includes("does not model")),
+    ).toBe(true);
+  },
+);
 
 it("reads an optional field it did not get as null, not as empty text", async () => {
   const metadata = await metadataOf(
@@ -326,6 +333,13 @@ it("parses the event's own requestReceivedTimestamp", async () => {
   expect(metadata.events[0]?.stages[0]?.request_received_timestamp).toBe(
     Date.parse("2026-11-20T10:00:00.000Z"),
   );
+});
+
+it("keeps unstructured timestamps unknown", async () => {
+  const metadata = await metadataOf(
+    auditEvent({ requestReceivedTimestamp: "1" }),
+  );
+  expect(metadata.events[0]?.stages[0]?.request_received_timestamp).toBeNull();
 });
 
 it("samples a bounded window of events while totals cover the whole file", async () => {
@@ -371,6 +385,7 @@ it("bounds retained request text and verb labels while stage totals cover the lo
   expect(metadata.events[0]).toMatchObject({
     audit_id: "first",
     user_agent: null,
+    request_uri: "/api/v1/namespaces/default/pods",
     request_fields_omitted: true,
     response_code: 403,
   });
@@ -379,6 +394,24 @@ it("bounds retained request text and verb labels while stage totals cover the lo
   expect(metadata.unlisted_verb_line_count).toBe(1);
   expect(metadata.unsampled_event_line_count).toBe(1);
   expect(metadata.event_count).toBe(next.length + 2);
+});
+
+it("retains small request fields alongside an ignored response body", async () => {
+  const metadata = await metadataOf(
+    auditEvent({
+      stage: "ResponseComplete",
+      responseCode: 403,
+      responseBody: { data: "x".repeat(200 * 1024) },
+    }),
+  );
+  expect(metadata.events[0]).toMatchObject({
+    request_uri: "/api/v1/namespaces/default/pods",
+    username: "system:serviceaccount:default:reader",
+    user_groups: ["system:serviceaccounts", "system:authenticated"],
+    source_ips: ["10.0.0.7"],
+    response_code: 403,
+    request_fields_omitted: false,
+  });
 });
 
 it("bounds the inline diagnostics while counting every malformed line", async () => {
@@ -410,6 +443,13 @@ it("counts the full size of an overlong unterminated line without retaining it",
   expect(metadata.malformed_line_count).toBe(0);
   expect(metadata.event_count).toBe(1);
   expect(metadata.line_bytes_limit).toBe(4 * 1024 * 1024);
+  expect(metadata.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining(
+        `artifact_limits.kubernetes_audit_log.line_bytes to at least ${String(trailing.length)}`,
+      ),
+    ]),
+  );
 });
 
 it("refuses a file whose lines are not audit events as malformed", async () => {
