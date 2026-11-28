@@ -110,8 +110,10 @@ a malformed cycle. A directory extent is malformed when it lacks its `.` and
 its parent's (extent block, data length, and extended attribute length; the
 root's `..` describes the root), or when a later record uses identifier 0x00
 or 0x01. In the Joliet tree, a `..` that describes its own directory is also
-accepted: libisofs (xorriso) writes every Joliet `..` record that way. A record whose even-length identifier lacks its zero padding byte, or
-that declares an interleave gap without a file unit size, is malformed. An
+accepted: libisofs (xorriso) writes every Joliet `..` record that way. A record too short to hold the padding byte after its even-length identifier, or
+that declares an interleave gap without a file unit size, is malformed. The
+padding byte's value is not checked: some discs store a nonzero byte there,
+and Linux, libarchive, pycdlib, and 7-Zip step over it. An
 extent that starts or ends, counting
 interleave gaps, outside the declared volume is malformed. An extent inside
 the declared volume that the image ends before or within is `truncated`.
