@@ -371,9 +371,14 @@ it("requires each named SQLite compatibility test while retaining both directory
   const steps = z
     .array(z.object({ run: z.string().optional() }))
     .parse((await workflow("sqlite-runtime.yml")).jobs.sqlite?.steps);
-  expect(steps.some((step) => step.run === "npm run test:sqlite:run")).toBe(
-    true,
+  const sqlite = steps.find((step) =>
+    step.run?.includes("npm run test:sqlite:run"),
   );
+  expect(sqlite?.run?.trim().split("\n")).toEqual([
+    "npm run --if-present pretest:sqlite",
+    "npm run test:sqlite:run",
+    "npm run --if-present posttest:sqlite",
+  ]);
 });
 
 it("exports every canonical scope with read authority for admission and keeps telemetry outside the gate", async () => {

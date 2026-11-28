@@ -37,4 +37,9 @@ jobs:
           name: rea-test-runtime
           path: .
       - name: Verify SQLite discovery, inspection and cleanup
-        run: npm run test:sqlite:run
+        # The downloaded runtime supplies the preparation done by test:sqlite.
+        shell: bash
+        run: |
+          npm run --if-present pretest:sqlite
+          npm run test:sqlite:run
+          npm run --if-present posttest:sqlite
