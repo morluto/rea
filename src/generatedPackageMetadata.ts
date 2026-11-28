@@ -9,5 +9,5 @@ export const PACKAGE_METADATA = {
   evmoleVersion: "0.10.1",
   jsoncParserVersion: "3.3.1",
   losslessJsonVersion: "4.3.4",
-  skillVersion: "63",
+  skillVersion: "64",
 } as const;
