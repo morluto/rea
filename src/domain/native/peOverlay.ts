@@ -110,6 +110,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "vulkan-pipeline-cache",
   "sqlite",
   "windows-shortcut",
+  "perf-data",
   "python-pyc",
   "devicetree",
   "esp-nvs",
