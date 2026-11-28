@@ -51,6 +51,7 @@ import {
   UnsupportedBinaryPlistUidError,
 } from "../../domain/apple/plistScalars.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
+import { startsOpenStepPropertyList } from "../../domain/propertyListOpenStep.js";
 import {
   KeyedArchiveKindError,
   keyedArchiveInputSchema,
@@ -66,7 +67,10 @@ import {
   hasBinaryPlistSignature,
   hasNibArchiveSignature,
 } from "../../domain/apple/appleArchiveFormat.js";
-import { estimateBinaryPlistExpansion } from "../../domain/apple/propertyListDecodeBudget.js";
+import {
+  estimateBinaryPlistExpansion,
+  preflightPropertyListDecode,
+} from "../../domain/apple/propertyListDecodeBudget.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
@@ -118,6 +122,17 @@ export const decodeKeyedArchiveBytes = (
   const binaryScalarMetadata = binary
     ? scanBinaryPlistScalars(bytes, binaryExpansion)
     : undefined;
+  // Empty XML elements charge the DOM model far above the input cap. The
+  // binary branch already preflights. Number projection matches the literals
+  // this decoder retains. UID projection does not change the XML estimate.
+  // OpenStep is selected by the same check the shared parser uses. Quoted
+  // markup in that form is string data, so it is not an XML budget.
+  if (!binary && !startsOpenStepPropertyList(xmlText ?? ""))
+    preflightPropertyListDecode(bytes, MAX_DECODE_BYTES, xmlText, {
+      numberProjection: true,
+      uidProjection: true,
+      budget: "the keyed archive decode budget",
+    });
   const parsed =
     binaryExpansion !== undefined
       ? decodeBinaryPropertyList(bytes, binaryExpansion, binaryScalarMetadata)

@@ -7,7 +7,10 @@ import { describe, expect, it } from "vitest";
 import { build, buildBinary, type PlistValue } from "plist";
 import { AnalysisTargetFailureError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { estimateBinaryPlistExpansion } from "../../domain/apple/propertyListDecodeBudget.js";
+import {
+  estimateBinaryPlistExpansion,
+  isPlistDecodeBudgetFailure,
+} from "../../domain/apple/propertyListDecodeBudget.js";
 import { scanBinaryPlistScalars } from "../../domain/apple/plistScalars.js";
 import {
   decodeKeyedArchiveBytes,
@@ -1128,6 +1131,59 @@ describe("XML plist nesting preflight", () => {
     expect(() =>
       decodeKeyedArchiveBytes(deeplyNestedArchive(127), selection),
     ).toThrow(new PlistNestingLimitError(128));
+  });
+});
+
+describe("XML plist decode budget", () => {
+  it("refuses an XML document whose decoded representation exceeds the budget", () => {
+    // `<e/>` is 4 bytes. With number projection the preflight charges 4
+    // bytes of text per source byte plus 1,536 bytes per element. 346_000
+    // elements pass the 512 MiB budget, eight times the 64 MiB input cap.
+    const xml = Buffer.from("<e/>".repeat(346_000));
+    let failure: unknown;
+    try {
+      decodeKeyedArchiveBytes(xml, { offset: 0, limit: 1 });
+    } catch (cause: unknown) {
+      failure = cause;
+    }
+    expect(isPlistDecodeBudgetFailure(failure)).toBe(true);
+    expect(failure).toMatchObject({
+      failure: {
+        format: "plist",
+        detail: expect.stringMatching(/keyed archive decode budget/u),
+        limit: {
+          name: "plist-decode-bytes",
+          maximum: 8 * 64 * 1024 * 1024,
+        },
+      },
+    });
+  });
+
+  it("decodes an OpenStep archive whose strings contain XML markup", () => {
+    const openStep = `{
+      $archiver = NSKeyedArchiver;
+      $version = 100000;
+      $objects = (
+        "$null",
+        {
+          $class = { CF$UID = 2; };
+          label = "<!DOCTYPE plist [<!ELEMENT plist ANY>]>";
+        },
+        {
+          $classes = ( "NSMutableDictionary", "NSDictionary", "NSObject" );
+          $classname = NSMutableDictionary;
+        }
+      );
+      $top = { root = { CF$UID = 1; }; };
+    }`;
+    const graph = decodeKeyedArchiveBytes(Buffer.from(openStep), {
+      offset: 0,
+      limit: 4,
+    });
+    expect(graph.archive_format).toBe("xml-plist");
+    expect(JSON.stringify(graph.objects)).toContain(
+      "<!DOCTYPE plist [<!ELEMENT plist ANY>]>",
+    );
   });
 });
 
