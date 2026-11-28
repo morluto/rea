@@ -52,6 +52,11 @@ interface JavaScriptStaticReferenceState {
   readonly loader?: "commonjs-loader" | "factory-loader" | "create-require";
   /** The literal is observed but the CommonJS loader is not established. */
   readonly loader_authority?: "candidate";
+  /**
+   * A Node Worker filename built from intact source-directory intrinsics; the
+   * specifier is then a filesystem path, not a URL. Not a bundler guarantee.
+   */
+  readonly path_base?: "source-directory";
   readonly location: JavaScriptSourceRange;
 }
 

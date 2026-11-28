@@ -374,6 +374,7 @@ const referenceShape = {
   loader: z
     .enum(["commonjs-loader", "factory-loader", "create-require"])
     .exactOptional(),
+  path_base: z.literal("source-directory").exactOptional(),
   kind: z.enum([
     "static-import",
     "dynamic-import",

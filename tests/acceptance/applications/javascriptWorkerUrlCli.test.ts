@@ -40,6 +40,15 @@ it.each(typeOnlyWorkerImports)(
   },
 );
 
+// Mutable module objects resolve only after the shared built-in proof finds
+// no same-file write or escape of Worker.
+const mutableWorkerModules = [
+  ['const { Worker } = require("node:worker_threads");', "new Worker"],
+  ['const threads = require("worker_threads");', "new threads.Worker"],
+  ['import threads from "node:worker_threads";', "new threads.Worker"],
+  ['import threads = require("node:worker_threads");', "new threads.Worker"],
+];
+
 const workerReferences = (graph: JavaScriptApplicationGraph) =>
   graph.nodes
     .filter(({ kind }) => kind === "worker")
@@ -93,6 +102,12 @@ cliTest(
         suffix: "",
         resolves: true,
       },
+      ...mutableWorkerModules.map(([prefix, constructor]) => ({
+        prefix,
+        constructor,
+        suffix: "",
+        resolves: true,
+      })),
       {
         prefix: 'import { Worker } from "node:worker_threads";',
         constructor: "new (Worker as typeof Worker)",
@@ -150,6 +165,11 @@ cliTest(
           "",
         ],
         [
+          'const threads = require("node:worker_threads"); patch(threads);',
+          "new threads.Worker",
+          "",
+        ],
+        [
           'import threads = require("node:worker_threads"); threads.Worker = Fake;',
           "new threads.Worker",
           "",
@@ -167,7 +187,9 @@ cliTest(
         resolves: false,
       })),
     ].map(({ prefix, constructor, suffix, resolves }, index) => ({
-      source: `identity-${index}.ts`,
+      // `require` names a Node built-in only in a file proven to be CommonJS,
+      // which the `.cts` suffix establishes.
+      source: `identity-${index}.${/^const .*\brequire\(/u.test(prefix ?? "") ? "cts" : "ts"}`,
       prefix,
       expression: `${constructor}(new URL("./worker.js", import.meta.url))`,
       suffix,
@@ -663,6 +685,236 @@ cliTest(
         resolved_path: null,
         mapped_paths: [],
       });
+  },
+);
+
+cliTest(
+  "resolves source-directory Node Worker filenames as Node entrypoints through the compiled CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-node-worker-anchored-");
+    const requirePath = 'const path = require("node:path");';
+    const requireWorker = 'const { Worker } = require("node:worker_threads");';
+    const sources = {
+      "src/main.cjs": [
+        requirePath,
+        requireWorker,
+        'const threads = require("worker_threads");',
+        'new Worker(path.join(__dirname, "joined.js"));',
+        'new Worker(path.resolve(__dirname, "resolved.js"));',
+        'new threads.Worker(__dirname + "/concat.js", { workerData: 1 });',
+        'new Worker(path.join(__dirname, "entry"));',
+        'new Worker(path.join(process.cwd(), "cwd.js"));',
+        'new Worker(path.join("relative.js"));',
+        'new Worker(path.join(__dirname, "eval.js"), { eval: true });',
+        'new Worker(path.join(__dirname, "options.js"), options);',
+        'new Worker("./bare.js");',
+      ].join("\n"),
+      "src/main.mjs": [
+        'import { Worker } from "node:worker_threads";',
+        'import { dirname, join } from "node:path";',
+        'import { fileURLToPath } from "node:url";',
+        'new Worker(fileURLToPath(new URL("./file-url.js", import.meta.url)));',
+        'new Worker(join(dirname(fileURLToPath(import.meta.url)), "dirname.js"));',
+        'new Worker(new URL("./url.js", import.meta.url));',
+      ].join("\n"),
+      "src/replaced-worker.cjs": `${requirePath}\nconst threads = require("node:worker_threads");\nthreads.Worker = class {};\nnew threads.Worker(path.join(__dirname, "joined.js"));`,
+      "src/replaced-join.cjs": `${requirePath}\n${requireWorker}\npath.join = () => "/elsewhere.js";\nnew Worker(path.join(__dirname, "joined.js"));`,
+      "src/browser.cjs": `${requirePath}\nnew Worker(path.join(__dirname, "joined.js"));`,
+    };
+    const workerFiles = [
+      "joined.js",
+      "resolved.js",
+      "concat.js",
+      "entry.js",
+      "file-url.js",
+      "dirname.js",
+      "url.js",
+      "cwd.js",
+      "relative.js",
+      "eval.js",
+      "options.js",
+      "bare.js",
+    ];
+    await writeFixtureFiles(root, {
+      ...sources,
+      // Root copies are cwd and application-root decoys.
+      ...Object.fromEntries(
+        workerFiles.flatMap((file) => [
+          [`src/${file}`, `self.postMessage(${JSON.stringify(file)});`],
+          [file, "self.postMessage('decoy');"],
+        ]),
+      ),
+    });
+
+    const result = await analyzeJavaScriptDirectory("CLI", cli, root);
+    expect(result.statistics.parse_failures).toBe(0);
+    const anchorLimitation =
+      "The source-directory anchor is inferred from authored code; bundled or transformed runtime path behavior was not verified.";
+    const workers = result.graph.nodes
+      .filter(({ kind }) => kind === "worker")
+      .flatMap((node) =>
+        node.observations.map(({ properties, evidence }) => ({
+          source:
+            evidence.location.available &&
+            evidence.location.value.kind === "source-range"
+              ? evidence.location.value.source
+              : null,
+          declared_specifier: properties.declared_specifier,
+          path_base: properties.path_base ?? null,
+          expression: properties.expression,
+          resolved_path: properties.resolved_path,
+          anchor_limitation: evidence.limitations.includes(anchorLimitation),
+          mapped_paths: result.graph.edges
+            .filter(
+              ({ relation, source_node_id }) =>
+                relation === "maps_to" && source_node_id === node.node_id,
+            )
+            .map(({ properties: edge }) => edge.resolved_path),
+        })),
+      );
+    const anchored = (source: string, specifier: string, resolved: string) => ({
+      source,
+      declared_specifier: specifier,
+      path_base: "source-directory",
+      expression: null,
+      resolved_path: resolved,
+      anchor_limitation: true,
+      mapped_paths: [resolved],
+    });
+    const unresolved = (source: string, expression: string) => ({
+      source,
+      declared_specifier: null,
+      path_base: null,
+      expression,
+      resolved_path: null,
+      anchor_limitation: false,
+      mapped_paths: [],
+    });
+    const expected = [
+      anchored("src/main.cjs", "joined.js", "src/joined.js"),
+      anchored("src/main.cjs", "resolved.js", "src/resolved.js"),
+      anchored("src/main.cjs", "concat.js", "src/concat.js"),
+      // Node probes extensions for a Worker filename, as for a main script.
+      anchored("src/main.cjs", "entry", "src/entry.js"),
+      anchored("src/main.mjs", "./file-url.js", "src/file-url.js"),
+      anchored("src/main.mjs", "dirname.js", "src/dirname.js"),
+      {
+        source: "src/main.mjs",
+        declared_specifier: "./url.js",
+        path_base: null,
+        expression: null,
+        resolved_path: "src/url.js",
+        anchor_limitation: false,
+        mapped_paths: ["src/url.js"],
+      },
+      ...[
+        'new Worker(path.join(process.cwd(), "cwd.js"))',
+        'new Worker(path.join("relative.js"))',
+        'new Worker(path.join(__dirname, "eval.js"), { eval: true })',
+        'new Worker(path.join(__dirname, "options.js"), options)',
+        'new Worker("./bare.js")',
+      ].map((expression) => unresolved("src/main.cjs", expression)),
+      unresolved(
+        "src/replaced-worker.cjs",
+        'new threads.Worker(path.join(__dirname, "joined.js"))',
+      ),
+      ...["src/replaced-join.cjs", "src/browser.cjs"].map((source) =>
+        unresolved(source, 'new Worker(path.join(__dirname, "joined.js"))'),
+      ),
+    ];
+    expect(workers).toHaveLength(expected.length);
+    expect(workers).toEqual(expect.arrayContaining(expected));
+  },
+);
+
+cliTest(
+  "keeps Node Worker URLs unresolved when options may set eval through the compiled CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-node-worker-url-eval-");
+    const url = 'new URL("./worker.js", import.meta.url)';
+    const named = 'import { Worker } from "node:worker_threads";';
+    // With `eval`, Node rejects a URL filename, so no script loads. Browser
+    // Workers have no `eval` option. The `-data` rows are valid-URL controls
+    // for the rows whose options may set `eval`.
+    const byDefault = 'import threads from "node:worker_threads";';
+    const sources: Readonly<Record<string, readonly [string, string]>> = {
+      "default-data.mjs": [
+        byDefault,
+        `new threads.Worker(${url}, { workerData: 1 })`,
+      ],
+      "default-eval.mjs": [
+        byDefault,
+        `new threads.Worker(${url}, { eval: true })`,
+      ],
+      "named-options.mjs": [named, `new Worker(${url}, options)`],
+      "named-data.mjs": [named, `new Worker(${url}, { workerData: 1 })`],
+      "browser-options.mjs": ["", `new globalThis.Worker(${url}, options)`],
+    };
+    const resolves = new Set([
+      "default-data.mjs",
+      "named-data.mjs",
+      "browser-options.mjs",
+    ]);
+    await writeFixtureFiles(root, {
+      ...Object.fromEntries(
+        Object.entries(sources).map(([source, [prefix, expression]]) => [
+          source,
+          `${prefix}\n${expression};`,
+        ]),
+      ),
+      "worker.js": "self.postMessage('existing worker file');",
+    });
+
+    const result = await analyzeJavaScriptDirectory("CLI", cli, root);
+    expect(result.statistics.parse_failures).toBe(0);
+    const references = workerReferences(result.graph);
+    expect(references).toHaveLength(Object.keys(sources).length);
+    for (const [source, [, expression]] of Object.entries(sources))
+      expect(references).toContainEqual({
+        source,
+        declared_specifier: resolves.has(source) ? "./worker.js" : null,
+        expression: resolves.has(source) ? null : expression,
+        resolved_path: resolves.has(source) ? "worker.js" : null,
+        mapped_paths: resolves.has(source) ? ["worker.js"] : [],
+      });
+  },
+);
+
+cliTest(
+  "keeps URL and source-directory Worker paths with one spelling distinct through the compiled CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-node-worker-path-base-");
+    // URL resolution decodes `%6F`; a filesystem filename keeps it literally.
+    await writeFixtureFiles(root, {
+      "src/main.mjs": [
+        'import { Worker } from "node:worker_threads";',
+        'import { dirname, join } from "node:path";',
+        'import { fileURLToPath } from "node:url";',
+        'new Worker(new URL("w%6Frker.js", import.meta.url));',
+        'new Worker(join(dirname(fileURLToPath(import.meta.url)), "w%6Frker.js"));',
+      ].join("\n"),
+      "src/worker.js": "self.postMessage('decoded URL target');",
+      "src/w%6Frker.js": "self.postMessage('literal filename target');",
+    });
+
+    const result = await analyzeJavaScriptDirectory("CLI", cli, root);
+    expect(result.statistics.parse_failures).toBe(0);
+    expect(
+      result.graph.nodes.filter(({ kind }) => kind === "worker"),
+    ).toHaveLength(2);
+    const references = workerReferences(result.graph);
+    expect(references).toHaveLength(2);
+    expect(references).toEqual(
+      expect.arrayContaining(
+        ["src/worker.js", "src/w%6Frker.js"].map((resolved) => ({
+          source: "src/main.mjs",
+          declared_specifier: "w%6Frker.js",
+          expression: null,
+          resolved_path: resolved,
+          mapped_paths: [resolved],
+        })),
+      ),
+    );
   },
 );
 
