@@ -13,6 +13,10 @@ import {
   ParseFailureError,
   unsupportedInput,
 } from "./parseFailure.js";
+import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "./parseFailureAnalysisError.js";
 
 /** XML 1.0 literal line endings; Unicode separators remain source characters. */
 export const XML_LINE_ENDING = /\r\n?|\n/gu;
@@ -143,6 +147,28 @@ const xmlDepthLimit = (depth: number): ParseFailureError<"limit"> =>
       required: depth,
     },
   );
+
+/**
+ * Public refusal for the syntax ceiling. Package providers keep their own
+ * format limits; this one belongs to the XML check, which has no runtime
+ * override.
+ */
+export const xmlElementDepthConstraint = (
+  operation: string,
+  path: string,
+  cause: unknown,
+) => {
+  if (
+    !isParseLimit(cause, XML_FORMAT) ||
+    cause.failure.limit.name !== "xml-element-depth"
+  )
+    return undefined;
+  return parseLimitConstraint(operation, "memory", cause, {
+    path,
+    retryable: false,
+    remediationAction: `Select a document whose XML element depth is within ${String(XML_ELEMENT_DEPTH_LIMIT)}. This release has no runtime override.`,
+  });
+};
 
 /** The failure the syntax check established; any other throw is ill-formed XML. */
 const xmlFailure = (cause: unknown): XmlParseFailure =>

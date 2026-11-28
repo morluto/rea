@@ -24,6 +24,7 @@ import {
   parseLimitConstraint,
 } from "../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../domain/parseFailure.js";
+import { xmlElementDepthConstraint } from "../domain/xmlDocument.js";
 import { fixedCeilingConstraint } from "../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -134,6 +135,8 @@ const vsixFailureDialect = (
   recognise: (raw, details) => {
     const facts = artifactFilePrimaryFacts(raw);
     const { cause, origin } = facts;
+    const depth = xmlElementDepthConstraint(OPERATION, input.path, cause);
+    if (depth !== undefined) return depth;
     if (isParseLimit(cause, VSIX_PACKAGE_FORMAT))
       return vsixParseLimit(cause, input);
     const formatFailure = parseFailureAnalysisError(

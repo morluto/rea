@@ -13,6 +13,7 @@ import {
 } from "./MavenGradleMetadata.fixture.js";
 import { MavenGradleMetadataProvider } from "./MavenGradleMetadataProvider.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { XML_ELEMENT_DEPTH_LIMIT } from "../domain/xmlDocument.js";
 import { parseMavenGradleMetadata } from "./MavenGradleMetadataParser.js";
 
 const parse = (source: string, path = "/artifacts/pom.xml") => {
@@ -1142,4 +1143,38 @@ it("still rejects duplicate fields after a Gradle UTF-8 signature", () => {
   expect(() =>
     parse('\ufeff{"formatVersion":"1.1","formatVersion":"1.1"}'),
   ).toThrow(/declares a field more than once/u);
+});
+
+it("reports XML element depth from the provider instead of an I/O failure", async () => {
+  const root = await createTestTempDirectory("rea-pom-depth-");
+  const path = join(root, "pom.xml");
+  const nested = XML_ELEMENT_DEPTH_LIMIT;
+  await writeFile(
+    path,
+    `<project>${"<a>".repeat(nested)}x${"</a>".repeat(nested)}</project>`,
+  );
+  const provider = new MavenGradleMetadataProvider();
+  try {
+    const result = await provider.inspect({
+      path,
+      max_file_bytes: 1024 * 1024,
+    });
+    if (result.ok) throw new Error("expected the XML depth ceiling");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        reported_limits: {
+          boundary: "xml-element-depth",
+          maximum: XML_ELEMENT_DEPTH_LIMIT,
+          required: XML_ELEMENT_DEPTH_LIMIT + 1,
+        },
+      },
+      remediation: {
+        action: expect.stringContaining("no runtime override"),
+      },
+    });
+  } finally {
+    await provider.close();
+  }
 });
