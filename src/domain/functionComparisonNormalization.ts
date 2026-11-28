@@ -87,7 +87,10 @@ export const functionMatch = (
 
 export const normalizeCfg = (
   blocks: FunctionSnapshot["dossier"]["basic_blocks"],
+  entryAddress: string,
 ): readonly unknown[] | null => {
+  const entry = parseAddress(entryAddress);
+  if (entry === null) return null;
   const parsed: {
     block: (typeof blocks)[number];
     start: bigint;
@@ -114,6 +117,7 @@ export const normalizeCfg = (
   if (new Set(ordered.map(({ start }) => start)).size !== ordered.length)
     return null;
   const indices = new Map(ordered.map(({ start }, index) => [start, index]));
+  if (entry.space !== space || !indices.has(entry.offset)) return null;
   const graph = [];
   for (const { block, start, end } of ordered) {
     const successors: number[] = [];
@@ -125,6 +129,7 @@ export const normalizeCfg = (
       successors.push(index);
     }
     graph.push({
+      entry: start === entry.offset,
       size: String(end - start),
       successors: successors.sort((left, right) => left - right),
     });

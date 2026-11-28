@@ -19,6 +19,75 @@ import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { reconstructionVerificationResultSchema } from "../../../src/domain/reconstructionVerificationSchemas.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
+import { functionCfgDossier } from "../../fixtures/functionCfgDossier.js";
+
+it.each([
+  { entryOffset: 0n, status: "unchanged" },
+  { entryOffset: 0x10n, status: "changed" },
+  { entryOffset: 1n, status: "unknown" },
+])(
+  "compares retained CFG entry blocks through MCP: $status",
+  async ({ entryOffset, status }) => {
+    const session = createTestBinarySession(() => {
+      throw new Error("Retained CFG comparison must not launch a provider");
+    });
+    const { client } = await createApplicationMcpHarness({ session });
+    const source = (side: "1" | "2", offset: bigint) => {
+      const value = functionCfgDossier(
+        side === "1" ? 0x1000n : 0x2000n,
+        offset,
+      );
+      return createEvidence(
+        {
+          path: `/fixture/cfg-${side}.elf`,
+          sha256: side.repeat(64),
+          format: "elf",
+        },
+        FUNCTION_COMPARISON_EXAMPLE.left.provider,
+        {
+          operation: "analyze_function",
+          parameters: { procedure: value.procedure.address },
+          result: value,
+          confidence: "derived",
+          relationshipCoverage: { status: "complete" },
+        },
+      );
+    };
+    const left = source("1", 0n);
+    const right = source("2", entryOffset);
+    const response = await client.callTool({
+      name: "compare_functions",
+      arguments: { left, right },
+    });
+    expect(
+      response.isError,
+      JSON.stringify(response.structuredContent),
+    ).not.toBe(true);
+    const comparison = parseEvidence(response.structuredContent);
+    expect(comparison.normalized_result).toMatchObject({
+      status,
+      dimensions: expect.arrayContaining([
+        expect.objectContaining({
+          dimension: "cfg",
+          status,
+          left_count: 3,
+          right_count: 3,
+        }),
+      ]),
+    });
+    expect(comparison.evidence_links).toEqual(
+      expect.arrayContaining([left.evidence_id, right.evidence_id]),
+    );
+    for (const original of [left, right])
+      expect(
+        session
+          .exportEvidenceBundle()
+          .records.find(
+            ({ evidence_id }) => evidence_id === original.evidence_id,
+          ),
+      ).toEqual(original);
+  },
+);
 
 it.each([
   { leftSpace: "ram", rightSpace: "ram" },

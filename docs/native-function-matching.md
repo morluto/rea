@@ -117,7 +117,9 @@ respective targets, then compare those dossiers. Matching never claims behaviora
 equivalence. Optional informative CFG/call/string fingerprints from supplied
 dossiers connect unresolved candidate groups only. They require observed CFG,
 callees and strings, complete observed call coverage, no unresolved calls, and
-the same analysis-profile identity. Empty leaf-function buckets are excluded.
+the same analysis-profile identity. The CFG fingerprint retains the entry block
+after address normalization; a function entry outside the observed block starts
+cannot produce a structural candidate. Empty leaf-function buckets are excluded.
 `structural_candidate_sha256` identifies that derived candidate signature; its
 dossier link preserves the full supporting facts. Group membership does not
 assert that every member pair is a candidate or equivalent.

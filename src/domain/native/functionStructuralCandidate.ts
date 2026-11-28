@@ -24,10 +24,9 @@ export const functionStructuralCandidate = (
     evidence.analysis_profile === null
   )
     return null;
-  const cfg = normalizeCfg(dossier.basic_blocks);
+  const cfg = normalizeCfg(dossier.basic_blocks, dossier.procedure.address);
   if (
     cfg === null ||
-    cfg.length === 0 ||
     dossier.callees.some(
       (callee) => !hasStableNativeSymbol(callee.name, callee.symbol),
     )
@@ -43,7 +42,7 @@ export const functionStructuralCandidate = (
   // Empty leaf functions otherwise produce huge uninformative CFG-only buckets.
   if (calls.length === 0 && strings.length === 0) return null;
   return digestCanonicalValue({
-    algorithm: "observed-cfg-calls-strings-v1",
+    algorithm: "observed-cfg-calls-strings-v2",
     profile: evidence.analysis_profile.digest,
     architecture,
     cfg,

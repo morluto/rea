@@ -2555,8 +2555,11 @@ dimensions carry this limitation inline. Numeric constants remain part of the
 exact comparison. Reconstruction verification and static/runtime correlation
 retain limitations from the selected dimension; an overall function claim
 includes all dimension limitations. Equal CFGs establish only equal observed
-block sizes and successor relationships. Text from different provider
-identities remains unknown.
+block sizes, successor relationships, and entry-block positions. Relocation and
+input block order do not change this comparison. The function entry must name a
+known block start in the same address space; an absent or unresolvable entry
+keeps `cfg` unknown, including an empty block inventory. Text from different
+provider identities remains unknown.
 
 The `calls` and `references` dimensions share endpoint identity and name
 ambiguity rules. Calls retain procedure entry coordinates and direction;

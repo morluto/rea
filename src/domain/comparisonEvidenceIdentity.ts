@@ -22,7 +22,7 @@ export const FUNCTION_COMPARISON_PROVIDER = {
 
 export const FUNCTION_COMPARISON_PROFILE = createAnalysisProfile(
   FUNCTION_COMPARISON_PROVIDER,
-  { workflow_revision: 2 },
+  { workflow_revision: 3 },
 );
 
 const COMPARISON_EVIDENCE_IDENTITIES = {
