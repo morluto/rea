@@ -213,7 +213,7 @@ export const BROWSER_TOOL_CONTRACTS = [
     cli: true,
     ...toolContractMetadata("inspect_web_page", browserEvidenceEffects),
     description:
-      'Passively inspect one selected page target through CDP without evaluating JavaScript, navigating, clicking, closing, or mutating the page. If no origin filter is supplied, capture is scoped to the target\'s current origin. Returns DOM structure, accessibility, scripts, resources, attach-window network and console metadata, workers, and redacted storage inventory as Evidence. Omitted detail returns the capture inline when it fits the agent result budget, else retains it and returns counts; page dom, accessibility, console, network, scripts or resources with inspect_analysis_view view {kind: "web-page", collection}. complete or summary forces that shape; compare_web_captures accepts either evidence_id.',
+      'Passively inspect one selected page target through CDP without evaluating JavaScript, navigating, clicking, closing, or mutating the page. If no origin filter is supplied, capture is scoped to the target\'s current origin. Returns DOM structure, accessibility, scripts, resources, attach-window network and console metadata, workers, redacted storage inventory, and optionally root CSS variables as Evidence. Omitted detail returns the capture inline when it fits the agent result budget, else retains it and returns counts; page dom, accessibility, console, network, scripts, resources or css-variables with inspect_analysis_view view {kind: "web-page", collection}. complete or summary forces that shape; compare_web_captures accepts either evidence_id.',
     kind: "browser-provider",
     inputSchema: inspectWebPageRequestSchema,
     outputSchema: inspectionOutputSchema,
@@ -223,6 +223,14 @@ export const BROWSER_TOOL_CONTRACTS = [
         input: {
           cdp_endpoint: endpoint,
           target_id: "TARGET_ID_FROM_LIST_BROWSER_TARGETS",
+        },
+      },
+      {
+        title: "Inspect page styles and design tokens",
+        input: {
+          cdp_endpoint: endpoint,
+          target_id: "TARGET_ID_FROM_LIST_BROWSER_TARGETS",
+          include_css_variables: true,
         },
       },
     ],

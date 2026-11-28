@@ -250,6 +250,20 @@ const browserParameters = (
           include_websocket_shapes: input.include_websocket_shapes,
           include_storage_keys: input.include_storage_keys,
           include_storage_fingerprints: input.include_storage_fingerprints,
+          ...("include_css_variables" in input
+            ? { include_css_variables: input.include_css_variables }
+            : {}),
+          ...("max_css_variables" in input &&
+          input.max_css_variables !== undefined
+            ? { max_css_variables: input.max_css_variables }
+            : {}),
+          ...("max_css_variable_value_length" in input &&
+          input.max_css_variable_value_length !== undefined
+            ? {
+                max_css_variable_value_length:
+                  input.max_css_variable_value_length,
+              }
+            : {}),
           ...("include_script_sources" in input
             ? { include_script_sources: input.include_script_sources }
             : {}),

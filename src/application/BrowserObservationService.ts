@@ -1,4 +1,5 @@
 import type { Evidence } from "../domain/evidence.js";
+import { classifyBrowserCompleteness } from "../domain/browserCompleteness.js";
 import type {
   InspectWebPageInput,
   ListBrowserTargetsInput,
@@ -415,12 +416,53 @@ const promoteBrowserObservation = (
     if (inspection.success) {
       const pageInput: InspectWebPageInput =
         "fetch_source_maps" in input
-          ? (({ fetch_source_maps: _fetchSourceMaps, ...page }) => page)(input)
+          ? {
+              ...(({ fetch_source_maps: _fetchSourceMaps, ...page }) => page)(
+                input,
+              ),
+              include_css_variables: false,
+            }
           : input;
+      const promotedFacts =
+        "fetch_source_maps" in input &&
+        inspection.data.css_variables.status === "not_approved" &&
+        !inspection.data.completeness.policy_filtered_sections.includes(
+          "css_variables",
+        )
+          ? {
+              ...inspection.data,
+              completeness: classifyBrowserCompleteness({
+                policyFilteredSections: new Set([
+                  ...inspection.data.completeness.policy_filtered_sections,
+                  "css_variables",
+                ]),
+                attachLimitedSections: new Set(
+                  inspection.data.completeness.attach_limited_sections,
+                ),
+                truncatedSections: new Set(
+                  inspection.data.completeness.truncated_sections,
+                ),
+                unavailableSections: new Set(
+                  inspection.data.completeness.unavailable_sections,
+                ),
+                excluded: [
+                  ...inspection.data.completeness.excluded,
+                  {
+                    section: "css_variables",
+                    reason: "not_approved",
+                    count: null,
+                  },
+                ],
+                droppedEvents: (({ total: _droppedTotal, ...rest }) => rest)(
+                  inspection.data.completeness.dropped_events,
+                ),
+              }),
+            }
+          : inspection.data;
       return createBrowserEvidence(
         "inspect_web_page",
         pageInput,
-        { source: jsonValueSchema.parse(partial), facts: inspection.data },
+        { source: jsonValueSchema.parse(partial), facts: promotedFacts },
         provider.identity(),
       );
     }

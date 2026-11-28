@@ -1092,6 +1092,237 @@ it("refuses an IndexedDB schema fingerprint without its projection version", asy
   ]);
 });
 
+describe("web capture CSS variables comparison", () => {
+  it("compares CSS variables and preserves metadata changes across omissions", async () => {
+    const browser = await startFakeCdpBrowser({ extraCollections: true });
+    browsers.push(browser);
+    const captured = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+        include_accessibility_text: true,
+        include_storage_keys: true,
+        include_storage_fingerprints: true,
+      }),
+    );
+    if (!captured.ok) throw captured.error;
+
+    const beforeCss = structuredClone(captured.value);
+    markSectionsComplete(beforeCss, ["metadata", "css_variables"]);
+    beforeCss.css_variables = {
+      status: "included",
+      origin_scope: "same_origin",
+      total: 1,
+      retained_count: 1,
+      items: [{ name: "--theme-color", value: "#ff0000", redacted: false }],
+    };
+
+    const afterChanged = structuredClone(beforeCss);
+    afterChanged.css_variables.items = [
+      { name: "--theme-color", value: "#0000ff", redacted: false },
+    ];
+    const changedResult = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: beforeCss },
+        after: { inspection: afterChanged },
+      }),
+    );
+    expect(changedResult.dimensions.metadata).toMatchObject({
+      status: "changed",
+    });
+
+    const afterIncomplete = structuredClone(beforeCss);
+    afterIncomplete.css_variables.status = "truncated";
+    afterIncomplete.completeness.truncated_sections.push("css_variables");
+    const incompleteResult = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: beforeCss },
+        after: { inspection: afterIncomplete },
+      }),
+    );
+    expect(incompleteResult.dimensions.metadata).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+    });
+
+    // Incomplete inventory still proves change when matched retained tokens differ
+    const afterIncompleteWithChange = structuredClone(afterIncomplete);
+    afterIncompleteWithChange.css_variables.items = [
+      { name: "--theme-color", value: "#0000ff", redacted: false },
+    ];
+    const incompleteChangeResult = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: beforeCss },
+        after: { inspection: afterIncompleteWithChange },
+      }),
+    );
+    expect(incompleteChangeResult.dimensions.metadata).toMatchObject({
+      status: "changed",
+      changes: [{ identity: "css_variables", change: "modified" }],
+    });
+
+    // One-sided CSS selection reports unknown rather than false change when metadata is unchanged
+    const afterUnapproved = structuredClone(beforeCss);
+    afterUnapproved.css_variables = {
+      status: "not_approved",
+      origin_scope: "same_origin",
+      total: 0,
+      retained_count: 0,
+      items: [],
+    };
+    const oneSidedResult = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: beforeCss },
+        after: { inspection: afterUnapproved },
+      }),
+    );
+    expect(oneSidedResult.dimensions.metadata).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+      reason: "CSS variables were selected in only one observation.",
+    });
+
+    // Known metadata changes are preserved as changed even if CSS is incomplete
+    const afterMetadataChanged = structuredClone(afterIncomplete);
+    afterMetadataChanged.metadata.excluded_dom_urls += 1;
+    const preservedChangeResult = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: beforeCss },
+        after: { inspection: afterMetadataChanged },
+      }),
+    );
+    expect(preservedChangeResult.dimensions.metadata).toMatchObject({
+      status: "changed",
+      changes: [{ identity: "metadata", change: "modified" }],
+    });
+
+    // Identical redacted items are treated as incomplete for equality
+    const beforeRedacted = structuredClone(beforeCss);
+    beforeRedacted.css_variables.items = [
+      { name: "--asset", value: "url(https://host/a)", redacted: true },
+    ];
+    const afterRedacted = structuredClone(beforeRedacted);
+    const redactedEqualityResult = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: beforeRedacted },
+        after: { inspection: afterRedacted },
+      }),
+    );
+    expect(redactedEqualityResult.dimensions.metadata).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+      reason:
+        "CSS variables capture was incomplete in at least one observation.",
+    });
+
+    // Added tokens are detected even when another token is redacted
+    const afterWithAddedToken = structuredClone(beforeRedacted);
+    afterWithAddedToken.css_variables.items = [
+      { name: "--asset", value: "url(https://host/a)", redacted: true },
+      { name: "--primary", value: "#0066cc", redacted: false },
+    ];
+    afterWithAddedToken.css_variables.total = 2;
+    afterWithAddedToken.css_variables.retained_count = 2;
+    const addedTokenResult = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: beforeRedacted },
+        after: { inspection: afterWithAddedToken },
+      }),
+    );
+    expect(addedTokenResult.dimensions.metadata).toMatchObject({
+      status: "changed",
+      changes: [{ identity: "css_variables", change: "modified" }],
+    });
+
+    // One complete empty inventory vs a truncated inventory containing a retained token proves an addition
+    const emptyComplete = structuredClone(beforeCss);
+    emptyComplete.css_variables = {
+      status: "included",
+      origin_scope: "same_origin",
+      total: 0,
+      retained_count: 0,
+      items: [],
+    };
+    markSectionsComplete(emptyComplete, ["css_variables"]);
+
+    const truncatedWithBrand = structuredClone(beforeCss);
+    truncatedWithBrand.css_variables = {
+      status: "truncated",
+      origin_scope: "same_origin",
+      total: 300,
+      retained_count: 1,
+      items: [{ name: "--brand", value: "#0066cc", redacted: false }],
+    };
+    truncatedWithBrand.completeness.truncated_sections.push("css_variables");
+
+    const oneSidedAddition = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: emptyComplete },
+        after: { inspection: truncatedWithBrand },
+      }),
+    );
+    expect(oneSidedAddition.dimensions.metadata).toMatchObject({
+      status: "changed",
+      changes: [{ identity: "css_variables", change: "modified" }],
+    });
+
+    const sameOriginSide = structuredClone(beforeCss);
+    sameOriginSide.css_variables = {
+      status: "included",
+      origin_scope: "same_origin",
+      total: 1,
+      retained_count: 1,
+      items: [{ name: "--brand", value: "#0066cc", redacted: false }],
+    };
+    markSectionsComplete(sameOriginSide, ["css_variables"]);
+
+    const allAllowedSide = structuredClone(beforeCss);
+    allAllowedSide.css_variables = {
+      status: "included",
+      origin_scope: "all_allowed",
+      total: 1,
+      retained_count: 1,
+      items: [{ name: "--brand", value: "#0066cc", redacted: false }],
+    };
+    markSectionsComplete(allAllowedSide, ["css_variables"]);
+
+    const scopeMismatch = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: sameOriginSide },
+        after: { inspection: allAllowedSide },
+      }),
+    );
+    expect(scopeMismatch.dimensions.metadata).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+      changes: [],
+      reason: "CSS variables origin_scope differed between observations.",
+    });
+
+    // Escaped custom-property spellings canonicalize to the same identity
+    const escapedBefore = structuredClone(sameOriginSide);
+    escapedBefore.css_variables.items = [
+      { name: "--foo", value: "#0066cc", redacted: false },
+    ];
+    const escapedAfter = structuredClone(sameOriginSide);
+    escapedAfter.css_variables.items = [
+      { name: "--f\\6f o", value: "#0066cc", redacted: false },
+    ];
+    const escapedSame = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: escapedBefore },
+        after: { inspection: escapedAfter },
+      }),
+    );
+    expect(escapedSame.dimensions.metadata).toMatchObject({
+      status: "unchanged",
+      total_changes: 0,
+    });
+  });
+});
+
 const markSectionsComplete = (
   inspection: {
     completeness: {

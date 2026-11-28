@@ -306,7 +306,11 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     if (!admission.ok) return admission;
     let captured: CapturedPage | undefined;
     try {
-      captured = await this.#capture(input, options, "analyze_web_bundle");
+      captured = await this.#capture(
+        { ...input, include_css_variables: false },
+        options,
+        "analyze_web_bundle",
+      );
       let sourceMaps: WebSourceMaps | undefined;
       if (input.fetch_source_maps) {
         const fetched = await fetchWebSourceMaps(

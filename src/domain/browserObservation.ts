@@ -10,6 +10,13 @@ import {
   parseUrlQueryParameterNames,
 } from "./recordedTransportUrl.js";
 import {
+  DEFAULT_MAX_CSS_VARIABLES,
+  DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH,
+  MAX_CSS_VARIABLES_CEILING,
+  MAX_CSS_VARIABLES_TOTAL_CHARS,
+  MAX_CSS_VARIABLE_VALUE_LENGTH_CEILING,
+} from "./browserObservationSchemas.js";
+import {
   unknownTarget,
   type UnknownTargetIdentity,
   type UrlTargetIdentity,
@@ -223,7 +230,7 @@ export const listBrowserTargetsInputSchema = z.strictObject({
   ...browserInput,
 });
 
-const inspectWebPageInputFacts = {
+const baseBrowserInspectionFacts = {
   ...browserInput,
   target_id: z.string().min(1),
   command_timeout_ms: webRuntimeCommandTimeoutSchema,
@@ -236,20 +243,47 @@ const inspectWebPageInputFacts = {
   include_storage_fingerprints: z.boolean().default(false),
 } as const;
 
+export const inspectWebPageInputFacts = {
+  ...baseBrowserInspectionFacts,
+  include_css_variables: z
+    .boolean()
+    .default(false)
+    .describe("Include root CSS custom properties and variables"),
+  max_css_variables: z
+    .int()
+    .min(1)
+    .max(MAX_CSS_VARIABLES_CEILING)
+    .optional()
+    .describe(
+      `Maximum root CSS variables retained (default ${String(DEFAULT_MAX_CSS_VARIABLES)}, max ${String(MAX_CSS_VARIABLES_CEILING)}).`,
+    ),
+  max_css_variable_value_length: z
+    .int()
+    .min(1)
+    .max(MAX_CSS_VARIABLE_VALUE_LENGTH_CEILING)
+    .optional()
+    .describe(
+      `Maximum UTF-16 code units per retained CSS variable value (default ${String(DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH)}, max ${String(MAX_CSS_VARIABLE_VALUE_LENGTH_CEILING)}).`,
+    ),
+} as const;
+
+export const analyzeWebBundleBaseShapeSchema = z.strictObject({
+  ...baseBrowserInspectionFacts,
+  include_script_sources: z.literal(true).default(true),
+});
+
 export const inspectWebPageShapeSchema = z.strictObject({
   ...inspectWebPageInputFacts,
   include_script_sources: z.boolean().default(false),
 });
 
-const inspectWebPageWithSourceShapeSchema = z.strictObject({
-  ...inspectWebPageInputFacts,
-  include_script_sources: z.literal(true).default(true),
-});
-
 type InspectWebPageShape = z.output<typeof inspectWebPageShapeSchema>;
 
-export const refineInspectWebPageInput = (
-  input: InspectWebPageShape,
+export const refineBrowserStorageInput = (
+  input: {
+    readonly include_storage_fingerprints?: boolean;
+    readonly include_storage_keys?: boolean;
+  },
   context: z.RefinementCtx,
 ): void => {
   if (input.include_storage_fingerprints && !input.include_storage_keys)
@@ -260,9 +294,26 @@ export const refineInspectWebPageInput = (
     });
 };
 
-/** Caller schema for source-capturing inspection and bundle analysis. */
-export const inspectWebPageWithSourceInputSchema =
-  inspectWebPageWithSourceShapeSchema.superRefine(refineInspectWebPageInput);
+export const refineInspectWebPageInput = (
+  input: InspectWebPageShape,
+  context: z.RefinementCtx,
+): void => {
+  refineBrowserStorageInput(input, context);
+  if (input.include_css_variables === true) {
+    const maxVars = input.max_css_variables ?? DEFAULT_MAX_CSS_VARIABLES;
+    const maxLen =
+      input.max_css_variable_value_length ??
+      DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH;
+    const maxNameLen = Math.max(1024, maxLen);
+    if (maxVars * (maxNameLen + maxLen) > MAX_CSS_VARIABLES_TOTAL_CHARS) {
+      context.addIssue({
+        code: "custom",
+        path: ["max_css_variables"],
+        message: `max_css_variables * (name + value budget) exceeds the ${String(MAX_CSS_VARIABLES_TOTAL_CHARS)} UTF-16 unit capture budget; lower max_css_variables or max_css_variable_value_length.`,
+      });
+    }
+  }
+};
 
 /** Caller-visible schema for one passive inspection. */
 export const inspectWebPageInputSchema = inspectWebPageShapeSchema.superRefine(

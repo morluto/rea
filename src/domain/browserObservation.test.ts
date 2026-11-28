@@ -4,14 +4,19 @@ import {
   browserEndpointSchema,
   browserObservationEndpointSchema,
   browserOriginSchema,
+  inspectWebPageInputSchema,
   recordedBrowserOriginSchema,
   recordedBrowserObservationEndpointSchema,
   browserUrlTargetIdentity,
   sanitizeEndpointCandidate,
   sanitizeBrowserUrl,
 } from "./browserObservation.js";
+import {
+  browserCssVariablesSchema,
+  webPageInspectionSchema,
+} from "./browserObservationSchemas.js";
+import { analyzeWebBundleInputSchema } from "./webBundleAnalysis.js";
 import { unknownTarget, urlTargetIdentitySchema } from "./targetIdentity.js";
-import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
 
 describe("browser observation contracts", () => {
@@ -287,6 +292,300 @@ describe("browser observation sensitive surfaces and retention", () => {
     expect(sanitizeEndpointCandidate("/api/search?q=rea#results")).toBe(
       "/api/search?q=rea#results",
     );
+  });
+});
+
+describe("browser observation CSS variables contracts", () => {
+  it("defaults include_css_variables to false and validates optional inclusion", () => {
+    const input = {
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "PAGE_1",
+    };
+    const parsedDefault = inspectWebPageInputSchema.parse(input);
+    expect(parsedDefault.include_css_variables).toBe(false);
+
+    const parsedExplicit = inspectWebPageInputSchema.parse({
+      ...input,
+      include_css_variables: true,
+    });
+    expect(parsedExplicit.include_css_variables).toBe(true);
+
+    expect(
+      inspectWebPageInputSchema.safeParse({
+        ...input,
+        include_css_variables: "invalid",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("browser CSS variables item and summary schemas", () => {
+  it("validates bounded CSS variables schema against token limits", () => {
+    const valid = {
+      status: "included" as const,
+      origin_scope: "same_origin" as const,
+      total: 1,
+      retained_count: 1,
+      items: [{ name: "--primary-color", value: "#0066cc", redacted: false }],
+    };
+    expect(browserCssVariablesSchema.parse(valid)).toEqual(valid);
+    expect(
+      browserCssVariablesSchema.parse({
+        status: "included" as const,
+        total: 0,
+        retained_count: 0,
+        items: [],
+      }),
+    ).toEqual({
+      status: "included",
+      origin_scope: "same_origin",
+      total: 0,
+      retained_count: 0,
+      items: [],
+    });
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        origin_scope: "all_allowed",
+      }).success,
+    ).toBe(true);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        origin_scope: "untrusted_cross_origin",
+      }).success,
+    ).toBe(false);
+
+    // Admits long valid custom property names (>128 chars) and escaped/decoded ASCII punctuation
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        total: 4,
+        retained_count: 4,
+        items: [
+          { name: `--${"x".repeat(130)}`, value: "red" },
+          { name: "--brand+tone", value: "red" },
+          { name: "--brand\\-tone", value: "red" },
+          { name: "--line\u2028sep", value: "red" },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        items: [{ name: "--invalid\nname", value: "red" }],
+      }).success,
+    ).toBe(false);
+
+    // Rejects oversized variable values (>65536 chars ceiling)
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        items: [{ name: "--bg", value: "a".repeat(65_537) }],
+      }).success,
+    ).toBe(false);
+
+    // Rejects invalid status enum
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        status: "malformed",
+      }).success,
+    ).toBe(false);
+
+    // Rejects contradictory retained_count or included total
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        retained_count: 1,
+        items: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        status: "included",
+        total: 1,
+        retained_count: 0,
+        items: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        total: 2,
+        retained_count: 2,
+        items: [
+          { name: "--dup", value: "red" },
+          { name: "--d\\75 p", value: "blue" },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        status: "unavailable",
+        total: 1,
+        retained_count: 1,
+        items: [{ name: "--a", value: "red" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        status: "unavailable",
+        total: 1,
+        retained_count: 0,
+        items: [],
+      }).success,
+    ).toBe(true);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        status: "truncated",
+        total: 0,
+        retained_count: 1,
+        items: [{ name: "--a", value: "red" }],
+      }).success,
+    ).toBe(false);
+
+    // Security 1: Enforces valid -- prefix (rejects prototype keys and non-custom CSS properties)
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        items: [{ name: "__proto__", value: "red" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        items: [{ name: "display", value: "none" }],
+      }).success,
+    ).toBe(false);
+
+    // Security 2: Caps total items at 10000 ceiling to prevent token bomb / memory exhaustion
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        items: Array.from({ length: 10_001 }, (_, i) => ({
+          name: `--var-${String(i)}`,
+          value: "10px",
+        })),
+      }).success,
+    ).toBe(false);
+
+    // Security 3: Rejects control characters and BiDi overrides in values
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        items: [{ name: "--bad-char", value: "val\x00ue" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        items: [{ name: "--bidi-override", value: "val\u202Eue" }],
+      }).success,
+    ).toBe(false);
+
+    // Retains valid custom property values containing multiple literal var() substrings
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        items: [
+          {
+            name: "--multi-var",
+            value: "var(--a, var(--b, var(--c, var(--d, var(--e, var(--f))))))",
+          },
+        ],
+      }).success,
+    ).toBe(true);
+
+    // Preserves whitespace verbatim without trimming producer values
+    // Preserves whitespace verbatim in values and rejects untrimmed property names without mutation
+    const itemWithWhitespace = { name: "--spaced-val", value: " 16px " };
+    const parsedWithWhitespace = browserCssVariablesSchema.parse({
+      ...valid,
+      items: [itemWithWhitespace],
+    });
+    expect(parsedWithWhitespace.items[0]?.value).toBe(" 16px ");
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        items: [{ name: " --spaced-name ", value: "16px" }],
+      }).success,
+    ).toBe(false);
+
+    // Accepts Unicode and non-ASCII custom property names
+    const unicodeItem = { name: "--顏色", value: "#ffffff" };
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        items: [unicodeItem],
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe("browser CSS variables item and bundle schemas", () => {
+  it("scopes include_css_variables to inspect_web_page and rejects it in bundle analysis", () => {
+    expect("include_css_variables" in analyzeWebBundleInputSchema.shape).toBe(
+      false,
+    );
+    const bundleInput = {
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "PAGE_1",
+      include_script_sources: true,
+      include_css_variables: true,
+    };
+    const result = analyzeWebBundleInputSchema.safeParse(bundleInput);
+    expect(result.success).toBe(false);
+
+    // Preserves shared storage option validation in analyzeWebBundleInputSchema
+    const conflictingStorageInput = {
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "PAGE_1",
+      include_script_sources: true,
+      include_storage_fingerprints: true,
+      include_storage_keys: false,
+    };
+    const storageResult = analyzeWebBundleInputSchema.safeParse(
+      conflictingStorageInput,
+    );
+    expect(storageResult.success).toBe(false);
+  });
+
+  it("rejects C1 and DEL control characters from CSS values and supports redaction flag", () => {
+    const base = {
+      status: "included" as const,
+      origin_scope: "same_origin" as const,
+      total: 1,
+      retained_count: 1,
+    };
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...base,
+        items: [{ name: "--c1-ctrl", value: "val\u009B31mue" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...base,
+        items: [{ name: "--del-ctrl", value: "val\u007Fue" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      browserCssVariablesSchema.parse({
+        ...base,
+        items: [
+          {
+            name: "--redacted",
+            value: "url(https://example.com)",
+            redacted: true,
+          },
+        ],
+      }).items[0]?.redacted,
+    ).toBe(true);
   });
 });
 

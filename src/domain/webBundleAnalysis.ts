@@ -22,8 +22,9 @@ import {
 } from "./browserDeadline.js";
 import { emptyArraySchema } from "./emptyArraySchema.js";
 import {
-  inspectWebPageWithSourceInputSchema,
+  analyzeWebBundleBaseShapeSchema,
   recordedBrowserOriginSchema,
+  refineBrowserStorageInput,
 } from "./browserObservation.js";
 import {
   webTextArtifactMetadataSchema,
@@ -48,7 +49,7 @@ const webBundleScriptTimeoutDescription = `Per-script deadline phase: maximum st
 const webBundleTotalTimeoutDescription = `Total analysis deadline phase: maximum time for all captured-script analysis, in milliseconds (default ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}, range 1..${String(MAX_NODE_TIMER_DELAY_MS)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}. This is not the per-script analysis_timeout_ms, not capture, and not source-map fetch. A per-script timeout above this total is rejected. Unstarted scripts remain explicit unknowns. Applies on the next call.`;
 
 /** Capture-and-analyze input with optional source-map fetching. */
-export const analyzeWebBundleInputSchema = inspectWebPageWithSourceInputSchema
+export const analyzeWebBundleInputSchema = analyzeWebBundleBaseShapeSchema
   .safeExtend({
     fetch_source_maps: z.boolean().default(false),
     semantic_precision: javaScriptSemanticPrecisionSchema
@@ -79,6 +80,7 @@ export const analyzeWebBundleInputSchema = inspectWebPageWithSourceInputSchema
     ),
   })
   .superRefine((input, context) => {
+    refineBrowserStorageInput(input, context);
     if (input.source_map_limits !== undefined && !input.fetch_source_maps)
       context.addIssue({
         code: "custom",

@@ -26,6 +26,7 @@ const browserSectionSchema = z.enum([
   "screenshot",
   "source_maps",
   "timeline",
+  "css_variables",
 ]);
 export type BrowserSection = z.infer<typeof browserSectionSchema>;
 

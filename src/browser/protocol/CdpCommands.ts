@@ -125,12 +125,17 @@ const CDP_COMMAND_REPLIES = {
   }),
   "DOM.disable": acknowledgement,
   "DOM.enable": acknowledgement,
-  "DOM.getDocument": z.object({ root: z.object({ nodeId }) }),
+  "DOM.getDocument": z.object({
+    root: z.object({ nodeId, children: inventory.optional() }),
+  }),
   // Zero is the protocol's "no match".
   "DOM.querySelector": z.object({ nodeId: z.int().min(0) }),
   "DOM.resolveNode": z.object({
     object: z.object({ objectId: z.string().min(1) }),
   }),
+  "CSS.disable": acknowledgement,
+  "CSS.enable": acknowledgement,
+  "CSS.getComputedStyleForNode": z.object({ computedStyle: inventory }),
   "DOMDebugger.getEventListeners": eventListenersReply,
   "Accessibility.getFullAXTree": z.object({ nodes: inventory }),
   "Browser.close": acknowledgement,

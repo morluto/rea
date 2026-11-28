@@ -257,6 +257,133 @@ const browserSafeMetadataSchema = z.object({
   headers_allowlisted: z.literal(true),
 });
 
+export const DEFAULT_MAX_CSS_VARIABLES = 250;
+export const MAX_CSS_VARIABLES_CEILING = 10_000;
+export const DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH = 512;
+export const MAX_CSS_VARIABLE_VALUE_LENGTH_CEILING = 65_536;
+export const MAX_CSS_VARIABLES_TOTAL_CHARS = 33_554_432;
+
+const CSS_PROP_ESCAPE_RE = /\\([0-9a-fA-F]{1,6}[ \t\r\n\f]?|[^\r\n\f])/gu;
+
+/** Canonicalize a CSS custom property name by decoding CSS escapes while preserving source spelling elsewhere. */
+export const canonicalizeCssCustomPropertyName = (name: string): string => {
+  if (!name.includes("\\")) return name;
+  return name.replace(CSS_PROP_ESCAPE_RE, (_full, body: string) => {
+    const trimmed = body.replace(/[ \t\r\n\f]$/u, "");
+    if (/^[0-9a-fA-F]{1,6}$/u.test(trimmed)) {
+      const code = Number.parseInt(trimmed, 16);
+      if (code === 0 || (code >= 0xd800 && code <= 0xdfff) || code > 0x10ffff) {
+        return "\uFFFD";
+      }
+      return String.fromCodePoint(code);
+    }
+    return body;
+  });
+};
+
+export const browserCssVariableItemSchema = z.object({
+  name: z
+    .string()
+    .regex(/^--.+$/su)
+    .refine(
+      (val) =>
+        !/[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/u.test(val),
+      {
+        message:
+          "Disallowed control characters or bidirectional overrides in CSS variable name",
+      },
+    ),
+  value: z
+    .string()
+    .max(MAX_CSS_VARIABLE_VALUE_LENGTH_CEILING)
+    .refine(
+      (val) =>
+        !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/u.test(
+          val,
+        ),
+      {
+        message:
+          "Disallowed control characters or bidirectional overrides in CSS variable value",
+      },
+    ),
+  redacted: z.boolean().default(false),
+});
+export type BrowserCssVariableItem = z.infer<
+  typeof browserCssVariableItemSchema
+>;
+
+const browserCssVariablesBaseSchema = z.object({
+  status: z.enum(["not_approved", "included", "unavailable", "truncated"]),
+  origin_scope: z.enum(["same_origin", "all_allowed"]).default("same_origin"),
+  total: z.int().min(0),
+  retained_count: z.int().min(0),
+  items: z.array(browserCssVariableItemSchema).max(MAX_CSS_VARIABLES_CEILING),
+});
+
+export const browserCssVariablesSummarySchema =
+  browserCssVariablesBaseSchema.omit({ items: true });
+
+export const browserCssVariablesSchema =
+  browserCssVariablesBaseSchema.superRefine((val, ctx) => {
+    if (val.retained_count !== val.items.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["retained_count"],
+        message: "retained_count must match items.length",
+      });
+    }
+    if (
+      val.status === "not_approved" &&
+      (val.items.length > 0 || val.retained_count > 0 || val.total > 0)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["items"],
+        message:
+          'items, retained_count, and total must be empty/0 when status is "not_approved"',
+      });
+    }
+    if (
+      val.status === "unavailable" &&
+      (val.items.length > 0 || val.retained_count > 0)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["items"],
+        message:
+          'items and retained_count must be empty/0 when status is "unavailable"',
+      });
+    }
+    if (val.status === "included" && val.total !== val.items.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["total"],
+        message: 'total must match items.length when status is "included"',
+      });
+    }
+    if (val.status === "truncated" && val.total < val.retained_count) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["total"],
+        message: 'total must be >= retained_count when status is "truncated"',
+      });
+    }
+    const seenNames = new Set<string>();
+    for (const item of val.items) {
+      const canonicalName = canonicalizeCssCustomPropertyName(item.name);
+      if (seenNames.has(canonicalName)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["items"],
+          message: `Duplicate CSS variable name: ${item.name}`,
+        });
+        break;
+      }
+      seenNames.add(canonicalName);
+    }
+  });
+export type BrowserCssVariables = z.infer<typeof browserCssVariablesSchema>;
+
 /** Provider-neutral normalized result for one passive web-page observation. */
 const storageFingerprintShape = {
   identity_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
@@ -339,6 +466,13 @@ export const webPageInspectionSchema = z.object({
     fingerprint_algorithm: z.literal("sha256"),
     fingerprints_complete: z.boolean(),
     values_redacted: z.literal(true),
+  }),
+  css_variables: browserCssVariablesSchema.default({
+    status: "not_approved",
+    origin_scope: "same_origin",
+    total: 0,
+    retained_count: 0,
+    items: [],
   }),
   limitations: z.array(z.string()),
 });
