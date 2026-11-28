@@ -1,4 +1,5 @@
 import type { JsonValue } from "./jsonValue.js";
+import type { AnalysisParameterLimit } from "./analysisSettings.js";
 import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
 import type { AmbiguousSelector } from "./analysisRefusal.js";
 import type { ArtifactIntegrityCheck } from "./artifactOperationError.js";
@@ -226,6 +227,49 @@ export const fixedCeilingConstraint = (
     retryable: false,
     fixedAllowance: ceiling,
   });
+
+/** Project an observed file size against the per-call parameter that refused it. */
+export const parameterFileSizeConstraint = (
+  operation: string,
+  reason: string,
+  limit: AnalysisParameterLimit,
+  observedBytes: bigint | undefined,
+  description: string,
+  options?: AnalysisErrorOptions,
+): AnalysisResourceConstraintError => {
+  const { parameter, effective_value: effective, maximum } = limit;
+  const required =
+    observedBytes === undefined ||
+    observedBytes > BigInt(Number.MAX_SAFE_INTEGER)
+      ? undefined
+      : Number(observedBytes);
+  const atCeiling = effective >= maximum;
+  const exceedsCeiling =
+    observedBytes !== undefined && observedBytes > BigInt(maximum);
+  const maximumText = String(maximum);
+  const remediationAction =
+    atCeiling || exceedsCeiling
+      ? `Select a ${description} no larger than the ${maximumText}-byte ${parameter} ceiling. Reply paging does not change file admission.`
+      : `${required === undefined ? `Raise ${parameter} above ${String(effective)}` : `Raise ${parameter} to at least ${String(required)}`} (up to ${maximumText}), or select a smaller ${description}. The change applies on the next call.`;
+  return new AnalysisResourceConstraintError(
+    operation,
+    "file-size",
+    reason,
+    {
+      [parameter]: effective,
+      ...(required === undefined ? {} : { observed_file_bytes: required }),
+    },
+    {
+      ...options,
+      retryable: false,
+      limit: {
+        ...limit,
+        ...(required === undefined ? {} : { required_value: required }),
+      },
+      remediationAction,
+    },
+  );
+};
 
 /** Carry one refusal's recovery to an error re-attributed or redacted elsewhere. */
 export const resourceConstraintRecovery = (
