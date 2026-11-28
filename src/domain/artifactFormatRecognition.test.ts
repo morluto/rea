@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import { expect, it } from "vitest";
 
 import { im4p } from "./apple/image4.fixture.js";
@@ -567,5 +568,24 @@ it("recognizes a standalone ESP-IDF NVS partition and ignores erased or unaligne
       fileSize: 4100,
       espFlashLayout: false,
     }),
+  ).toBeUndefined();
+});
+
+it("recognizes uncompressed and gzipped macOS FSEvents stores without matching plain gzip", () => {
+  const rawDls = Buffer.concat([
+    Buffer.from("2SLD"),
+    Buffer.alloc(4),
+    Buffer.from([12, 0, 0, 0]),
+  ]);
+  expect(recognize(rawDls)).toMatchObject({
+    state: "recognized",
+    format: "macos-fsevents",
+  });
+  expect(recognize(gzipSync(rawDls))).toMatchObject({
+    state: "recognized",
+    format: "macos-fsevents",
+  });
+  expect(
+    recognize(gzipSync(Buffer.from("plain text inside gzip"))),
   ).toBeUndefined();
 });

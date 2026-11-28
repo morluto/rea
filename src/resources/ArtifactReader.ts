@@ -298,6 +298,7 @@ export interface ArtifactReader {
     | "systemd-journal"
     | "auditd-log"
     | "pkg"
+    | "macos-fsevents"
     | "file";
   entries(
     signal?: AbortSignal,

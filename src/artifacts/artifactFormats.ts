@@ -61,6 +61,7 @@ import { UefiArtifactReader } from "../uefi/UefiArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { AuditdLogArtifactReader } from "./AuditdLogArtifactReader.js";
+import { MacosFseventsArtifactReader } from "./MacosFseventsArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
 import { SystemdJournalArtifactReader } from "./SystemdJournalArtifactReader.js";
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
@@ -827,6 +828,15 @@ const NON_ZIP_FORMATS = {
       "auditd log inventory reports record and event totals, per-type counts and a bounded window of events joined on their full audit event identity (node, timestamp and serial), with duplicate, out-of-order and malformed records counted. Per-record identity is retained for a bounded window of recent events; events and records past it are counted in the totals but their duplicate and interleaving status is not established. Record key-value fields, hex and escaped values, argument ordering and decoded syscall or permission meanings are not interpreted; the log is not treated as complete or authentic.",
     createReader: (path, options) =>
       new AuditdLogArtifactReader(path, sourceOf(options)),
+  }),
+  "macos-fsevents": described("macos-fsevents", {
+    ...plain,
+    role: "resource",
+    retainClassifiedSource: true,
+    readerLimitation:
+      "macOS FSEvents store inventory reports DLS (1SLD, 2SLD, 3SLD) stream headers, event totals, continuity diagnostics, decoded Darwin disk flag counts and up to 32 sampled records while preserving raw paths and flag bitmasks. Directory-wide rotation correlation, record filtering and live FSEvents streams are not included; records reflect logged notifications rather than proof of file contents or log completeness.",
+    createReader: (path, options) =>
+      new MacosFseventsArtifactReader(path, sourceOf(options)),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<

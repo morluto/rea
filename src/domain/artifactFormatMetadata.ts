@@ -3,6 +3,7 @@ import {
   macosPkgEntryMetadataSchema,
   macosPkgMetadataSchema,
 } from "./formatMetadata/macosPkgMetadata.js";
+import { macosFseventsMetadataSchema } from "./formatMetadata/macosFseventsMetadata.js";
 import {
   bunStandaloneEntryMetadataSchema,
   bunStandaloneMetadataSchema,
@@ -124,6 +125,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   ntfsMftMetadataSchema,
   systemdJournalMetadataSchema,
   auditdLogMetadataSchema,
+  macosFseventsMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
   bfltMetadataSchema,
@@ -415,6 +417,10 @@ const declarationsByKind: {
   "auditd-log": {
     notCompared:
       "Its fields come from the file's own record headers, which content comparison covers.",
+  },
+  "macos-fsevents": {
+    notCompared:
+      "Its fields come from the store's own DLS block headers, event records, flag bitmasks and raw path bytes, which content comparison covers.",
   },
   dfuse: {
     notCompared:
