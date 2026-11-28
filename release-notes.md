@@ -451,6 +451,7 @@
 * **ghidra:** pass inspected JDK to the Windows verifier ([#10752](https://github.com/morluto/rea/issues/10752)) ([0053ad5](https://github.com/morluto/rea/commit/0053ad589cb282d9a027d0a22211a6bc1a2652cb))
 * **ghidra:** point to the LC_MAIN entry when a stripped Mach-O has no main symbol ([#12966](https://github.com/morluto/rea/issues/12966)) ([3db9120](https://github.com/morluto/rea/commit/3db9120c5e8af1e60e6d0e8ea7a0da35c181e085))
 * **ghidra:** preserve cancellation and failure order in language discovery ([#13399](https://github.com/morluto/rea/issues/13399)) ([8ee0ffe](https://github.com/morluto/rea/commit/8ee0ffe0862721e928feb6cb18f7684403b58d77))
+* **ghidra:** refuse over-deep caller types before Ghidra parses them ([#14930](https://github.com/morluto/rea/issues/14930)) ([c24ec44](https://github.com/morluto/rea/commit/c24ec44c94a845c69c6fa88dea9369b26586e25e))
 * **ghidra:** report a held checkpoint lease as retryable contention ([#14844](https://github.com/morluto/rea/issues/14844)) ([059df00](https://github.com/morluto/rea/commit/059df00e70ee7067252f0ce10fa104cd45c51011))
 * **ghidra:** report a wait-bounded owner probe timeout as busy regardless of clock skew ([#14935](https://github.com/morluto/rea/issues/14935)) ([cd87f99](https://github.com/morluto/rea/commit/cd87f998e44c7b1fde8f7832d4f241945ffedfd2))
 * **ghidra:** report incomplete language catalogs at the file size limit ([#13407](https://github.com/morluto/rea/issues/13407)) ([3d3e7db](https://github.com/morluto/rea/commit/3d3e7db5b53329fa0a43c35cb26b9bfade0ee045))
