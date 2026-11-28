@@ -248,6 +248,8 @@ it.each([
         });
       } else {
         expect(error.remediation.action).toMatch(recovery.action);
+        // Recovery names contract operations only; each adapter renders its spelling.
+        expect(error.remediation.action).not.toMatch(/\bCLI\b|\brea \b|MCP/u);
         expect(error.details).toMatchObject({
           related_operations: recovery.operations,
         });
