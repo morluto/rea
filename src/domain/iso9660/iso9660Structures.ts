@@ -227,7 +227,9 @@ export const iso9660DirectoryRecordAt = (
       "length",
     );
   const identifierLength = fixedExtent?.identifierLength ?? bytes[at + 32] ?? 0;
-  // An even-length identifier is followed by one zero padding byte.
+  // An even-length identifier is followed by one padding byte. Its value is
+  // not checked: some discs store a nonzero byte there, and Linux isofs,
+  // libarchive, pycdlib and 7-Zip step over it.
   const padded = identifierLength % 2 === 0;
   const identifierEnd =
     at + ISO9660_DIRECTORY_RECORD_HEADER_BYTES + identifierLength;
@@ -236,12 +238,6 @@ export const iso9660DirectoryRecordAt = (
       `directory record identifier length ${String(identifierLength)} does not fit its record`,
       base + at + 32,
       "identifier_length",
-    );
-  if (padded && bytes[identifierEnd] !== 0)
-    throw iso9660Malformed(
-      "directory record padding byte after an even-length identifier is not zero",
-      base + identifierEnd,
-      "padding_field",
     );
   if (length % 2 !== 0)
     throw iso9660Malformed(

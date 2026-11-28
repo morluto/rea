@@ -277,14 +277,28 @@ it("reports an unterminated multi-extent file at its last flags byte", async () 
   await rejectsAt(bytes, "malformed", first + 25, "file_flags");
 });
 
-it("rejects a nonzero padding byte after an even-length identifier", async () => {
+it("lists a record whose padding byte after an even-length identifier is not zero", async () => {
   const { bytes, layout } = buildIso9660Image({
-    files: [{ path: "ab", bytes: Buffer.from("x") }],
+    files: [
+      { path: "ab", bytes: Buffer.from("x") },
+      { path: "cd", bytes: Buffer.from("yz") },
+    ],
   });
   // "ab;1" has four bytes, so a padding byte follows it.
-  const offset = layout.primaryRecords.get("ab")! + 33 + 4;
-  bytes[offset] = 0x20;
-  await rejectsAt(bytes, "malformed", offset, "padding_field");
+  bytes[layout.primaryRecords.get("ab")! + 33 + 4] = 0x20;
+  const snapshot = await scanCanonicalArtifactInventory(await fixture(bytes));
+  const rows = new Map(
+    snapshot.occurrences.map((row) => [row.logical_path, row]),
+  );
+  // The record and the one after it are listed and read.
+  for (const [listed, size] of [
+    ["ab", 1],
+    ["cd", 2],
+  ] as const)
+    expect(rows.get(listed)).toMatchObject({
+      declared_size: size,
+      hash_status: "verified",
+    });
 });
 
 it("rejects an odd final record before the sector padding", async () => {
