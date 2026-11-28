@@ -736,7 +736,17 @@ as well. A newly started unreadable process can prevent verified cleanup even
 after the selected command exits. REA preserves this uncertainty and leaves
 that process untouched.
 
-Reading those tokens requires compiling a small Swift helper with `xcrun swiftc`.
+On Linux, Chromium processes do not expose the launch environment in
+`/proc/<pid>/environ`: Chromium reuses the original argv/environ memory for
+its process-title support, so the launcher and zygote ranges read back as
+NUL bytes and child ranges hold command-line text instead. A launched
+Electron app therefore reports a readable environment without
+`REA_PROCESS_RUN_ID`, even though the app's own `process.env` holds the
+value. That absence is not proof the process is foreign, and cleanup stays
+unverified rather than succeeding: the failure names the absent token
+instead of reporting a token mismatch.
+
+On macOS, reading those tokens requires compiling a small Swift helper with `xcrun swiftc`.
 By default that compilation reuses Swift's shared module cache, while the
 compiler's intermediate objects stay inside the per-run temporary root that REA
 removes afterwards. Set `REA_DARWIN_MODULE_CACHE_PATH` to a writable directory

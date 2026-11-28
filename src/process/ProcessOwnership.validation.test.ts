@@ -122,6 +122,28 @@ describe("owned process-group cleanup validation: ownership and lineage", () => 
     });
     expect(signalGroup).not.toHaveBeenCalled();
   });
+  it("names a readable environment without the run token instead of a foreign token", async () => {
+    // morluto/rea#4282: on Linux, Chromium processes do not expose the
+    // launch environment in /proc/<pid>/environ, so a readable environment
+    // without REA_PROCESS_RUN_ID is not proof the process is foreign.
+    const { adapter, signalGroup } = host({
+      100: { REA_PROCESS_RUN_ID: "run-token" },
+      101: {},
+    });
+    const result = await cleanupOwnedProcessGroup(ownership, adapter);
+    expect(result.cleaned).toBe(false);
+    if (result.cleaned) throw new Error("expected cleanup to retain ownership");
+    expect(result.reason).toContain(
+      "REA_PROCESS_RUN_ID was absent from the readable environment for PID(s): 101",
+    );
+    expect(result.reason).toContain("Chromium");
+    expect(result.reason).toContain("/proc/");
+    expect(result.reason).not.toContain("mismatch");
+    expect(result.failures).toEqual([
+      { pid: 101, reason: "run-token-mismatch", tokenAbsent: true },
+    ]);
+    expect(signalGroup).not.toHaveBeenCalled();
+  });
   it("checks every member and aggregates ownership read failures", async () => {
     const environment = vi.fn((pid: number) => {
       if (pid === 100)
@@ -159,6 +181,32 @@ describe("owned process-group cleanup validation: ownership and lineage", () => 
         { pid: 101, reason: "run-token-mismatch" },
       ],
     });
+    expect(signalGroup).not.toHaveBeenCalled();
+  });
+});
+
+describe("owned process-group cleanup validation: mixed absent and foreign tokens", () => {
+  it("keeps the mismatch wording when only some members lack the run token", async () => {
+    // morluto/rea#4282: the absent-token wording applies only when every
+    // mismatched member lacks the token. A foreign token on any member
+    // keeps the mismatch wording, while each member's own tokenAbsent
+    // fact is still preserved.
+    const { adapter, signalGroup } = host({
+      100: { REA_PROCESS_RUN_ID: "run-token" },
+      101: {},
+      102: { REA_PROCESS_RUN_ID: "different-run" },
+    });
+    const result = await cleanupOwnedProcessGroup(ownership, adapter);
+    expect(result.cleaned).toBe(false);
+    if (result.cleaned) throw new Error("expected cleanup to retain ownership");
+    expect(result.reason).toBe(
+      "process ownership token mismatch for PID(s): 101, 102",
+    );
+    expect(result.reason).not.toContain("absent");
+    expect(result.failures).toEqual([
+      { pid: 101, reason: "run-token-mismatch", tokenAbsent: true },
+      { pid: 102, reason: "run-token-mismatch" },
+    ]);
     expect(signalGroup).not.toHaveBeenCalled();
   });
 });

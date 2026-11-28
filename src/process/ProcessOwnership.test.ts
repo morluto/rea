@@ -648,8 +648,10 @@ describe("sampled detached process groups during cleanup", () => {
 
     expect(result).toMatchObject({
       cleaned: false,
-      reason: expect.stringMatching(/ownership token mismatch.*\b200\b/i),
-      failures: [{ pid: 200, reason: "run-token-mismatch" }],
+      reason: expect.stringMatching(
+        /REA_PROCESS_RUN_ID was absent from the readable environment.*\b200\b/i,
+      ),
+      failures: [{ pid: 200, reason: "run-token-mismatch", tokenAbsent: true }],
     });
     expect(signalGroup).not.toHaveBeenCalled();
   });
