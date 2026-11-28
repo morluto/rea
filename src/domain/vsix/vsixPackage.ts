@@ -295,13 +295,21 @@ export const VSIX_CONTRIBUTION_KINDS = [
   "chat_participant",
   "language_model_tool",
   "mcp_server_provider",
+  "view",
+  "custom_editor",
 ] as const;
 
-/** A declared chat participant, language model tool or MCP server provider. */
+/** A declared contribution that code registers by its exact ID. */
 const contributionSchema = z.strictObject({
   kind: z.enum(VSIX_CONTRIBUTION_KINDS),
   id: nullableText,
   label: nullableText,
+});
+
+/** A declared configuration property and the JSON types it names. */
+const settingSchema = z.strictObject({
+  key: z.string().min(1),
+  types: z.array(z.string().min(1)),
 });
 
 // A side is null when its manifest was not read, so no disagreement is
@@ -395,6 +403,7 @@ export const vsixPackageSchema = z.strictObject({
     menus: z.array(menuItemSchema).nullable().default(null),
     keybindings: z.array(keybindingSchema).nullable().default(null),
     declarations: z.array(contributionSchema).nullable().default(null),
+    settings: z.array(settingSchema).nullable().default(null),
   }),
   extension_dependencies: declaredIdsSchema,
   extension_pack: declaredIdsSchema,

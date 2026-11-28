@@ -329,6 +329,36 @@ it("records declared chat participants, tools and MCP providers", async () => {
   ]);
 });
 
+it("records declared views, custom editors and settings", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      contributes: {
+        views: { explorer: [{ id: "demo.tree", name: "Tree" }] },
+        customEditors: [{ viewType: "demo.editor", displayName: "Editor" }],
+        configuration: [
+          { properties: { "demo.enabled": { type: "boolean" } } },
+          { properties: { "demo.mode": { type: ["string", "null"] } } },
+        ],
+      },
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.contributes.declarations).toEqual([
+    { kind: "view", id: "demo.tree", label: "Tree" },
+    { kind: "custom_editor", id: "demo.editor", label: "Editor" },
+  ]);
+  expect(report.contributes.settings).toEqual([
+    { key: "demo.enabled", types: ["boolean"] },
+    { key: "demo.mode", types: ["string", "null"] },
+  ]);
+});
+
 it("counts a single contributed command object as one command", async () => {
   const bytes = await vsixPackageFixture({
     packageJson: JSON.stringify({

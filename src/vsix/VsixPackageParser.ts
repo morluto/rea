@@ -637,7 +637,17 @@ const CONTRIBUTION_POINTS = [
   ["chat_participant", "chatParticipants", "id", "name"],
   ["language_model_tool", "languageModelTools", "name", "displayName"],
   ["mcp_server_provider", "mcpServerDefinitionProviders", "id", "label"],
+  ["view", "views", "id", "name"],
+  ["custom_editor", "customEditors", "viewType", "displayName"],
 ] as const;
+
+/** `contributes.views` groups its rows by view container. */
+const pointRows = (point: string, value: unknown) =>
+  point === "views"
+    ? rowsOf(value).flatMap((containers) =>
+        Object.values(containers).flatMap(rowsOf),
+      )
+    : rowsOf(value);
 
 const declaredContributions = (
   contributes: Record<string, unknown> | undefined,
@@ -645,11 +655,26 @@ const declaredContributions = (
   CONTRIBUTION_POINTS.flatMap(([kind, point, idKey, labelKey]) =>
     contributes?.[point] === undefined
       ? []
-      : rowsOf(contributes[point]).map((row) => ({
+      : pointRows(point, contributes[point]).map((row) => ({
           kind,
           id: exactText(row[idKey]),
           label: exactText(row[labelKey]),
         })),
+  );
+
+/** Properties of one configuration object or of each in an array. */
+const declaredSettings = (configuration: unknown) =>
+  rowsOf(configuration).flatMap(({ properties }) =>
+    rowsOf(properties).flatMap((record) =>
+      Object.entries(record).flatMap(([key, schema]) => {
+        const types = rowsOf(schema).flatMap(({ type }) =>
+          (Array.isArray(type) ? (type as readonly unknown[]) : [type]).filter(
+            (name): name is string => typeof name === "string" && name !== "",
+          ),
+        );
+        return key === "" ? [] : [{ key, types }];
+      }),
+    ),
   );
 
 const parsePackageJsonDocument = (
@@ -671,6 +696,7 @@ const parsePackageJsonDocument = (
       menus: null,
       keybindings: null,
       declarations: null,
+      settings: null,
     },
     extensionDependencies: null,
     extensionPack: null,
@@ -767,6 +793,7 @@ const parsePackageJsonDocument = (
         key: exactText(row.key),
       })),
       declarations: declaredContributions(contributesRaw),
+      settings: declaredSettings(contributesRaw?.configuration),
     },
     extensionDependencies: parseExtensionList(record.extensionDependencies),
     extensionPack: parseExtensionList(record.extensionPack),
@@ -1395,6 +1422,7 @@ export const parseVsixPackage = async (
         menus: null,
         keybindings: null,
         declarations: null,
+        settings: null,
       },
       extension_dependencies: extensionDependencies,
       extension_pack: extensionPack,

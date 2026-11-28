@@ -51,7 +51,8 @@ exists.
 and `onStartupFinished`. `contributes` lists contribute key names and counts,
 every declared command, and the command each menu item (`menus`) and
 keybinding (`keybindings`) invokes, plus declared chat participants, language
-model tools and MCP server providers (`declarations`). `extension_dependencies` and `extension_pack` keep both
+model tools, MCP server providers, views and custom editors (`declarations`),
+and configuration `settings`. `extension_dependencies` and `extension_pack` keep both
 manifests' declared ids and a `disagreement` flag. A side is `null` when its
 manifest was missing or could not be read, and `disagreement` is only true
 when both sides were read. `extension_kind`,
@@ -110,18 +111,24 @@ REA does not verify that the two records describe the same files:
 `entry_points` says whether each declared entry path was analyzed. `not_found`
 does not prove that a command has no handler.
 
-`contributions` reports the same statuses for chat participants, language
-model tools and MCP server providers:
+`contributions` reports the same statuses for these contribution points:
 
-| Declared in `contributes`           | Registered with                                 |
-| ----------------------------------- | ----------------------------------------------- |
-| `chatParticipants[].id`             | `vscode.chat.createChatParticipant`             |
-| `languageModelTools[].name`         | `vscode.lm.registerTool`                        |
-| `mcpServerDefinitionProviders[].id` | `vscode.lm.registerMcpServerDefinitionProvider` |
+| Declared in `contributes`           | Registered with                                                                             |
+| ----------------------------------- | ------------------------------------------------------------------------------------------- |
+| `chatParticipants[].id`             | `vscode.chat.createChatParticipant`                                                         |
+| `languageModelTools[].name`         | `vscode.lm.registerTool`                                                                    |
+| `mcpServerDefinitionProviders[].id` | `vscode.lm.registerMcpServerDefinitionProvider`                                             |
+| `views.*[].id`                      | `vscode.window.registerTreeDataProvider`, `createTreeView` or `registerWebviewViewProvider` |
+| `customEditors[].viewType`          | `vscode.window.registerCustomEditorProvider`                                                |
 
 The servers an MCP provider returns at run time, their commands and prompt
 handling are not analyzed. `summary` counts commands only, apart from
 `unresolved_registrations`, which covers every kind.
+
+The package report also lists declared configuration `settings` with their
+types. Reads of those settings in code are not correlated. Views that VS Code
+fills without a provider call, such as walkthrough or welcome content, have no
+registration to find.
 
 ## Limits and failures
 

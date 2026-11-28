@@ -6,7 +6,9 @@ import { correlateVsixRegistrations } from "./vsixRegistrationCorrelation.js";
 type ContributionKind =
   | "chat_participant"
   | "language_model_tool"
-  | "mcp_server_provider";
+  | "mcp_server_provider"
+  | "view"
+  | "custom_editor";
 
 const contributes = (
   commands: readonly string[],
@@ -187,5 +189,33 @@ describe("VS Code command correlation", () => {
       contributes([], { declarations: null }),
     );
     expect(result.contributions[0]?.status).toBe("undetermined");
+  });
+
+  it("correlates views and custom editors with their providers", () => {
+    const result = correlate(
+      `${VSCODE}vscode.window.registerTreeDataProvider("demo.tree", p);
+       vscode.window.createTreeView("demo.tree", o);
+       vscode.window.registerWebviewViewProvider("demo.web", p);
+       vscode.window.registerCustomEditorProvider("demo.editor", p);`,
+      contributes([], {
+        declarations: [
+          { kind: "view", id: "demo.tree", label: "Tree" },
+          { kind: "view", id: "demo.web", label: null },
+          { kind: "custom_editor", id: "demo.other", label: null },
+        ],
+      }),
+    );
+    expect(
+      result.contributions.map(({ id, status, registrations }) => [
+        id,
+        status,
+        registrations.length,
+      ]),
+    ).toEqual([
+      ["demo.tree", "registered", 2],
+      ["demo.web", "registered", 1],
+      ["demo.editor", "registered_undeclared", 1],
+      ["demo.other", "not_found", 0],
+    ]);
   });
 });

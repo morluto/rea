@@ -22,6 +22,10 @@ const REGISTRATION_KINDS = {
   "chat.createChatParticipant": "chat_participant",
   "lm.registerTool": "language_model_tool",
   "lm.registerMcpServerDefinitionProvider": "mcp_server_provider",
+  "window.registerTreeDataProvider": "view",
+  "window.createTreeView": "view",
+  "window.registerWebviewViewProvider": "view",
+  "window.registerCustomEditorProvider": "custom_editor",
 } as const;
 const REGISTRATIONS = [
   "registerCommand",
@@ -29,6 +33,10 @@ const REGISTRATIONS = [
   "createChatParticipant",
   "registerTool",
   "registerMcpServerDefinitionProvider",
+  "registerTreeDataProvider",
+  "createTreeView",
+  "registerWebviewViewProvider",
+  "registerCustomEditorProvider",
 ] as const;
 const STATUSES = [
   "registered",
@@ -124,6 +132,8 @@ const registrationsOf = (graph: JavaScriptSemanticGraph) => {
     chat_participant: new Map(),
     language_model_tool: new Map(),
     mcp_server_provider: new Map(),
+    view: new Map(),
+    custom_editor: new Map(),
   };
   const unresolved: Registration[] = [];
   for (const node of graph.nodes) {
