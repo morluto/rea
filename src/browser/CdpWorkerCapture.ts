@@ -212,6 +212,13 @@ export class CdpWorkerCapture {
   finish(frameIds: ReadonlySet<string>): Worker[] {
     this.#stopped = true;
     this.check();
+    // Child discovery requires an armed observer, even for frames attached
+    // after drain sealed the lifecycle queue.
+    for (const frame of this.#frames.values()) {
+      if (frame.autoAttach) continue;
+      this.pageEvents.completeness.unavailable("workers");
+      break;
+    }
     for (const [id, versions] of this.#versionsByTarget)
       if (
         !this.#workers.has(id) &&
@@ -630,8 +637,6 @@ export class CdpWorkerCapture {
             if (this.signal.aborted || !isUnavailableWorkerCommand(cause))
               throw cause;
           }
-          if (!frame.autoAttach)
-            this.pageEvents.completeness.unavailable("workers");
         });
         return;
       }

@@ -123,19 +123,33 @@ describe("partial response metadata in repeated requests", () => {
               total_changes: changed ? 1 : 0,
             });
           }
-          // Missing rows can contain the otherwise unmatched known value.
-          if (changed) {
-            before.completeness.unavailable_sections.push("network_requests");
-            expect(compare(before, after)).toMatchObject({
-              status: "unknown",
-              total_changes: 0,
+          before.completeness.unavailable_sections.push("network_requests");
+          for (const [a, b] of [
+            [before, after],
+            [after, before],
+          ] as const)
+            expect(compare(a, b)).toMatchObject({
+              status: changed ? "changed" : "unknown",
+              total_changes: changed ? 1 : 0,
             });
-            expect(compare(after, before)).toMatchObject({
-              status: "unknown",
-              total_changes: 0,
-            });
-          }
+          after.completeness.unavailable_sections.push("network_requests");
+          expect(compare(before, after)).toMatchObject({
+            status: "unknown",
+            total_changes: 0,
+          });
         }
+        // Additional observations on the complete side can be missing from the partial peer.
+        const partial = capture([null, known]);
+        partial.completeness.unavailable_sections.push("network_requests");
+        const more = capture([known, known, known]);
+        for (const [a, b] of [
+          [partial, more],
+          [more, partial],
+        ] as const)
+          expect(compare(a, b)).toMatchObject({
+            status: "unknown",
+            total_changes: 0,
+          });
       }
     },
   );

@@ -315,6 +315,68 @@ it.each(["JavaScript", "WebAssembly"])(
   },
 );
 
+it.each([false, true])(
+  "reports the worker discovery gap for a late attached iframe (late=%s)",
+  async (late) => {
+    let inventories = 0;
+    const { browser, provider, input } = await fixture({
+      eventsBeforeReply: ["Page.getFrameTree"],
+      commandResult(command) {
+        if (command.method === "Target.getTargets") {
+          inventories++;
+          return { targetInfos: [] };
+        }
+      },
+      commandEvents(command, origin) {
+        if (command.method === "Target.setAutoAttach") return [];
+        if (late && inventories === 2 && command.method === "Page.getFrameTree")
+          return [
+            {
+              method: "Target.attachedToTarget",
+              sessionId: command.sessionId,
+              params: {
+                sessionId: "late-iframe",
+                targetInfo: {
+                  targetId: "late-frame",
+                  type: "iframe",
+                  url: origin + "/frame",
+                },
+              },
+            },
+          ];
+      },
+    });
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    expect(captured.value.workers).toEqual([]);
+    expect(
+      captured.value.completeness.unavailable_sections.includes("workers"),
+    ).toBe(late);
+    expect(
+      browser.commands.some(
+        ({ sessionId, method }) =>
+          sessionId === "late-iframe" && method === "Target.setAutoAttach",
+      ),
+    ).toBe(false);
+    expect(
+      browser.commands.some(
+        ({ method, params }) =>
+          method === "Target.detachFromTarget" &&
+          params.sessionId === "late-iframe",
+      ),
+    ).toBe(late);
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      input,
+      captured.value,
+      provider.identity(),
+    );
+    expect(
+      parseRuntimeCaptures([evidence])[0]?.scriptsCompleteWithinScope,
+    ).toBe(!late);
+  },
+);
+
 it("ends page WebSocket evidence before worker teardown", async () => {
   const frame = (payloadData: string): CdpEvent => ({
     method: "Network.webSocketFrameReceived",

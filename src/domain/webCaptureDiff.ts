@@ -435,6 +435,8 @@ const networkResponseValue = (
 const sharedNetworkMetadata = (
   before: WebPageInspection,
   after: WebPageInspection,
+  beforeComplete: boolean,
+  afterComplete: boolean,
 ): {
   readonly fields: ReadonlyMap<string, ReadonlySet<NetworkMetadataField>>;
   readonly complete: boolean;
@@ -499,7 +501,11 @@ const sharedNetworkMetadata = (
   // Unknown values can match any known value, but cannot erase its observed
   // multiplicity. Compare lower bounds in both directions without pairing
   // repeated requests by their unstable IDs or order.
-  for (const [left, right] of [counts, [counts[1], counts[0]]] as const)
+  for (const [left, right, peerComplete] of [
+    [counts[0], counts[1], afterComplete],
+    [counts[1], counts[0], beforeComplete],
+  ] as const) {
+    if (!peerComplete) continue;
     for (const [identity, fields] of left)
       for (const [field, values] of fields) {
         const peer = right.get(identity)?.get(field);
@@ -511,6 +517,7 @@ const sharedNetworkMetadata = (
           )
             differences.add(owners.get(identity)!);
       }
+  }
   return { fields: shared, complete, differences };
 };
 
@@ -554,9 +561,12 @@ const networkDimension = (
   before: WebPageInspection,
   after: WebPageInspection,
 ): Dimension => {
-  const requestsComplete = [before, after].every((inspection) =>
-    networkInventoryComplete(inspection, ["network_requests"]),
-  );
+  const beforeRequestsComplete = networkInventoryComplete(before, [
+    "network_requests",
+  ]);
+  const afterRequestsComplete = networkInventoryComplete(after, [
+    "network_requests",
+  ]);
   const webSocketFramesComplete = [before, after].every((inspection) =>
     networkInventoryComplete(inspection, [
       "websocket_connections",
@@ -571,7 +581,12 @@ const networkDimension = (
       ]) && webSocketOpcodesKnown(inspection),
   );
   const requestIdentities = networkIdentityCoverage(before, after);
-  const metadata = sharedNetworkMetadata(before, after);
+  const metadata = sharedNetworkMetadata(
+    before,
+    after,
+    beforeRequestsComplete,
+    afterRequestsComplete,
+  );
   const selected = bodyShapesSelected(before) && bodyShapesSelected(after);
   const webSocketShapes =
     webSocketShapesSelected(before) && webSocketShapesSelected(after);
@@ -643,8 +658,8 @@ const networkDimension = (
   const [beforeRequests, afterRequests] = networkComparisonMaps(
     networkSamples(before, sources, projection),
     networkSamples(after, sources, projection),
-    networkInventoryComplete(before, ["network_requests"]),
-    networkInventoryComplete(after, ["network_requests"]),
+    beforeRequestsComplete,
+    afterRequestsComplete,
   );
   const compared = compareDimension(
     new Map([
@@ -661,7 +676,8 @@ const networkDimension = (
         : []),
       ...afterWebSocketPayload,
     ]),
-    requestsComplete &&
+    beforeRequestsComplete &&
+      afterRequestsComplete &&
       requestIdentities.complete &&
       projection.initiatorsComplete &&
       webSocketInventoryComplete &&
@@ -678,7 +694,7 @@ const networkDimension = (
         ? true
         : identity.startsWith("ws_") && webSocketInventoryComplete,
   );
-  if (requestsComplete) {
+  if (metadata.differences.size > 0) {
     const changes = new Map(
       compared.changes.map((change) => [change.identity, change]),
     );
