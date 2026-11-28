@@ -83,6 +83,7 @@
         "package-lock.json",
         "scripts/lib/module-layers.baseline.json",
         "scripts/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "experiments/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "src/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "tests/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "docs/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
