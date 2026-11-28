@@ -277,7 +277,7 @@ it("recognizes an Android sparse image by its 0xED26FF3A magic", () => {
   });
 });
 
-it.each([16, 17])(
+it.each([16, 17, 18])(
   "recognizes FIT from an FDT v%s structure in a bounded prefix",
   (version) => {
     const bytes = devicetreeFixture(

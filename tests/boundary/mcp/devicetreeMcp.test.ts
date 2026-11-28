@@ -251,7 +251,7 @@ mcpTest("rejects relative paths and unsupported versions", async ({ mcp }) => {
     });
     const root = await createTestTempDirectory("rea-dtb-mcp-version-");
     const path = join(root, "board.dtb");
-    await writeFile(path, devicetreeFixture(undefined, 18));
+    await writeFile(path, devicetreeFixture(undefined, 18, 18));
     const unsupported = await client.callTool({
       name: "inspect_devicetree",
       arguments: { path },

@@ -32,12 +32,15 @@ export const readDevicetreeHeader = (
       "Not a flattened devicetree blob",
     );
   const version = reader.u32(20);
-  if (version !== 16 && version !== 17)
+  const lastCompatibleVersion = reader.u32(24);
+  // DTSpec 5.1: a later version backwards compatible with version 17 is read
+  // with the version 17 header.
+  if (version < 16 || (version > 17 && lastCompatibleVersion > 17))
     throw new BinaryFormatFailure(
       "unsupported",
-      `FDT version ${version} is unsupported; supported versions are 16 and 17`,
+      `FDT version ${version} with last_comp_version ${lastCompatibleVersion} is unsupported; supported versions are 16, 17 and later versions backwards compatible with 17`,
     );
-  const headerBytes = version === 17 ? FDT_MAX_HEADER_BYTES : 36;
+  const headerBytes = version >= 17 ? FDT_MAX_HEADER_BYTES : 36;
   if (bytes.length < headerBytes)
     throw new BinaryFormatFailure("malformed", "Truncated FDT header");
   const header: DevicetreeHeader = {
@@ -47,10 +50,10 @@ export const readDevicetreeHeader = (
     off_dt_strings: reader.u32(12),
     off_mem_rsvmap: reader.u32(16),
     version,
-    last_comp_version: reader.u32(24),
+    last_comp_version: lastCompatibleVersion,
     boot_cpuid_phys: reader.u32(28),
     size_dt_strings: reader.u32(32),
-    size_dt_struct: version === 17 ? reader.u32(36) : null,
+    size_dt_struct: version >= 17 ? reader.u32(36) : null,
   };
   if (header.totalsize < headerBytes || header.last_comp_version > version)
     throw new BinaryFormatFailure(
