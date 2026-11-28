@@ -819,7 +819,7 @@ runtime override. See
 `artifact.member_count` (launch seed `REA_ARTIFACT_MEMBER_COUNT`, default
 100,000, range 1 to 2,147,483,647) is the session default for the per-call
 member counts `bun.module_count`, `dotnet_bundle.entry_count`,
-`node_sea.asset_count` and `deno.vfs_entries`. An explicit `artifact_limits`
+`node_sea.asset_count`, `deno.vfs_entries`, and `zip.member_count`. An explicit `artifact_limits`
 field wins for that call; otherwise the runtime override, then the launch
 seed, then the default applies (see [precedence](#precedence-and-lifetime)).
 A refusal at one of those fields also reports `details.limit` as that
