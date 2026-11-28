@@ -124,6 +124,36 @@ it("records YAML anchors, aliases, tags and comments without changing the facts"
   ).toBe(true);
 });
 
+it("keeps the source binding when an anchor name is reused", () => {
+  const decoded = decodeOpenApiYaml(
+    Buffer.from(
+      [
+        "first: &value {name: first}",
+        "firstReference: *value",
+        "second: &value {name: second}",
+        "secondReference: *value",
+      ].join("\n"),
+    ),
+    "/owned.yaml",
+  );
+  if (!decoded.ok) throw decoded.error;
+  expect(decoded.value).toEqual({
+    first: { name: "first" },
+    firstReference: { name: "first" },
+    second: { name: "second" },
+    secondReference: { name: "second" },
+  });
+});
+
+it("refuses a YAML alias that creates a circular object", async () => {
+  const result = await importText(
+    "circular.yaml",
+    'openapi: "3.1.0"\ninfo: {title: t, version: "1"}\npaths: {}\nx-state: &state {self: *state}\n',
+    "openapi-yaml",
+  );
+  expect(contractError(result)).toContain("circular references");
+});
+
 it("rejects YAML that the decoder cannot compose, without inventing declarations", async () => {
   const malformedResult = await importText(
     "broken.yaml",

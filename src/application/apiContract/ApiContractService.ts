@@ -71,8 +71,9 @@ function* documentSteps(
   document: unknown,
   artifact: ApiContractArtifact,
   format: ApiContract["format"],
+  aliasedCollections?: WeakSet<object>,
 ) {
-  const issue = yield* jsonValueValidationSteps(document);
+  const issue = yield* jsonValueValidationSteps(document, aliasedCollections);
   if (issue !== undefined) return err(inputFailure(issue));
   return yield* parseApiContractSteps(document, artifact, format);
 }
@@ -107,9 +108,11 @@ const importDocument = async (
   sha256: string,
   signal?: AbortSignal,
 ): Promise<Result<Evidence, AnalysisError>> => {
+  const aliasedCollections =
+    input.format === "openapi-yaml" ? new WeakSet<object>() : undefined;
   const document =
     input.format === "openapi-yaml"
-      ? decodeOpenApiYaml(bytes, input.path)
+      ? decodeOpenApiYaml(bytes, input.path, aliasedCollections)
       : decodeJsonDocument(bytes, input.path);
   if (!document.ok) return document;
   const parsed = await completeApiContractSteps(
@@ -121,6 +124,7 @@ const importDocument = async (
         bytes: bytes.length,
       },
       input.format,
+      aliasedCollections,
     ),
     signal,
   );

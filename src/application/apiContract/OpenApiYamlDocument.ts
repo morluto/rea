@@ -34,10 +34,12 @@ function* yamlNodes(root: unknown): Generator<Node> {
   if (isNode(root)) pending.push(root);
   for (let current = pending.pop(); current !== undefined;) {
     yield current;
-    if (isMap<unknown, unknown>(current))
-      for (const pair of current.items)
-        pending.push(pair.key as Node, pair.value as Node);
-    else if (isCollection(current))
+    if (isMap<unknown, unknown>(current)) {
+      for (const pair of current.items) {
+        if (isNode(pair.key)) pending.push(pair.key);
+        if (isNode(pair.value)) pending.push(pair.value);
+      }
+    } else if (isCollection(current))
       for (const item of current.items) if (isNode(item)) pending.push(item);
     current = pending.pop();
   }
@@ -81,9 +83,8 @@ const yamlAnchors = (root: unknown): Map<string, readonly Node[]> => {
 const resolveAlias = (
   alias: Alias,
   anchors: Map<string, readonly Node[]>,
-  source: string,
 ): Node | undefined => {
-  const bindings = anchors.get(source);
+  const bindings = anchors.get(alias.source);
   if (bindings === undefined) return undefined;
   const position = alias.range?.[0] ?? Number.POSITIVE_INFINITY;
   let low = 0;
@@ -96,6 +97,19 @@ const resolveAlias = (
     else high = middle;
   }
   return low === 0 ? undefined : bindings[low - 1];
+};
+
+/** Restrict each library lookup to its preselected binding, while letting `yaml`
+ * keep its own conversion, anchor bookkeeping and expansion limit. */
+const indexYamlAlias = (node: Alias, target: Node | undefined): void => {
+  const candidates = target === undefined ? [node] : [target, node];
+  const resolve = node.resolve;
+  node.resolve = (document, context) => {
+    if (context === undefined)
+      return target === undefined || isAlias(target) ? undefined : target;
+    context.aliasResolveCache = candidates;
+    return resolve.call(node, document, context);
+  };
 };
 
 const invalidDocument = (path: string, message: string): AnalysisError =>
@@ -141,6 +155,7 @@ const duplicateKeyDiagnostic = (
 export const decodeOpenApiYaml = (
   bytes: Uint8Array,
   path: string,
+  aliasedCollections?: WeakSet<object>,
 ): Result<unknown, AnalysisError> => {
   // YAML composition allocates the decoded text, the composed document and its
   // JSON-compatible projection before any retained-fact allowance applies, so
@@ -244,6 +259,7 @@ export const decodeOpenApiYaml = (
   // member names, so refuse the document instead of inventing one.
   const anchors = yamlAnchors(document.contents);
   for (const node of yamlNodes(document.contents)) {
+    if (isAlias(node)) indexYamlAlias(node, resolveAlias(node, anchors));
     if (!isMap<unknown, unknown>(node)) continue;
     const projected = new Set<string>();
     for (const pair of node.items) {
@@ -259,9 +275,7 @@ export const decodeOpenApiYaml = (
       // overflow on a deeply nested one, so keys resolve from this iterative
       // table built before the scan. Each alias binds to the last anchor of that
       // name preceding it, which is the scope `yaml` itself resolves against.
-      const resolved = isAlias(key)
-        ? resolveAlias(key, anchors, key.source)
-        : key;
+      const resolved = isAlias(key) ? resolveAlias(key, anchors) : key;
       if (
         resolved === undefined ||
         !isScalar(resolved) ||
@@ -362,7 +376,13 @@ export const decodeOpenApiYaml = (
   }
   let value: unknown;
   try {
-    value = document.toJS({ maxAliasCount: YAML_ALIAS_LIMIT });
+    value = document.toJS({
+      maxAliasCount: YAML_ALIAS_LIMIT,
+      onAnchor(value: unknown, references) {
+        if (references > 1 && typeof value === "object" && value !== null)
+          aliasedCollections?.add(value);
+      },
+    });
   } catch (cause: unknown) {
     // An unresolved alias reference and an alias expansion over the count
     // bound both throw out of `toJS`; they are expected refusals of this

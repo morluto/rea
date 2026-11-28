@@ -206,6 +206,22 @@ describe("jsonValueSchema width", () => {
     );
   });
 
+  it("reuses an owned shared subtree without overlooking its depth at another reference", () => {
+    const values = Array.from({ length: 5000 }, () => true);
+    const items = [values];
+    const shared = new WeakSet<object>([items]);
+    const steps = jsonValueValidationSteps([items, items, items], shared);
+    expect(steps.next().done).toBe(false);
+    expect(steps.next()).toEqual({ done: true, value: undefined });
+
+    let nested: unknown = items;
+    for (let level = 0; level < MAX_JSON_DEPTH - 1; level++) nested = [nested];
+    const depthSteps = jsonValueValidationSteps([items, nested], shared);
+    let result = depthSteps.next();
+    while (!result.done) result = depthSteps.next();
+    expect(result.value).toContain("maximum nesting depth");
+  });
+
   it("still yields cooperatively while walking a wide array", () => {
     const steps = jsonValueValidationSteps(
       Array.from({ length: WIDTH }, () => true),
