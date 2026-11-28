@@ -72,6 +72,7 @@ import {
   type ClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
 import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
+import { invokingPackageRunner } from "./ClientRegistrationIdentity.js";
 import {
   copyableProviderRegistrationSettings,
   registrationSpelledSettings,
@@ -82,8 +83,12 @@ import {
 } from "./DoctorDiagnostics.js";
 import {
   clientRegistrationCheck,
+  configuredDoctorScope,
   normalizeDoctorScope,
   scopeDoctorChecks,
+  selectConfiguredDoctorScope,
+  type DoctorConfiguredScopeReport,
+  type DoctorProviderState,
   type DoctorScopeReport,
 } from "./DoctorScope.js";
 import { selectedDesktopBuildChecks } from "./DesktopBuildDoctor.js";
@@ -122,6 +127,10 @@ export interface DoctorHost {
    */
   readonly nativeConfiguration?: NativeAnalysisConfigurationInspection;
   readonly configuredIlspyCmdPath?: string;
+  /** Package runner (npx/bunx) that launched this process, when one did. */
+  readonly packageRunner?: NonNullable<
+    ReturnType<typeof invokingPackageRunner>
+  >;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   /** Route-specific target admission details from the host. */
@@ -197,6 +206,8 @@ export interface DoctorReport {
    */
   readonly scope_checks?: readonly DoctorCheck[];
   readonly informational_checks: readonly DoctorCheck[];
+  /** Audit-wide reports only: the set-up workflow and the command scoped to it. */
+  readonly configured_scope?: DoctorConfiguredScopeReport;
   readonly hopperPath?: string;
   readonly staticProviderSettings?: StaticDoctorProviderSettings;
   readonly providerInspections?: readonly DoctorProviderInspection[];
@@ -306,47 +317,20 @@ const inspectDoctor = async (
 ): Promise<DoctorReport> => {
   if (host.signal?.aborted) throw cancelledBy("doctor", host.signal);
   const scope = normalizeDoctorScope(requestedScope, target);
-  const {
-    checks: diagnosticChecks,
-    hopperPath,
-    configuredHopperPath,
-    staticProviderSettings,
-    providerInspections,
-  } = await collectDoctorDiagnostics(target, host, scope.clients);
-  const hopperAvailable =
-    hopperPath !== undefined &&
-    diagnosticChecks
-      .filter(({ name }) => name.startsWith("hopper"))
-      .every(({ ok }) => ok);
-  const selections = providerSettingSelections(
-    providerInspections,
-    hopperAvailable &&
-      hopperPath === configuredHopperPath &&
-      staticProviderSettings?.HOPPER_LAUNCHER_PATH?.source !== "config"
-      ? hopperPath
-      : undefined,
-  );
-  const identity = await collectDoctorIdentity(host, scope, selections);
-  const checks = [
-    ...diagnosticChecks,
-    ...identity.checks,
-    ...registrationAdvisoryChecks(identity.value.registrations),
-    ...registrationEnvironmentChecks(identity.value.registrations, selections),
-    ...(await selectedDesktopBuildChecks(host, scope, identity.value.skill)),
-  ];
-  const providers = {
-    hopperAvailable,
-    hopperConfigured: configuredHopperPath !== undefined,
-    providerInspections,
-  };
+  const facts = await collectDoctorFacts(target, host, scope);
+  const { checks, providers, identity } = facts;
   const environmentHealthy = doctorHealthy(checks, providers);
   const scoped = scopeDoctorChecks({
     checks,
-    registrations: identity.value.registrations,
-    skillState: identity.value.skill.state,
+    registrations: identity.registrations,
+    skillState: identity.skill.state,
     providers,
     scope,
   });
+  const configured =
+    scope.mode === "audit-wide"
+      ? await inspectConfiguredScope(target, host, facts)
+      : undefined;
   return {
     healthy: scope.mode === "audit-wide" ? environmentHealthy : scoped.healthy,
     environment_healthy: environmentHealthy,
@@ -356,13 +340,183 @@ const inspectDoctor = async (
       : { scope_checks: scoped.scopeChecks }),
     informational_checks:
       scope.mode === "audit-wide" ? [] : scoped.informationalChecks,
-    ...(hopperPath === undefined ? {} : { hopperPath }),
-    ...(staticProviderSettings === undefined ? {} : { staticProviderSettings }),
-    ...(providerInspections === undefined ? {} : { providerInspections }),
+    ...(configured === undefined ? {} : { configured_scope: configured }),
+    ...(facts.hopperPath === undefined ? {} : { hopperPath: facts.hopperPath }),
+    ...(facts.staticProviderSettings === undefined
+      ? {}
+      : { staticProviderSettings: facts.staticProviderSettings }),
+    ...(providers.providerInspections === undefined
+      ? {}
+      : { providerInspections: providers.providerInspections }),
     checks,
-    identity: identity.value,
+    identity,
   };
 };
+
+/** Everything one doctor run observes; it depends on the target and the clients only. */
+interface DoctorFacts {
+  readonly checks: readonly DoctorCheck[];
+  readonly identity: DoctorIdentity;
+  /** The skill copies read for this run's clients, before projection. */
+  readonly skillIdentity: InstalledSkillIdentity | undefined;
+  readonly providers: DoctorProviderState;
+  readonly hopperPath?: string;
+  readonly staticProviderSettings?: StaticDoctorProviderSettings;
+}
+
+const collectDoctorFacts = async (
+  target: string | undefined,
+  host: DoctorHost,
+  scope: DoctorScopeReport,
+): Promise<DoctorFacts> => {
+  const {
+    checks: diagnosticChecks,
+    hopperPath,
+    configuredHopperPath,
+    staticProviderSettings,
+    providerInspections,
+  } = await collectDoctorDiagnostics(target, host, scope.clients);
+  const providers = doctorProviderState(diagnosticChecks, {
+    hopperPath,
+    configuredHopperPath,
+    providerInspections,
+  });
+  const { hopperAvailable } = providers;
+  const selections = providerSettingSelections(
+    providerInspections,
+    hopperAvailable &&
+      hopperPath === configuredHopperPath &&
+      staticProviderSettings?.HOPPER_LAUNCHER_PATH?.source !== "config"
+      ? hopperPath
+      : undefined,
+  );
+  const identity = await collectDoctorIdentity(host, scope, selections);
+  return {
+    checks: [
+      ...diagnosticChecks,
+      ...identity.checks,
+      ...registrationAdvisoryChecks(identity.value.registrations),
+      ...registrationEnvironmentChecks(
+        identity.value.registrations,
+        selections,
+      ),
+      ...(await selectedDesktopBuildChecks(host, scope, identity.value.skill)),
+    ],
+    identity: identity.value,
+    skillIdentity: identity.skillIdentity,
+    providers,
+    ...(hopperPath === undefined ? {} : { hopperPath }),
+    ...(staticProviderSettings === undefined ? {} : { staticProviderSettings }),
+  };
+};
+
+/** Hopper and provider readiness from one diagnostic collection. */
+const doctorProviderState = (
+  checks: readonly DoctorCheck[],
+  diagnostics: {
+    readonly hopperPath?: string | undefined;
+    readonly configuredHopperPath?: string | undefined;
+    readonly providerInspections?:
+      | readonly DoctorProviderInspection[]
+      | undefined;
+  },
+): DoctorProviderState => ({
+  hopperAvailable:
+    diagnostics.hopperPath !== undefined &&
+    checks
+      .filter(({ name }) => name.startsWith("hopper"))
+      .every(({ ok }) => ok),
+  hopperConfigured: diagnostics.configuredHopperPath !== undefined,
+  hopperDiscovered: diagnostics.hopperPath !== undefined,
+  providerInspections: diagnostics.providerInspections,
+});
+
+/**
+ * Judge the configured workflow from the facts its suggested command collects.
+ * Selected clients change two of them: one client's registration can supply
+ * the provider settings, and their skill copies replace every installed copy.
+ * Those are read again for the clients; registrations, the target and the
+ * catalog do not depend on the selection, so the audit's are reused.
+ */
+const inspectConfiguredScope = async (
+  target: string | undefined,
+  host: DoctorHost,
+  audit: DoctorFacts,
+): Promise<DoctorConfiguredScopeReport | undefined> => {
+  const clients = configuredDoctorClients(audit.identity.registrations);
+  const toolCount = audit.identity.catalog.counts.mcp_tools;
+  const selected =
+    clients.length === 0
+      ? audit
+      : await collectClientFacts(host, clients, audit.checks, toolCount);
+  const selection = selectConfiguredDoctorScope(clients, selected.providers);
+  if (selection === undefined) return undefined;
+  return configuredDoctorScope({
+    checks: selected.checks,
+    registrations: audit.identity.registrations,
+    skillState: skillIdentityState(selected.skillIdentity, toolCount),
+    providers: selected.providers,
+    selection,
+    target: target ?? null,
+    skillInstalled: skillCopiesPresent(selected.skillIdentity),
+    platform: host.platform,
+    // Pin the release that produced this report, as setup registers it.
+    launcher:
+      host.packageRunner === undefined
+        ? ["rea"]
+        : host.packageRunner === "npx"
+          ? ["npx", "-y", PRODUCT_IDENTITY.registrationPackageSpecifier]
+          : ["bunx", PRODUCT_IDENTITY.registrationPackageSpecifier],
+  });
+};
+
+/** The provider and skill facts an explicit scope with these clients collects. */
+const collectClientFacts = async (
+  host: DoctorHost,
+  clients: readonly string[],
+  auditChecks: readonly DoctorCheck[],
+  toolCount: number,
+): Promise<Pick<DoctorFacts, "checks" | "providers" | "skillIdentity">> => {
+  const [diagnostics, skillIdentity] = await settleConcurrent([
+    collectDoctorDiagnostics(undefined, host, clients),
+    Promise.resolve(host.installedSkillIdentity?.(clients)),
+  ]);
+  return {
+    checks: [
+      ...diagnostics.checks,
+      ...auditChecks.filter(({ name }) => name === "target"),
+      ...(skillIdentityAligned(skillIdentity, toolCount)
+        ? []
+        : [skillIdentityCheck(skillIdentity, toolCount)]),
+    ],
+    providers: doctorProviderState(diagnostics.checks, diagnostics),
+    skillIdentity,
+  };
+};
+
+/** Registered clients: any registration state except missing or manual. */
+const configuredDoctorClients = (
+  registrations: readonly ClientRegistrationStatus[],
+): readonly string[] => [
+  ...new Set(
+    registrations
+      .filter(({ state }) => state !== "missing" && state !== "manual")
+      .map(({ client }) => client),
+  ),
+];
+
+/**
+ * Whether any read skill copy exists. A partial install reports aggregate
+ * state "missing" through its missing-copy issues, yet still has a present
+ * copy (a manifest version or a non-missing issue), which must stay selected.
+ */
+const skillCopiesPresent = (
+  identity: InstalledSkillIdentity | undefined,
+): boolean =>
+  identity !== undefined &&
+  (identity.version !== null ||
+    identity.issues === undefined ||
+    identity.issues.some(({ kind }) => kind !== "missing"));
 
 const registrationAdvisoryChecks = (
   registrations: readonly ClientRegistrationStatus[],
@@ -495,6 +649,16 @@ const doctorReportWithCleanup = (
     ...report,
     healthy: false,
     environment_healthy: false,
+    // The suggested scope would also report this finalization failure.
+    ...(report.configured_scope === undefined
+      ? {}
+      : {
+          configured_scope: {
+            ...report.configured_scope,
+            healthy: false,
+            failing_checks: [...report.configured_scope.failing_checks, check],
+          },
+        }),
     checks: [...report.checks, check],
     ...(report.scope_checks === undefined
       ? {}
@@ -507,6 +671,7 @@ const collectDoctorIdentity = async (
   scope: DoctorScopeReport,
   selections: readonly ProviderSettingSelection[],
 ): Promise<{
+  readonly skillIdentity: InstalledSkillIdentity | undefined;
   readonly checks: readonly DoctorCheck[];
   readonly value: DoctorIdentity;
 }> => {
@@ -538,6 +703,7 @@ const collectDoctorIdentity = async (
     defaultCatalogIdentity.counts.mcp_tools,
   );
   return {
+    skillIdentity: installedSkillIdentity,
     checks: [
       ...(skillAligned
         ? []
@@ -828,6 +994,7 @@ export const systemDoctorHost = (
     });
   const homeDirectory = homeDirectoryFromEnvironment(environment, platform);
   const commandEnvironment = { env: environment };
+  const packageRunner = invokingPackageRunner(environment, platform);
   const resourceScope: RetainedResourceScope = {
     retain: (owner, resource) =>
       resources.retain({
@@ -978,6 +1145,7 @@ export const systemDoctorHost = (
   const host: DoctorHost = {
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...terminalProbeHost,
+    ...(packageRunner === undefined ? {} : { packageRunner }),
     architecture,
     runtime: javaScriptRuntime(process.versions),
     macosVersion: () =>
