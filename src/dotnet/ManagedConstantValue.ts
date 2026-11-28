@@ -1,8 +1,8 @@
 import { BinaryReader } from "../domain/binaryContainer.js";
-import type { ManagedFieldConstant } from "../domain/managed/managedFieldConstant.js";
+import type { ManagedConstant } from "../domain/managed/managedConstant.js";
 import { managedFailure } from "../domain/managed/managedReaderFailure.js";
 
-type Scalar = ManagedFieldConstant["value"];
+type Scalar = ManagedConstant["value"];
 type ScalarReader = (
   reader: BinaryReader,
   scope: string,
@@ -36,7 +36,7 @@ const jsonFloat = (value: number): number | string =>
   Object.is(value, -0) ? "-0" : Number.isFinite(value) ? value : String(value);
 
 interface ConstantEncoding {
-  readonly name: NonNullable<ManagedFieldConstant["element_type"]>;
+  readonly name: NonNullable<ManagedConstant["element_type"]>;
   /** Null is a sequence of UTF-16 code units rather than a fixed-width scalar. */
   readonly bytes: number | null;
   readonly read: ScalarReader;
@@ -70,7 +70,7 @@ const CONSTANT_TYPES: Readonly<Record<number, ConstantEncoding>> = {
 
 export const managedConstantType = (
   code: number,
-): ManagedFieldConstant["element_type"] => CONSTANT_TYPES[code]?.name ?? null;
+): ManagedConstant["element_type"] => CONSTANT_TYPES[code]?.name ?? null;
 
 /** ECMA-335 II.22.9/II.23.1.16; preserve wide integers and float encodings exactly. */
 export const decodeManagedConstantValue = (

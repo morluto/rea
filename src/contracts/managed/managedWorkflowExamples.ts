@@ -130,6 +130,7 @@ const runtimeMembers = (): ManagedMemberInspection => {
           exception_regions: [],
           issue: null,
         },
+        parameter_defaults: [],
       },
     ],
   };

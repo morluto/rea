@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-/** File-backed Constant-table declaration, not a runtime field observation. */
-export const managedFieldConstantSchema = z.object({
+/** File-backed Constant-table declaration of a field or parameter, not a runtime observation. */
+export const managedConstantSchema = z.object({
   state: z.enum(["decoded", "unavailable"]),
   element_type: z
     .enum([
@@ -41,4 +41,4 @@ export const managedFieldConstantSchema = z.object({
   limitation: z.string().nullable(),
 });
 
-export type ManagedFieldConstant = z.infer<typeof managedFieldConstantSchema>;
+export type ManagedConstant = z.infer<typeof managedConstantSchema>;

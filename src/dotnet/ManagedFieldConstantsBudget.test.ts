@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { buildManagedPeFixture } from "../../scripts/fixtures/managed/pe.mjs";
 import { managedDecodeBudget } from "../domain/managed/managedDecodeBudget.js";
-import { createManagedFieldConstantReader } from "./ManagedFieldConstants.js";
+import { createManagedConstantReader } from "./ManagedConstants.js";
 import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 
@@ -17,7 +17,7 @@ it("uses the layout's existing representation capacity instead of an independent
   const layout = readManagedMetadataLayout(bytes, offset, size, 4096);
   const alreadyUsed = readManagedMetadataLayout(bytes, offset, size, 4096);
   expect(
-    createManagedFieldConstantReader(bytes, layout, [])(1, 0x8056),
+    createManagedConstantReader(bytes, layout, [])(4, 1, 0x8056),
   ).toMatchObject({
     state: "decoded",
     value: 1,
@@ -25,8 +25,8 @@ it("uses the layout's existing representation capacity instead of an independent
 
   // Earlier facets of the same inspection leave under 576 bytes available.
   managedDecodeBudget(alreadyUsed).reserve(3520, null);
-  const read = createManagedFieldConstantReader(bytes, alreadyUsed, []);
-  expect(() => read(1, 0x8056)).toThrow(
+  const read = createManagedConstantReader(bytes, alreadyUsed, []);
+  expect(() => read(4, 1, 0x8056)).toThrow(
     expect.objectContaining({
       issue: expect.objectContaining({
         scope: "metadata.representation",

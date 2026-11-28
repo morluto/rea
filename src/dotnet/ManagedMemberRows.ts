@@ -2,7 +2,7 @@ import {
   readFieldDefinitionName,
   readFieldDefinitionRow,
 } from "./ManagedFieldDefinitionRows.js";
-import { createManagedFieldConstantReader } from "./ManagedFieldConstants.js";
+import type { ManagedConstantReader } from "./ManagedConstants.js";
 import { readMemberReferenceRowFacts } from "../domain/managed/managedMemberReferenceRows.js";
 import {
   readMethodDefinitionName,
@@ -52,6 +52,7 @@ import {
   readManagedValue,
 } from "../domain/managed/managedReaderFailure.js";
 import { methodBody } from "./ManagedMethodBodyReader.js";
+import { createManagedParameterDefaultReader } from "./ManagedParameterDefaults.js";
 import { memberDeclaringTypeRowLookup } from "../domain/managed/managedMemberOwnership.js";
 import type {
   MemberDefinitionTable,
@@ -150,10 +151,7 @@ interface DecodeFieldContext {
   readonly displayTypeName: SignatureDisplayTypeName;
   readonly declarationTypeName: DeclarationTypeName;
   readonly selected: SelectedTypeTokens;
-  readonly constant: (
-    row: number,
-    flags: number,
-  ) => ReturnType<ReturnType<typeof createManagedFieldConstantReader>>;
+  readonly constant: ManagedConstantReader;
   readonly fields: ManagedField[];
   readonly core: Map<string, MemberCore>;
   readonly issues: ManagedParseIssue[];
@@ -218,7 +216,7 @@ const decodeFieldRow = (
       name,
       flags,
       signature: decoded,
-      constant: constant(row, flags),
+      constant: constant(4, row, flags),
     });
   }, issues);
 };
@@ -232,11 +230,14 @@ export const parseFields = (
     signatureTypeName,
     displayTypeName,
     declarationTypeName,
+    constant,
     selected = null,
   }: {
     readonly signatureTypeName: SignatureTypeName;
     readonly displayTypeName: SignatureDisplayTypeName;
     readonly declarationTypeName: DeclarationTypeName;
+    /** The inspection's Constant-table owner, shared with Param defaults. */
+    readonly constant: ManagedConstantReader;
     readonly selected?: SelectedTypeTokens;
   },
 ): {
@@ -247,7 +248,6 @@ export const parseFields = (
   const fields: ManagedField[] = [];
   const core = new Map<string, MemberCore>();
   const issues: ManagedParseIssue[] = [];
-  const constant = createManagedFieldConstantReader(bytes, layout, issues);
   const rowCount = layout.table(4)?.rowCount ?? 0;
   const context: DecodeFieldContext = {
     bytes,
@@ -464,6 +464,8 @@ interface ParseMethodsInput {
   readonly declarationTypeName: DeclarationTypeName;
   readonly memberRefKinds: ReadonlyMap<string, "field" | "method">;
   readonly memberLists: TypeMemberListFacts;
+  /** The inspection's Constant-table owner, shared with field defaults. */
+  readonly constant: ManagedConstantReader;
   readonly selected?: SelectedTypeTokens;
   readonly methodOffset?: number;
   readonly methodLimit?: number;
@@ -477,6 +479,9 @@ interface DecodeMethodContext {
   readonly displayTypeName: SignatureDisplayTypeName;
   readonly declarationTypeName: DeclarationTypeName;
   readonly memberRefKinds: ReadonlyMap<string, "field" | "method">;
+  readonly parameterDefaults: (
+    methodRow: number,
+  ) => NonNullable<ManagedMethod["parameter_defaults"]> | null;
   readonly selected: SelectedTypeTokens;
   readonly methodOffset: number;
   readonly methodLimit: number;
@@ -501,6 +506,7 @@ const decodeMethodRow = (
     displayTypeName,
     declarationTypeName,
     memberRefKinds,
+    parameterDefaults,
     selected,
     methodOffset,
     methodLimit,
@@ -612,6 +618,7 @@ const decodeMethodRow = (
         flags,
         signature: decoded,
         body: read.body,
+        parameter_defaults: parameterDefaults(row),
       },
     });
   }, issues);
@@ -670,6 +677,7 @@ export const parseMethods = ({
   declarationTypeName,
   memberRefKinds,
   memberLists,
+  constant,
   selected = null,
   methodOffset = 0,
   methodLimit = Number.MAX_SAFE_INTEGER,
@@ -696,6 +704,12 @@ export const parseMethods = ({
     displayTypeName,
     declarationTypeName,
     memberRefKinds,
+    parameterDefaults: createManagedParameterDefaultReader(
+      bytes,
+      layout,
+      issues,
+      constant,
+    ),
     selected,
     methodOffset,
     methodLimit,

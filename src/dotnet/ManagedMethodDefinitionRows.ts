@@ -1,5 +1,9 @@
-import type { ManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import {
+  metadataRowOffset,
+  type ManagedMetadataLayout,
+} from "../domain/managed/managedMetadataLayout.js";
+import {
+  metadataIndexAt,
   metadataRowCursor,
   metadataToken,
   readRequiredMetadataName,
@@ -52,6 +56,29 @@ export const readMethodDefinitionRow = (
       pinvokeFlag: (flags & 0x2000) !== 0,
       internalCall: (implFlags & 0x1000) !== 0,
     },
+  };
+};
+
+/**
+ * The raw first ParamList coordinate of a MethodDef row. Attributing one
+ * method's run reads every row's coordinate, so this reads the admitted table
+ * extent directly instead of retaining per-row cursor bookkeeping for rows the
+ * caller did not select.
+ */
+export const readMethodParamList = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  row: number,
+): { readonly raw: number; readonly offset: number } => {
+  // The admitted MethodDef row size gives ParamList a Param-table index width.
+  const offset =
+    metadataRowOffset(layout, 6, row) +
+    8 +
+    layout.stringIndexSize +
+    layout.blobIndexSize;
+  return {
+    raw: metadataIndexAt(bytes, offset, layout.tableIndexSize(8)),
+    offset,
   };
 };
 

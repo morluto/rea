@@ -445,6 +445,35 @@ export const metadataTokenFact = (raw: number): MetadataTokenFact => {
   return { raw, table, row, token: metadataToken(table, row) };
 };
 
+const metadataReaders = new WeakMap<Buffer, BinaryReader>();
+
+/**
+ * The managed reader for one artifact buffer, shared by scans that read a
+ * column from many rows instead of allocating a reader per row.
+ */
+export const managedMetadataReader = (bytes: Buffer): BinaryReader => {
+  let reader = metadataReaders.get(bytes);
+  if (reader === undefined) {
+    reader = new BinaryReader(bytes, true, "managed");
+    metadataReaders.set(bytes, reader);
+  }
+  return reader;
+};
+
+/**
+ * A heap or table index at an offset inside an admitted row, read without the
+ * per-row bookkeeping of {@link metadataRowCursor}: for scans that examine a
+ * column of rows they do not retain.
+ */
+export const metadataIndexAt = (
+  bytes: Buffer,
+  offset: number,
+  size: 2 | 4,
+): number => {
+  const reader = managedMetadataReader(bytes);
+  return size === 2 ? reader.u16(offset) : reader.u32(offset);
+};
+
 /** Create a cursor bounded to one admitted metadata table row. */
 export const metadataRowCursor = (
   bytes: Buffer,
