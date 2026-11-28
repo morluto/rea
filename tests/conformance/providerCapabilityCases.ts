@@ -83,6 +83,9 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   erlangBeam: { cases: ["tests/acceptance/erlangBeamCli.test.ts"] },
   espNvs: { cases: ["tests/boundary/mcp/espNvsMcpCli.test.ts"] },
   evmInterface: { cases: ["tests/boundary/mcp/evmInterfaceMcp.test.ts"] },
+  solidityMetadata: {
+    cases: ["tests/boundary/mcp/solidityMetadataMcpCli.test.ts"],
+  },
   firmwareAnalysis: { cases: ["tests/boundary/mcp/firmwareMcp.test.ts"] },
   firmwareVectorTable: {
     cases: ["tests/boundary/mcp/firmwareVectorTableMcpCli.test.ts"],

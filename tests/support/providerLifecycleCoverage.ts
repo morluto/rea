@@ -1375,6 +1375,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
   ),
+  "rea-solidity-metadata": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/solidityMetadataMcpCli.test.ts",
+        "reports the same metadata verdict through CLI and stdio MCP",
+      ),
+    ),
+    typedFailures("src/evm/SolidityMetadataBindingProvider.test.ts"),
+  ),
   "rea-firmware-vector-table": inProcess(
     covered(
       test(

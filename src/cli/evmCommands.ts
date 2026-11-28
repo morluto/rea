@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 
 import { evmInterfaceModule } from "../composition/evm.js";
+import { VERIFY_SOLIDITY_METADATA_CONTRACT } from "../contracts/evm/solidityMetadataToolContracts.js";
 import { registerContractCommand } from "./contractCommand.js";
 import { inspectWithService } from "./contractCommandRunners.js";
 import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
@@ -34,5 +35,30 @@ export const registerEvmCommands = (
       },
     },
     inspectWithService(() => service, "evmole-interface"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    VERIFY_SOLIDITY_METADATA_CONTRACT,
+    {
+      description:
+        "Check a local metadata file against a bytecode metadata commitment",
+      positionals: ["path", "encoding", "metadata_path"],
+      callerPaths: ["path", "metadata_path"],
+      fields: {
+        path: { description: "Local bytecode carrier" },
+        encoding: { description: "Selected carrier representation" },
+        metadata_path: { description: "Local compiler metadata JSON file" },
+        max_file_bytes: { description: "Maximum carrier size in bytes" },
+        max_metadata_bytes: { description: "Maximum metadata size in bytes" },
+      },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/solidityMetadata.js")
+        ).createSolidityMetadataBindingService(),
+      "rea-solidity-metadata",
+    ),
   );
 };

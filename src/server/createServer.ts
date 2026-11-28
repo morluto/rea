@@ -182,6 +182,7 @@ export const createServer = (
   });
   const {
     evmInterface,
+    solidityMetadata,
     sqliteDatabase,
     binaryLayout,
     recordedCrash,
@@ -443,6 +444,7 @@ export const createServer = (
         modelArtifact,
         gpuCodeObjects,
         evmInterface,
+        solidityMetadata,
         goBinary,
         il2cppMetadata,
         rustBinary,

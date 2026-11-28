@@ -213,6 +213,9 @@ explicit path or endpoint and do not need it.
     rather than a trust verdict ([APK signature guide](https://github.com/morluto/rea/blob/main/docs/apk-signature.md)).
   - EVM bytecode: `inspect_evm_interface`; selectors, arguments and mutability
     are inferred candidates ([EVM bytecode guide](https://github.com/morluto/rea/blob/main/docs/guides/evm/evm-bytecode.md)).
+  - Whether a local Solidity metadata JSON belongs to bytecode:
+    `verify_solidity_metadata`; a match does not verify source or deployment
+    ([metadata guide](https://github.com/morluto/rea/blob/main/docs/guides/evm/solidity-metadata.md)).
   - Go build metadata or static `(ptr, len)` strings: `inspect_go_binary`
     ([Go binary guide](https://github.com/morluto/rea/blob/main/docs/guides/native/go-binaries.md)).
   - Rust cargo-auditable dependencies: `inspect_rust_binary`; for selected

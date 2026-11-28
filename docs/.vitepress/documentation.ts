@@ -668,6 +668,11 @@ export const documentationSections = [
         source: "guides/evm/evm-bytecode.md",
         route: "/evm-bytecode",
       },
+      {
+        text: "Solidity metadata verification",
+        source: "guides/evm/solidity-metadata.md",
+        route: "/solidity-metadata",
+      },
     ],
   },
   {

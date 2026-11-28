@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
+import { bindMetadataCommitment } from "../dist/domain/evm/solidityMetadataBinding.js";
+import { ipfsFileMultihash } from "../dist/evm/IpfsFileHash.js";
 import { inspectSolidityMetadata } from "../dist/evm/SolidityMetadata.js";
 
 const compilerModule = process.env.REA_VERIFY_SOLC_MODULE;
@@ -31,6 +33,20 @@ const cases = [
     viaIR: false,
     metadata: { appendCBOR: false },
   },
+  {
+    name: "swarm-hash",
+    optimizer: false,
+    viaIR: false,
+    metadata: { bytecodeHash: "bzzr1" },
+  },
+  {
+    // Metadata over 256 KiB spans several IPFS chunks.
+    name: "multi-chunk-metadata",
+    optimizer: false,
+    viaIR: false,
+    metadata: { useLiteralContent: true },
+    padding: 700 * 1024,
+  },
 ];
 const reports = [];
 for (const fixture of cases) {
@@ -38,12 +54,18 @@ for (const fixture of cases) {
     solc.compile(
       JSON.stringify({
         language: "Solidity",
-        sources: { "fixture.sol": { content: source } },
+        sources: {
+          "fixture.sol": {
+            content: `${source}\n//${"x".repeat(fixture.padding ?? 0)}\n`,
+          },
+        },
         settings: {
           optimizer: { enabled: fixture.optimizer },
           viaIR: fixture.viaIR,
           metadata: fixture.metadata,
-          outputSelection: { "*": { "*": ["evm.deployedBytecode.object"] } },
+          outputSelection: {
+            "*": { "*": ["metadata", "evm.deployedBytecode.object"] },
+          },
         },
       }),
     ),
@@ -57,6 +79,27 @@ for (const fixture of cases) {
       .object,
     "hex",
   );
+  const metadata = Buffer.from(
+    compiled.contracts["fixture.sol"].InterfaceFixture.metadata,
+  );
+  const verdict = (file) =>
+    bindMetadataCommitment(inspectSolidityMetadata(bytes), () =>
+      ipfsFileMultihash(file),
+    );
+  const binding = verdict(metadata);
+  if (fixture.padding !== undefined) assert.ok(metadata.length > 262_144);
+  const unverified = {
+    "without-CBOR": "no_decoded_trailer",
+    "without-content-hash": "no_commitment",
+    "swarm-hash": "unsupported_scheme",
+  }[fixture.name];
+  if (unverified === undefined) {
+    assert.equal(binding.status, "match");
+    assert.equal(
+      verdict(Buffer.concat([metadata, Buffer.from("\n")])).status,
+      "mismatch",
+    );
+  } else assert.equal(binding.reason, unverified);
   const cpu = process.cpuUsage();
   const started = performance.now();
   const parsed = inspectSolidityMetadata(bytes);
@@ -87,6 +130,8 @@ for (const fixture of cases) {
     fixture: fixture.name,
     bytes: bytes.length,
     status: parsed.status,
+    metadata_bytes: metadata.length,
+    binding: binding.status,
     first_decode_ms: firstMs,
     first_decode_cpu_us: firstCpu,
     warm_100_decode_ms: warmMs,

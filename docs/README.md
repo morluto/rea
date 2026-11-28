@@ -165,6 +165,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 ## EVM contracts
 
 - [Offline EVM bytecode](guides/evm/evm-bytecode.md)
+- [Solidity metadata verification](guides/evm/solidity-metadata.md)
 
 ## Databases and recorded packets
 
