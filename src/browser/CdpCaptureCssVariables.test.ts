@@ -1348,8 +1348,8 @@ it("redacts credentials from standalone URL custom properties and admits custom 
   });
   expect(byName.get("--display-message")).toEqual({
     name: "--display-message",
-    value: '"https://alice:secret@example.test"',
-    redacted: false,
+    value: '"https://example.test"',
+    redacted: true,
   });
   expect(byName.get(longName)).toEqual({
     name: longName,

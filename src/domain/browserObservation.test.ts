@@ -421,6 +421,24 @@ describe("browser CSS variables item and summary schemas", () => {
         ],
       }).success,
     ).toBe(false);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        status: "unavailable",
+        total: 1,
+        retained_count: 1,
+        items: [{ name: "--a", value: "red" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        status: "truncated",
+        total: 0,
+        retained_count: 1,
+        items: [{ name: "--a", value: "red" }],
+      }).success,
+    ).toBe(false);
 
     // Security 1: Enforces valid -- prefix (rejects prototype keys and non-custom CSS properties)
     expect(

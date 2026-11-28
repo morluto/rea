@@ -314,11 +314,28 @@ export const browserCssVariablesSchema =
         message: "retained_count must match items.length",
       });
     }
+    if (
+      (val.status === "not_approved" || val.status === "unavailable") &&
+      (val.items.length > 0 || val.retained_count > 0 || val.total > 0)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["items"],
+        message: `items, retained_count, and total must be empty/0 when status is "${val.status}"`,
+      });
+    }
     if (val.status === "included" && val.total !== val.items.length) {
       ctx.addIssue({
         code: "custom",
         path: ["total"],
         message: 'total must match items.length when status is "included"',
+      });
+    }
+    if (val.status === "truncated" && val.total < val.retained_count) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["total"],
+        message: 'total must be >= retained_count when status is "truncated"',
       });
     }
     const seenNames = new Set<string>();

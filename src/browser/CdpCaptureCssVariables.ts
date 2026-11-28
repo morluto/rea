@@ -486,53 +486,28 @@ const redactStandaloneCssUrl = (value: string): string => {
   return result;
 };
 
-const collectUrlReferencedVarNames = (
-  computedStyle: readonly unknown[],
-): ReadonlySet<string> => {
-  const referenced = new Set<string>();
-  const varPattern = /\bvar\(\s*(--[^\s,)]+)/gu;
-  for (const entry of computedStyle) {
-    const prop = recordValue(entry);
-    if (prop === undefined) continue;
-    const rawValue = cdpStringValue(prop.value);
-    if (
-      rawValue === undefined ||
-      (!/url\(/iu.test(rawValue) && !/image-set\(/iu.test(rawValue)) ||
-      !/\bvar\(/iu.test(rawValue)
-    ) {
-      continue;
-    }
-    for (const match of rawValue.matchAll(varPattern)) {
-      if (match[1] !== undefined) referenced.add(match[1]);
-    }
-  }
-  return referenced;
-};
-
 export const redactCssUrlCredentials = (
   value: string,
   maxLength = DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH,
-  redactStandalone = false,
 ): string => {
   if (
     value.length > maxLength ||
     (!/url\(/iu.test(value) &&
       !/image-set\(/iu.test(value) &&
       !value.includes("\\") &&
-      (!redactStandalone || !value.includes("@")))
+      !value.includes("@"))
   ) {
     return value;
   }
   const matches = findCssUrlMatches(value);
   if (matches.length === 0) {
-    return redactStandalone ? redactStandaloneCssUrl(value) : value;
+    return redactStandaloneCssUrl(value);
   }
 
   let result = "";
   let lastIndex = 0;
   for (const match of matches) {
-    const gap = value.slice(lastIndex, match.start);
-    result += redactStandalone ? redactStandaloneCssUrl(gap) : gap;
+    result += redactStandaloneCssUrl(value.slice(lastIndex, match.start));
     try {
       const sanitized = redactCssUrl(match.rawUrl);
       if (sanitized.redacted) {
@@ -545,8 +520,7 @@ export const redactCssUrlCredentials = (
     }
     lastIndex = match.end;
   }
-  const tail = value.slice(lastIndex);
-  result += redactStandalone ? redactStandaloneCssUrl(tail) : tail;
+  result += redactStandaloneCssUrl(value.slice(lastIndex));
   return result;
 };
 
@@ -751,7 +725,6 @@ export const captureCssVariables = async (
     DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH;
   const maxIntake = Math.max(MAX_INTAKE_CSS_VARIABLES, maxRetainedVariables);
 
-  const urlReferencedVars = collectUrlReferencedVarNames(computedStyleVal);
   const validItemsByName = new Map<string, BrowserCssVariableItem>();
   let totalObserved = 0;
   let rejectedCount = 0;
@@ -808,11 +781,7 @@ export const captureCssVariables = async (
       continue;
     }
 
-    const sanitizedValue = redactCssUrlCredentials(
-      rawValue,
-      maxValueLength,
-      urlReferencedVars.has(name),
-    );
+    const sanitizedValue = redactCssUrlCredentials(rawValue, maxValueLength);
     if (sanitizedValue.length > maxValueLength) {
       rejectedCount += 1;
       if (rejectedPreviews.length < MAX_REJECTED_PREVIEWS) {

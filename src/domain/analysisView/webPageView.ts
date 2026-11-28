@@ -24,6 +24,11 @@ import {
 } from "./analysisViewShape.js";
 import { selectViewRows } from "./selectViewRows.js";
 import {
+  PLACEHOLDER_COVERAGE,
+  selectByteBoundedViewRows,
+} from "./byteBoundedViewRows.js";
+import type { JsonValue } from "../jsonValue.js";
+import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
@@ -416,6 +421,41 @@ export const projectWebPageView = (
       section: { scripts: { total: report.scripts.total } },
       items: [{ ...text.value.item, script_key: selected.script_key }],
       coverage: text.value.coverage,
+    });
+  }
+  if (selected.collection === "css-variables") {
+    const pageBase = {
+      ...context,
+      kind: "web-page" as const,
+      view: selected,
+      section: sectionOf(report, selected.collection),
+    };
+    const rows = selectByteBoundedViewRows(
+      report.css_variables.items,
+      selected,
+      {
+        matches: matching(selected.names, (row) => row.name),
+        project: identity,
+      },
+      {
+        parentEvidenceId: parent.evidenceId,
+        envelope: {
+          ...pageBase,
+          items: [],
+          coverage: PLACEHOLDER_COVERAGE,
+        } as unknown as JsonValue,
+        facet: "css-variables",
+      },
+    );
+    if (!rows.ok) return rows;
+    return ok({
+      ...pageBase,
+      items: rows.value.rows,
+      coverage: pageViewCoverage(
+        selected.offset,
+        rows.value.rows.length,
+        rows.value.total,
+      ),
     });
   }
   const rows = selectRows(report, selected);
