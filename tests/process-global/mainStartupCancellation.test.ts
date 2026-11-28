@@ -262,6 +262,13 @@ it("bounds raw startup retention by the installed SDK stdio capacity", async () 
       expect.objectContaining({
         _tag: "AnalysisResourceConstraintError",
         resource: "transport",
+        retryable: false,
+        fixedAllowance: expect.objectContaining({
+          name: "The MCP startup stdio buffer capacity",
+          kind: "capture",
+          limit: STDIO_DEFAULT_MAX_BUFFER_SIZE,
+          unit: "bytes",
+        }),
       }),
     );
   } finally {

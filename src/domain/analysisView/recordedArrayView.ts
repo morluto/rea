@@ -6,10 +6,14 @@ import {
 } from "../jsonValue.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../fixedAllowanceRemediation.js";
 import { err, ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { pageViewCoverage } from "./analysisViewCoverage.js";
-import { invalidAnalysisView } from "./analysisViewErrors.js";
+import {
+  ANALYSIS_VIEW_PAGE_ALLOWANCE,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import type { recordedArrayViewSchema } from "./analysisViewRequest.js";
 
 const PAGE_BYTES = 1024 * 1024;
@@ -34,11 +38,12 @@ const recordedArrayDepthRefusal = () =>
       "memory",
       `Recorded array view exceeds the maximum JSON nesting depth of ${MAX_JSON_DEPTH}.`,
       { maximum_json_depth: MAX_JSON_DEPTH },
-      {
-        retryable: false,
-        remediationAction:
-          "A recorded value cannot be nested inside an Evidence page without exceeding the JSON depth limit. Retrieve or export the complete parent Evidence, or read it from the caller-supplied Evidence file or bundle.",
-      },
+      fixedAllowanceOptions("The Evidence JSON nesting depth limit", "report", {
+        limit: MAX_JSON_DEPTH,
+        unit: "levels",
+        narrowing:
+          "Retrieve or export the complete parent Evidence, or read it from the caller-supplied Evidence file or bundle.",
+      }),
     ),
   );
 
@@ -131,11 +136,12 @@ export const projectRecordedArrayView = (
         "memory",
         "Recorded array view exceeds the 1 MiB page allowance.",
         { maximum_page_bytes: PAGE_BYTES },
-        {
-          retryable: false,
-          remediationAction:
-            "The selected path or one recorded value exceeds the 1,048,576-byte analysis-view page allowance. Retrieve or export the complete parent Evidence, or read it from the caller-supplied Evidence file or bundle.",
-        },
+        fixedAllowanceOptions(ANALYSIS_VIEW_PAGE_ALLOWANCE, "report", {
+          limit: PAGE_BYTES,
+          unit: "bytes",
+          narrowing:
+            "Retrieve or export the complete parent Evidence, or read it from the caller-supplied Evidence file or bundle.",
+        }),
       ),
     );
   if (bytes > PAGE_BYTES) return tooLarge();

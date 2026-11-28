@@ -19,6 +19,7 @@ import {
 } from "../resources/index.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
@@ -298,9 +299,16 @@ export const admitGhidraLanguageOverride = (
             oversized_definition_count: catalog.oversizedFiles.length,
             setting: "REA_GHIDRA_LANGUAGE_ID",
           },
-          retryable: false,
-          remediationAction:
-            "Use a Ghidra installation whose language definitions fit the reported size limit.",
+          ...fixedAllowanceOptions(
+            "The Ghidra language-definition read allowance",
+            "input",
+            {
+              limit: MAX_LDEFS_BYTES,
+              unit: "bytes",
+              narrowing:
+                "Use a Ghidra installation whose language definitions fit the reported size limit.",
+            },
+          ),
         },
       );
     return new ConfigurationError("Invalid REA environment configuration", {

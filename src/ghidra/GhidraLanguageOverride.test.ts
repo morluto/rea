@@ -306,10 +306,19 @@ describe("Ghidra language catalog", () => {
       if (uncertain.ok) throw new Error("Expected a file size refusal");
       expect(projectAnalysisError(uncertain.error)).toMatchObject({
         code: "resource_constraint",
+        retryable: false,
         details: {
           operation: "resolve_analysis_profile",
           resource: "file-size",
           reported_limits: { boundary: "language_definition_bytes", maximum },
+          refusal: {
+            kind: "fixed_ceiling",
+            operation: "resolve_analysis_profile",
+            allowance: "The Ghidra language-definition read allowance",
+            allowance_kind: "input",
+            limit: maximum,
+            unit: "bytes",
+          },
           diagnostics: {
             path,
             setting: "REA_GHIDRA_LANGUAGE_ID",

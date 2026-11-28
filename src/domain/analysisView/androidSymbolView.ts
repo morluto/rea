@@ -37,7 +37,7 @@ const boundedSummary = <View extends { readonly parent_evidence_id: string }>(
     ? analysisViewPageTooLarge(
         result.parent_evidence_id,
         "The complete Android method summary exceeds the analysis-view byte budget. Read complete parent Evidence.",
-        { remediationAction: "Select complete detail." },
+        { narrowing: "Select complete detail." },
       )
     : ok(result);
 

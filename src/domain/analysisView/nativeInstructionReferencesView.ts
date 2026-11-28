@@ -70,8 +70,8 @@ export const projectNativeInstructionReferencesView = (
       parent.evidenceId,
       "The selected instruction-reference view cannot fit the analysis-view byte budget.",
       {
-        remediationAction:
-          "An individual row or page context exceeds the 1,048,576-byte projection allowance. Retrieve or export the complete parent Evidence by ID, or read its local bundle.",
+        narrowing:
+          "Retrieve or export the complete parent Evidence by ID, or read its local bundle.",
       },
     );
   // Parameters already belong to the authenticated parent; measure before

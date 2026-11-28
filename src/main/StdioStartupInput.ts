@@ -5,6 +5,7 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 
 /** Raw startup bytes remain owned until the SDK's stdio transport can consume them. */
 export const ownStdioStartupInput = (
@@ -49,10 +50,16 @@ export const ownStdioStartupInput = (
             retained_bytes: retainedBytes,
             incoming_bytes: incomingBytes,
           },
-          {
-            remediationAction:
-              "Wait for the MCP server to finish startup before sending more requests. The stdio buffer capacity has no runtime override.",
-          },
+          fixedAllowanceOptions(
+            "The MCP startup stdio buffer capacity",
+            "capture",
+            {
+              limit: STDIO_DEFAULT_MAX_BUFFER_SIZE,
+              unit: "bytes",
+              narrowing:
+                "Wait for the MCP server to finish startup before sending more requests.",
+            },
+          ),
         ),
       );
       return;
