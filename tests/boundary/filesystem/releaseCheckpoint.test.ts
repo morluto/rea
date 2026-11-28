@@ -39,8 +39,10 @@ const codexServerConfig = (version: string, launch = version) => ({
   mcpServers: {
     rea: {
       command: "node",
-      args: ["./scripts/plugin-mcp-launcher.mjs", launch],
-      cwd: ".",
+      args: [
+        "${PLUGIN_ROOT}/scripts/plugin-published-mcp-launcher.mjs",
+        launch,
+      ],
       startup_timeout_sec: 30,
     },
   },
@@ -1100,11 +1102,9 @@ it.each([
     const sha = await candidate(f, "6.0.0", undefined, {
       [path]: JSON.stringify(manifest),
     });
-    const location =
-      path === ".codex-plugin/mcp.json" ? ".codex-plugin/plugin.json" : path;
     await expect(verify(f)).rejects.toMatchObject({
       code: 1,
-      stderr: expect.stringContaining(`${location}@${sha} ${failure}`),
+      stderr: expect.stringContaining(`${path}@${sha} ${failure}`),
     });
   },
 );

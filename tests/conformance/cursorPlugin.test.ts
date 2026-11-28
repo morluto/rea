@@ -35,10 +35,22 @@ describe("Cursor Marketplace plugin", () => {
     });
   });
 
-  it("keeps the committed skill identical to the authored skill", async () => {
+  it("keeps the committed skill pinned to the package version", async () => {
     await expect(
       syncCursorPluginSkill({ root: repositoryRoot, check: true }),
     ).resolves.toBeUndefined();
+    const skill = await readFile(
+      join(
+        repositoryRoot,
+        ".cursor-plugin/skills/reverse-engineer-anything/SKILL.md",
+      ),
+      "utf8",
+    );
+    const { version } = JSON.parse(
+      await readFile(join(repositoryRoot, "package.json"), "utf8"),
+    );
+    expect(skill).not.toContain("rea-agents@latest");
+    expect(skill).toContain(`rea-agents@${version}`);
   });
 
   it("does not publish an MCP-only Cursor install link", async () => {
@@ -109,9 +121,13 @@ describe("Cursor Marketplace plugin", () => {
 
   it("fails closed when the synced skill is missing, edited, or extended", async () => {
     const root = await createTestTempDirectory("rea-cursor-plugin-skill-");
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ version: "6.8.0" }),
+    );
     await authoredSkill(root, {
       "SKILL.md":
-        "---\nname: reverse-engineer-anything\ndescription: Use REA\n---\n\n# REA\n",
+        "---\nname: reverse-engineer-anything\ndescription: Use REA\n---\n\n# REA\n\n`npx -y rea-agents@latest`\n",
       "references/guide.md": "# Guide\n",
     });
     await syncCursorPluginSkill({ root, check: false });
@@ -120,7 +136,7 @@ describe("Cursor Marketplace plugin", () => {
       ".cursor-plugin/skills/reverse-engineer-anything/SKILL.md",
     );
     expect(await readFile(skill, "utf8")).toBe(
-      "---\nname: reverse-engineer-anything\ndescription: Use REA\n---\n\n# REA\n",
+      "---\nname: reverse-engineer-anything\ndescription: Use REA\n---\n\n# REA\n\n`npx -y rea-agents@6.8.0`\n",
     );
     await expect(
       syncCursorPluginSkill({ root, check: true }),
