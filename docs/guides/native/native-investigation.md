@@ -912,9 +912,10 @@ Only a successful mapping consumes the shared allowance; failed mappings leave
 it available to later slices. Each slice's `range` is end-exclusive in slice and input-file
 coordinates and maps to file-backed segment fragments, VM addresses and the
 overlapping nonempty sections; bytes outside every segment remain unmapped
-fragments. A segment with no VM size keeps its file bytes as fragments with
-null VM addresses, and a segment whose file size exceeds its VM size or whose
-VM range leaves the address space makes the mapping `unknown` with a reason
+fragments. An unmapped file-only segment (`vmsize` and `initprot` both zero) keeps its file
+bytes as fragments with null VM addresses. A segment whose file size exceeds its
+VM size, whose VM range leaves the address space, or whose segment or section
+file range extends past the slice makes the mapping `unknown` with a reason
 while the slice keeps its encryption status. `architecture` is the lipo name of the record at the same offset,
 size and CPU identity, and is null when no single record matches. A ciphertext
 range adds a limitation naming its input-file bytes, because disassembly,
