@@ -890,6 +890,9 @@ it("keeps fast feedback separate from complete qualification and release proof",
     "needs.changes.outputs.tier == 'fast' && needs.changes.outputs.test_mode == 'full'",
   );
   expect(fast?.run).toContain("--reporter=blob");
+  expect(fast?.run).toContain(
+    "--reporter=./scripts/ci/test-progress-reporter.mjs",
+  );
   expect(fast?.run).not.toContain("--coverage");
   expect(full?.if).toBe("needs.changes.outputs.tier == 'full'");
   const proof = ci.jobs["package-e2e"]?.steps?.find(
