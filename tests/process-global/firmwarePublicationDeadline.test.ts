@@ -333,10 +333,12 @@ test.each([false, true])(
             details: { timeout_ms: 1234 },
           },
         },
-        captured_output: { stdout: expect.stringContaining("binwalk 3.1.0") },
+        captured_output: {
+          stdout: expect.stringContaining("binwalk-ng 4.0.0"),
+        },
       },
     });
-    expect(JSON.stringify(projected).split("binwalk 3.1.0")).toHaveLength(2);
+    expect(JSON.stringify(projected).split("binwalk-ng 4.0.0")).toHaveLength(2);
     timer.mockRestore();
     waiter.mockRestore();
     if (oneShot) {
@@ -348,7 +350,9 @@ test.each([false, true])(
         new AbortController().signal,
       ).then(projectCliAnalysisResult);
       expect(delivered).toMatchObject({ code: "cleanup_incomplete" });
-      expect(JSON.stringify(delivered).split("binwalk 3.1.0")).toHaveLength(2);
+      expect(JSON.stringify(delivered).split("binwalk-ng 4.0.0")).toHaveLength(
+        2,
+      );
     }
     fixture.restoreCleanup();
     if (oneShot) await fixture.close();
