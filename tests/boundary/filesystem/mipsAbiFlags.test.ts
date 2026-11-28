@@ -730,6 +730,15 @@ const legacyFixture = (little = true, flags = 0x50000001, type = 2): Buffer => {
 };
 
 for (const little of [true, false]) {
+  it(`retains the declared o32 ABI of recordless MIPS32 firmware (${little ? "LE" : "BE"})`, async () => {
+    const resolved = await resolveFixture(legacyFixture(little, 0x50001007));
+    assert.equal(ghidraMipsUnsupportedReason(resolved), null);
+    expect(ghidraMipsProfileParameters(resolved)).toMatchObject({
+      mips_support_lane: "elf32-exec-o32-arch32-standard",
+      mips_abi_basis: "declared-o32-header",
+      mips_elf: { flags: 0x50001007, abi_flags: null },
+    });
+  });
   for (const availableBytes of [0, 47]) {
     it(`admits a carved recordless legacy MIPS32 ET_EXEC with ${availableBytes} section-table bytes (${little ? "LE" : "BE"})`, async () => {
       const original = legacyFixture(little);

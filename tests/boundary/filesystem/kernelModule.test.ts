@@ -13,6 +13,33 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("kernel module stable filesystem boundary", () => {
+  it("names max_structure_bytes when its section table exceeds it", async () => {
+    const root = await createTestTempDirectory("rea-kernel-module-structure-");
+    const path = join(root, "demo.ko");
+    await writeFile(path, kernelModuleFixture());
+    const service = createKernelModuleService();
+    try {
+      const refused = await service.inspect({ path, max_structure_bytes: 64 });
+      if (refused.ok) throw new Error("Expected a max_structure_bytes refusal");
+      expect(refused.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_structure_bytes",
+          effective_value: 64,
+          applies_at: "next_call",
+        },
+      });
+      const raised = await service.inspect({
+        path,
+        max_structure_bytes: 65536,
+      });
+      if (!raised.ok) throw raised.error;
+    } finally {
+      await service.close();
+    }
+  });
+
   it("retains trailer fields but withholds an empty PKCS#7 range", async () => {
     const root = await createTestTempDirectory("rea-kernel-module-empty-sig-");
     const path = join(root, "demo.ko");

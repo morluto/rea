@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { afterEach, expect, it } from "vitest";
+import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -30,19 +30,8 @@ const reconcileInput = (input: unknown) => {
 
 const execute = promisify(execFile);
 
-const temporary: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporary
-      .splice(0)
-      .map(async (path) => rm(path, { recursive: true, force: true })),
-  );
-});
-
 it("retains each capture and both runtime instances of a loaded asset", async () => {
   const fixture = await applicationFixture();
-  temporary.push(fixture);
   const staticEvidence = await analyzeFixture(fixture);
   const runtimeObservations = [
     electronRuntimeEvidence(fixture, SOURCE, {
@@ -110,7 +99,6 @@ it("retains each capture and both runtime instances of a loaded asset", async ()
 
 it("keeps graph omission counts unknown when a runtime section is unavailable", async () => {
   const fixture = await applicationFixture();
-  temporary.push(fixture);
   const result = reconcileInput({
     static_layers: [
       { role: "application", analysis: await analyzeFixture(fixture) },
@@ -138,7 +126,6 @@ it("runs the local verifier from operator-provided paths without emitting source
   const fixture = await applicationFixture();
   const evidenceRoot = await createTestTempDirectory("rea-runtime-evidence-");
   const evidencePath = join(evidenceRoot, "runtime-evidence.json");
-  temporary.push(fixture, evidenceRoot);
   await writeFile(
     evidencePath,
     JSON.stringify(electronRuntimeEvidence(fixture, SOURCE)),

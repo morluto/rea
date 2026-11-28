@@ -374,7 +374,7 @@ it("keeps a JVM-sized FAT count unconfirmed while rejecting malformed zero-count
   bytes.writeUInt32BE(0x0000003d, 4); // JVM major version 61; no FAT table follows.
   expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
     new BinaryFormatFailure(
-      "unsupported",
+      "unrecognized",
       "Only ELF, PE, and thin Mach-O native images are supported",
     ),
   );
@@ -406,7 +406,7 @@ it("requires an observed thin slice before identifying a FAT image", () => {
   );
   expect(() => read(Buffer.alloc(thin.length))).toThrow(
     new BinaryFormatFailure(
-      "unsupported",
+      "unrecognized",
       "Only ELF, PE, and thin Mach-O native images are supported",
     ),
   );

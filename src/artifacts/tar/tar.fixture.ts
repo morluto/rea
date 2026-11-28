@@ -89,6 +89,17 @@ export const tarFixture = (members: readonly TarFixtureMember[]): Buffer => {
 export const gzipTarFixture = (members: readonly TarFixtureMember[]): Buffer =>
   gzipSync(tarFixture(members));
 
+/** Add one RFC 1952 extra subfield to a gzipSync member. */
+export const withGzipExtraField = (gzip: Buffer, size: number): Buffer => {
+  const header = Buffer.from(gzip.subarray(0, 10));
+  header[3] = 4;
+  const extra = Buffer.alloc(6 + size);
+  extra.writeUInt16LE(4 + size);
+  extra.write("RA", 2);
+  extra.writeUInt16LE(size, 4);
+  return Buffer.concat([header, extra, gzip.subarray(10)]);
+};
+
 /** A small release-like tree: a `./` root, a directory, an executable and a symlink. */
 export const RELEASE_TAR_MEMBERS: readonly TarFixtureMember[] = [
   { name: "./", type: "5", mode: 0o755 },

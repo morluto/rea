@@ -1,14 +1,18 @@
 import { BinaryReader } from "../binaryContainer.js";
-import { DEFAULT_ISO9660_READER_LIMITS } from "../artifactReaderLimits.js";
-import { decodeIso9660RecordDate } from "./iso9660Dates.js";
-import { err, ok, type Result } from "../result.js";
 import {
+  DEFAULT_ISO9660_READER_LIMITS,
+  type ArtifactReaderLimitParameter,
+} from "../artifactReaderLimits.js";
+import { decodeIso9660RecordDate } from "./iso9660Dates.js";
+import type { Result } from "../result.js";
+import {
+  captureParseFailure,
   decodeLimit,
   malformedInput,
-  ParseFailureError,
   truncatedInput,
   unsupportedInput,
   type LimitRef,
+  type ParseFailureError,
 } from "../parseFailure.js";
 
 /**
@@ -39,7 +43,7 @@ export const ISO9660_FLAG_DIRECTORY = 0x02;
 export const ISO9660_FLAG_MULTI_EXTENT = 0x80;
 
 type Iso9660LimitSpec = LimitRef & {
-  readonly parameter: string;
+  readonly parameter: ArtifactReaderLimitParameter;
   readonly maximum: number;
   readonly unit: "bytes" | "count";
 };
@@ -132,17 +136,6 @@ export interface Iso9660Extent {
    */
   readonly leadingRunBytes: number;
 }
-
-export const parsedIso9660 = <T>(
-  read: () => T,
-): Result<T, ParseFailureError> => {
-  try {
-    return ok(read());
-  } catch (cause) {
-    if (!(cause instanceof ParseFailureError)) throw cause;
-    return err(cause);
-  }
-};
 
 export const iso9660Malformed = (
   detail: string,
@@ -338,6 +331,11 @@ export interface Iso9660DirectoryLinks {
   readonly self: Iso9660DirectoryLink;
   /** The record that admitted the parent directory; the root's parent is the root. */
   readonly parent: Iso9660DirectoryLink;
+  /**
+   * Also accept a `..` record that describes the directory itself. libisofs
+   * (xorriso, mkisofs emulation) writes every Joliet `..` record that way.
+   */
+  readonly parentMayBeSelf?: boolean;
 }
 
 const assertMandatoryLink = (
@@ -346,7 +344,12 @@ const assertMandatoryLink = (
   links: Iso9660DirectoryLinks,
 ): void => {
   const role = index === 0 ? "self (.)" : "parent (..)";
-  const expected = index === 0 ? links.self : links.parent;
+  const expected =
+    index === 0 ||
+    (links.parentMayBeSelf === true &&
+      record.extentLocation === links.self.extentLocation)
+      ? links.self
+      : links.parent;
   if (iso9660DirectoryIsInterleaved(record))
     throw iso9660Malformed(
       `the ${role} record declares interleaving for a contiguous directory`,
@@ -532,7 +535,7 @@ export const admitIso9660Extent = (
   fileSize: number,
   volumeBytes: number,
 ): Result<void, ParseFailureError> =>
-  parsedIso9660(() => {
+  captureParseFailure(() => {
     // An empty extent with no extended attribute record stores no bytes, so
     // its location names no data; writers such as libarchive record the
     // unallocated sentinel 0xfffffff0 there.

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { PE_CODEVIEW_PREFIX_BYTES } from "./binaryTargetTypes.js";
+import type { AnalysisParameterLimit } from "./analysisSettings.js";
 import { digestSchema } from "./digests.js";
 import { evidenceLocationSchema, type EvidenceLocation } from "./evidence.js";
 import {
@@ -8,8 +9,29 @@ import {
   localPathStringSchema,
 } from "./localPath.js";
 
-/** Selected-file ceiling for one release-exposure audit. */
-export const MAX_RELEASE_EXPOSURE_FILE_BYTES = 256 * 1024 * 1024;
+/**
+ * `max_file_bytes`: the per-call selected-file, on-disk PE and shared
+ * packaged-image read budget. Reads are held in memory, so the host heap is
+ * an independent constraint; the accounting is exact up to the safe-integer
+ * range.
+ */
+export const RELEASE_EXPOSURE_FILE_BYTES = {
+  minimum: 1,
+  maximum: Number.MAX_SAFE_INTEGER,
+  default_value: 256 * 1024 * 1024,
+} as const;
+
+/** The per-call control that stopped a release-exposure read. */
+export const releaseExposureFileBytesLimit = (
+  effectiveValue: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: "max_file_bytes",
+  effective_value: effectiveValue,
+  unit: "bytes",
+  ...RELEASE_EXPOSURE_FILE_BYTES,
+  applies_at: "next_call",
+});
 /** Members inventoried from one installation or package. */
 export const MAX_RELEASE_EXPOSURE_INVENTORY_ENTRIES = 65_536;
 /** Bytes hashed while inventorying one installation or package. */
@@ -43,7 +65,7 @@ const RELEASE_EXPOSURE_LIMITATION =
   "This report states what static analysis of the selected artifact recovered. It does not establish that the application is secure.";
 
 export const RELEASE_EXPOSURE_ALLOWANCES = [
-  `Selected file reads stop at ${String(MAX_RELEASE_EXPOSURE_FILE_BYTES)} bytes.`,
+  `Selected file reads stop at max_file_bytes (${String(RELEASE_EXPOSURE_FILE_BYTES.default_value)} bytes by default).`,
   `Text member scans read at most ${String(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES)} bytes each and ${String(MAX_RELEASE_EXPOSURE_TEXT_BYTES)} bytes in total.`,
   `HTML script targets keep at most ${String(MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES)} bytes of resolved paths. Later targets stay unassessed.`,
   `Local source map targets keep at most ${String(MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES)} bytes of resolved paths. Later targets stay unassessed.`,
@@ -339,11 +361,11 @@ export const auditReleaseExposureInputSchema = z.strictObject({
   ),
   max_file_bytes: z
     .int()
-    .positive()
-    .max(MAX_RELEASE_EXPOSURE_FILE_BYTES)
-    .default(MAX_RELEASE_EXPOSURE_FILE_BYTES)
+    .min(RELEASE_EXPOSURE_FILE_BYTES.minimum)
+    .max(RELEASE_EXPOSURE_FILE_BYTES.maximum)
+    .default(RELEASE_EXPOSURE_FILE_BYTES.default_value)
     .describe(
-      "Selected-file, on-disk PE, and shared packaged-image read ceiling. Text, source-map, and other package members use the smaller allowances in coverage.allowances.",
+      `Selected-file, on-disk PE, and shared packaged-image read budget (default ${String(RELEASE_EXPOSURE_FILE_BYTES.default_value)} bytes); reads are held in memory. Text, source-map, and other package members use the smaller allowances in coverage.allowances.`,
     ),
 });
 

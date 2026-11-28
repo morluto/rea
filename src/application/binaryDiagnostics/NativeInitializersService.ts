@@ -89,7 +89,7 @@ const validReport = (
   const slice = report.slice;
   if (!machoSelectionAnswersArchitecture(slice, input.architecture))
     return false;
-  // Slice and report labels name the CPU family; arm64e selects an arm64 slice.
+  // Slice and report labels name the CPU family; arm64e and arm64e.x1 select arm64 slices.
   if (
     slice !== null &&
     input.architecture !== undefined &&

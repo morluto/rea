@@ -224,6 +224,75 @@ mcpTest(
 );
 
 mcpTest(
+  "CLI and MCP name max_file_bytes and re-admit a retained acquisition under it",
+  async ({ mcp, onTestFinished }) => {
+    const directory = await createTestTempDirectory("rea-ntfs-budget-");
+    const { mftPath, journalPath } = await createAcquisitions(directory);
+    const limit = {
+      control_kind: "parameter",
+      parameter: "max_file_bytes",
+      effective_value: 1024,
+      unit: "bytes",
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+      default_value: 64 * 1024 * 1024,
+      applies_at: "next_call",
+    };
+    const cli = await serveCli([
+      "inspect-ntfs-journal",
+      mftPath,
+      journalPath,
+      "--max-file-bytes=1024",
+      "--json",
+    ]);
+    expect(JSON.parse(cli.stdout)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: { limit },
+    });
+
+    const config = parseConfig({});
+    if (!config.ok) throw config.error;
+    const session = createBinarySession(config.value, silentLogger, {});
+    onTestFinished(async () => {
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
+    });
+    const client = await mcp.connect(
+      createServer({ kind: "session", session }),
+    );
+    const admitted = await client.callTool({
+      name: "inspect_ntfs_journal",
+      arguments: { mft_path: mftPath, journal_path: journalPath },
+    });
+    expect(admitted.isError, JSON.stringify(admitted.content)).not.toBe(true);
+    // The retained 33,792-byte MFT is admitted again under the lower budget.
+    const lowered = await client.callTool({
+      name: "inspect_ntfs_journal",
+      arguments: {
+        mft_path: mftPath,
+        journal_path: journalPath,
+        max_file_bytes: 1024,
+      },
+    });
+    expect(lowered.isError).toBe(true);
+    expect(parseMcpToolError(lowered).error).toMatchObject({
+      code: "resource_constraint",
+      details: { limit },
+    });
+    const raised = await client.callTool({
+      name: "inspect_ntfs_journal",
+      arguments: {
+        mft_path: mftPath,
+        journal_path: journalPath,
+        max_file_bytes: 33792,
+      },
+    });
+    expect(raised.isError, JSON.stringify(raised.content)).not.toBe(true);
+  },
+);
+
+mcpTest(
   "CLI/MCP retain extension facts through independent detail pages and later journal failure",
   async ({ mcp, onTestFinished }) => {
     const directory = await createTestTempDirectory("rea-ntfs-linked-");

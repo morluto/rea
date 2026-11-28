@@ -2,6 +2,7 @@ import {
   ArtifactReaderFailure,
   projectOwnedArtifactInputFailure,
   type ArtifactFilePrimaryFacts,
+  type RequestField,
   artifactOperationReason,
 } from "../resources/index.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -20,7 +21,7 @@ export type OfflineArtifactDialectOptions = {
   readonly path: string;
   readonly description: string;
   /** The request field that selected the file; `path` when omitted. */
-  readonly field?: string;
+  readonly field?: RequestField;
   /**
    * Format- or provider-specific errors examined before the shared
    * `ParseFailureError`, owned input, and selected-file projections.

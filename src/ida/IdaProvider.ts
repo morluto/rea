@@ -438,7 +438,15 @@ export class IdaProvider implements AnalysisProviderCandidate {
             ...(signal === undefined ? {} : { signal }),
             resourceScope: options?.resourceScope ?? this.#inspectionOwner,
           });
-    if (scope?.active === true) this.#registrationByScope.set(scope, pending);
+    if (scope?.active === true) {
+      this.#registrationByScope.set(scope, pending);
+      // The read observes the first caller's signal; a cancelled or failed
+      // read must not answer every later caller in this scope.
+      pending.catch(() => {
+        if (this.#registrationByScope.get(scope) === pending)
+          this.#registrationByScope.delete(scope);
+      });
+    }
     const registration = await pending;
     return registration;
   }

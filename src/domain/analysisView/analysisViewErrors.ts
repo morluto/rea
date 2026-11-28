@@ -49,13 +49,14 @@ export const analysisViewInputError = (
 ): AnalysisInputError =>
   new AnalysisInputError(INSPECT_ANALYSIS_VIEW_OPERATION, undefined, issues);
 
-/** A constraint on the selected view as a whole. */
+/** An invalid selection or field within the requested view. */
 export const invalidAnalysisView = (
   message: string,
+  ...fields: string[]
 ): Result<never, AnalysisInputError> =>
   err(
     analysisViewInputError([
-      { path: ["view"], reason: "invalid_value", message },
+      { path: ["view", ...fields], reason: "invalid_value", message },
     ]),
   );
 
