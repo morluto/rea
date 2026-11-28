@@ -13,8 +13,6 @@ import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { inspectKunaInstallation } from "../dist/kuna/KunaInstallation.js";
 import { HOST_PLATFORM } from "../dist/platform/HostPlatform.js";
@@ -29,10 +27,6 @@ import {
   KUNA_XREF_MISSING_NAME_REMEDIATION,
   missingKunaXrefNameMessage,
 } from "../dist/kuna/KunaSelectorGuidance.js";
-import {
-  requireMcpOperationResult,
-  requireMcpToolError,
-} from "./lib/mcp-verifier-results.mjs";
 import { verifyKunaReferences } from "./lib/kuna-reference-verifier.mjs";
 import {
   nativeKunaStrings,
@@ -197,6 +191,15 @@ const sampleTree = async (root) => {
 
 /** One MCP server with a selected provider, sampled while it runs. */
 const openServer = async (provider, kunaSettings = {}) => {
+  const [
+    { Client },
+    { StdioClientTransport },
+    { requireMcpOperationResult, requireMcpToolError },
+  ] = await Promise.all([
+    import("@modelcontextprotocol/client"),
+    import("@modelcontextprotocol/client/stdio"),
+    import("./lib/mcp-verifier-results.mjs"),
+  ]);
   const owner = Symbol(provider.id);
   pendingServers.add(owner);
   const transport = new StdioClientTransport({
