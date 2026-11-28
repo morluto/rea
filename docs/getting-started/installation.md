@@ -782,6 +782,17 @@ an existing Hopper launcher is selected through `HOPPER_LAUNCHER_PATH`. Ghidra
 and IDA have their own provider-specific host requirements; Windows Ghidra uses
 the [experimental P0 boundary](../providers/windows-ghidra-p0.md).
 
+On Linux, REA authenticates the selected Hopper launcher before starting it,
+whether selected automatically or through `HOPPER_LAUNCHER_PATH`. The launcher
+must match an authenticated retained package or the official demo package
+verified through the release feed; REA may also reuse a previously verified
+proof within the same process, as described below. A valid Hopper license does
+not establish that the launcher satisfies REA's check: a separately purchased
+executable that matches neither route can be rejected with
+`unsupported_hopper_build` even if it works in Hopper itself. On macOS, the
+launcher signature check supplies optional provenance; an unverified signature
+does not itself prevent launch.
+
 Bazzite uses RPM packages, but REA does not install Hopper automatically on it.
 Setup skips the Hopper offer because Bazzite is outside the supported host list,
 regardless of whether Xvfb is installed. Bazzite documents
