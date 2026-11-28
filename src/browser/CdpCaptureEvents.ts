@@ -98,6 +98,11 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     this.responseMetadata.length = 0;
     this.agentHints.length = 0;
     this.completeness.reset();
+    this.recordSelectionExclusions();
+  }
+
+  /** Record the selection once capture begins for a document or worker. */
+  recordSelectionExclusions(): void {
     if (!this.input.include_console_text)
       this.completeness.exclude("console_text", "not_approved", null);
     if (!this.input.include_json_body_shapes)

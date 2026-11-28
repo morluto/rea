@@ -16,7 +16,14 @@ const capture = (
   status: "complete_within_window" | "attach_limited" | "truncated",
 ): Input["captures"][number] =>
   ({
-    inspection: { completeness: { status, conditions: [status] } },
+    inspection: {
+      completeness: {
+        status,
+        conditions: [status],
+        attach_limited_sections: status === "attach_limited" ? ["scripts"] : [],
+        unavailable_sections: [],
+      },
+    },
   }) as unknown as Input["captures"][number];
 
 const complete: Coverage = {
@@ -61,6 +68,10 @@ it.each(["unknown", "unavailable"] as const)(
         layers: [layer(complete), layer(unknown(graphStatus))],
         captures: [capture("truncated")],
       }),
-    ).toEqual({ status: "unknown", truncated: true });
+    ).toMatchObject({
+      status: "unknown",
+      truncated: true,
+      captureOmissions: { known: false },
+    });
   },
 );

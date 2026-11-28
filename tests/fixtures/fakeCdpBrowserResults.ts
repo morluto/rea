@@ -65,6 +65,9 @@ export const resultFor = (
     case "CacheStorage.requestCachedResponse":
       return cachedResponseResult();
     case "Page.enable":
+    case "ServiceWorker.enable":
+    case "ServiceWorker.disable":
+    case "Target.setAutoAttach":
     case "Page.disable":
     case "Page.setLifecycleEventsEnabled":
     case "Performance.enable":

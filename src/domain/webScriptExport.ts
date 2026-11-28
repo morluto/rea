@@ -20,6 +20,17 @@ export type ExportWebScriptsInput = z.output<
 
 const sourceSchema = z.discriminatedUnion("kind", [
   z.strictObject({
+    kind: z.literal("worker-script"),
+    target_id: z.string().min(1),
+    script_id: z.string().min(1),
+    execution_context_id: z.number().int().nullable(),
+    page_target_id: z.string().nullable(),
+    ownership: z.enum(["page_related", "service_worker_client", "unknown"]),
+    is_module: z.boolean().nullable(),
+    language: z.string().nullable(),
+    source_map_url: z.string().nullable(),
+  }),
+  z.strictObject({
     kind: z.literal("page-script"),
     script_key: z.string().min(1),
     frame_id: z.string().nullable(),
@@ -77,6 +88,18 @@ export const webScriptExportManifestSchema = z.strictObject({
     browserCompletenessSchema,
     browserScenarioCompletenessSchema,
   ]),
+  worker_coverage: z
+    .array(
+      z.strictObject({
+        target_id: z.string().min(1),
+        completeness: browserCompletenessSchema.nullable(),
+        limitations: z.array(z.string()),
+      }),
+    )
+    .optional()
+    .describe(
+      "Per-worker capture coverage, including workers without scripts; null completeness means no worker observation was retained in the input capture",
+    ),
   output_directory: z.string().min(1),
   analysis_input: z
     .strictObject({

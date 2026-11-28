@@ -50,7 +50,7 @@ export const capturePassiveCdpScriptSource = async (input: {
     return sourceResult(text);
   } catch (cause: unknown) {
     throwIfCancelled();
-    if (input.sourceBudget.timedOut) return omitForBudget();
+    if (input.sourceBudget.deadlineFailed(cause)) return omitForBudget();
     throw cause;
   }
 };

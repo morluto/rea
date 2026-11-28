@@ -86,6 +86,7 @@ export const readCdpExecutionContextCreated = (params: unknown) => {
   const context = recordValue(recordValue(params)?.context);
   return {
     ...contextIdentity(context?.id),
+    uniqueId: cdpStringValue(context?.uniqueId),
     name: cdpStringValue(context?.name),
     origin: cdpStringValue(context?.origin),
     frameClaim: cdpContextFrameClaim(context?.auxData),

@@ -25,6 +25,7 @@ import {
   assertBundleAnalysis,
   assertObservation,
   assertSensitiveShapes,
+  assertStableCaptureScripts,
 } from "./lib/browser-verifier-assertions.mjs";
 import {
   assertScenarioCapture,
@@ -157,10 +158,7 @@ await withVerifierCleanup(async () => {
     }),
   );
   if (!captureDiff.ok) throw captureDiff.error;
-  if (
-    captureDiff.value.dimensions.dom_structure.status !== "unchanged" ||
-    captureDiff.value.dimensions.scripts.status !== "unchanged"
-  )
+  if (captureDiff.value.dimensions.dom_structure.status !== "unchanged")
     throw new Error(
       `Real Chrome stable capture identities did not reconcile: ${JSON.stringify(
         {
@@ -171,6 +169,11 @@ await withVerifierCleanup(async () => {
         },
       )}`,
     );
+  assertStableCaptureScripts(
+    observed.value,
+    withSource.value,
+    captureDiff.value.dimensions.scripts,
+  );
 
   const screenshot = await provider.captureScreenshot(
     captureWebScreenshotInputSchema.parse({
@@ -375,6 +378,7 @@ await withVerifierCleanup(async () => {
     domNodes: observed.value.dom.nodes.length,
     accessibilityNodes: observed.value.accessibility.nodes.length,
     scripts: observed.value.scripts.items.length,
+    scriptComparison: captureDiff.value.dimensions.scripts,
     networkRequests: observed.value.network.requests.length,
     consoleEvents: observed.value.console.events.length,
     websocketConnections: observed.value.network.websocket_connections.length,

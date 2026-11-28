@@ -504,7 +504,11 @@ export class CdpBrowserProvider implements BrowserObservationPort {
       input,
       operation,
       options,
-      async (session) => await capturePage({ ...session, operation }),
+      async (session) =>
+        await capturePage(
+          { ...session, operation },
+          session.requireTransportClose,
+        ),
       this.#owner,
       (captured) => captured.inspection,
     );
@@ -513,6 +517,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
 
 /** Facts and transport handed to one target operation. */
 interface CdpTargetOperationSession<Input> {
+  readonly requireTransportClose: () => void;
   readonly connection: CdpTargetSession["connection"];
   readonly sessionId: CdpTargetSession["sessionId"];
   readonly discovery: CdpEndpointDiscovery;
@@ -558,6 +563,7 @@ const withTargetSession = async <
   );
   let targetSession: CdpTargetSession | undefined;
   let attachAttempted = false;
+  let childCleanupConfirmed = true;
   let attachRejected = false;
   const finalized = await runOwned<Output>(
     async () => {
@@ -593,6 +599,9 @@ const withTargetSession = async <
         }
         return ok(
           await work({
+            requireTransportClose: () => {
+              childCleanupConfirmed = false;
+            },
             connection: targetSession.connection,
             sessionId: targetSession.sessionId,
             discovery: endpoint.discovery,
@@ -625,6 +634,7 @@ const withTargetSession = async <
               options.signal,
               owner,
               endpoint.reusableBrowserSocket === true,
+              childCleanupConfirmed,
             );
           if (
             endpoint.connection !== undefined &&

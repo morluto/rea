@@ -1,3 +1,5 @@
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { Budget } from "../domain/budget.js";
 import {
   noRuntimeOverrideSentence,
@@ -18,24 +20,54 @@ export const cdpScriptSourceDeadlineOmissionReason = (
 
 /** Shared admission for source text retained from passive CDP script reads. */
 export class CdpScriptSourceBudget {
-  readonly #deadline: ProviderStartupDeadline;
-  readonly commandTimeoutMs: number;
+  #active:
+    | { readonly deadline: ProviderStartupDeadline; readonly startedAt: number }
+    | undefined;
+  #remainingMs: number;
   readonly #retained = new Budget(WEB_RUNTIME_LIMITS.sourceBytes);
 
   constructor(
-    signal?: AbortSignal,
-    commandTimeoutMs: number = selectedCdpCommandTimeoutMs(undefined),
+    private readonly callerSignal?: AbortSignal,
+    readonly commandTimeoutMs: number = selectedCdpCommandTimeoutMs(undefined),
   ) {
-    this.commandTimeoutMs = commandTimeoutMs;
-    this.#deadline = new ProviderStartupDeadline(commandTimeoutMs, signal);
+    this.#remainingMs = commandTimeoutMs;
+    this.beginCollection();
   }
 
-  get signal(): AbortSignal {
-    return this.#deadline.signal;
+  /** A streaming source queue spends its remaining allowance only while busy. */
+  beginCollection(): void {
+    if (this.#active !== undefined || this.#remainingMs === 0) return;
+    this.#active = {
+      startedAt: performance.now(),
+      deadline: new ProviderStartupDeadline(
+        this.#remainingMs,
+        this.callerSignal,
+      ),
+    };
+  }
+
+  get signal(): AbortSignal | undefined {
+    return this.#active?.deadline.signal;
   }
 
   get timedOut(): boolean {
-    return this.#deadline.interruption === "timeout";
+    return (
+      this.#remainingMs === 0 ||
+      this.#active?.deadline.interruption === "timeout"
+    );
+  }
+
+  /** The CDP response timer can fire just before the collection timer. Its
+   * full command allowance is at least the remaining collection allowance. */
+  deadlineFailed(cause: unknown): boolean {
+    if (
+      cause instanceof BrowserObservationError &&
+      cause.reason === "timeout"
+    ) {
+      this.#remainingMs = 0;
+      return true;
+    }
+    return this.timedOut && cause instanceof AnalysisCancelledError;
   }
 
   /** Admit exact UTF-8 source bytes before building or retaining its artifact. */
@@ -43,7 +75,13 @@ export class CdpScriptSourceBudget {
     return this.#retained.tryCharge(Buffer.byteLength(text, "utf8"));
   }
 
-  dispose(): void {
-    this.#deadline.dispose();
+  endCollection(): void {
+    const active = this.#active;
+    if (active === undefined) return;
+    this.#remainingMs = this.timedOut
+      ? 0
+      : Math.max(0, this.#remainingMs - (performance.now() - active.startedAt));
+    active.deadline.dispose();
+    this.#active = undefined;
   }
 }

@@ -1,4 +1,5 @@
 import { ChildProcess } from "node:child_process";
+import { once } from "node:events";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -70,10 +71,10 @@ describe("browser process startup", () => {
     const root = await temporaryRoot();
     const child = processes.spawn(process.execPath, [
       "-e",
-      "process.kill(process.pid, 'SIGTERM')",
+      "setInterval(() => {}, 1000)",
     ]);
-
-    const failure = await waitForBrowserDevtoolsPort({
+    await once(child, "spawn");
+    const pending = waitForBrowserDevtoolsPort({
       child,
       executable: process.execPath,
       activePortPath: join(root, "DevToolsActivePort"),
@@ -81,6 +82,10 @@ describe("browser process startup", () => {
       timeoutMs: 1_000,
       pollIntervalMs: 5,
     }).catch((cause: unknown) => cause);
+    // Parent-issued termination retains Node's signal provenance on Windows;
+    // a child signalling itself there is reported as an ordinary exit code.
+    expect(child.kill("SIGTERM")).toBe(true);
+    const failure = await pending;
 
     expect(failure).toBeInstanceOf(BrowserStartupError);
     expect(failure).toMatchObject({

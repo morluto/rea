@@ -81,9 +81,13 @@ export class CdpCaptureCompleteness {
     this.#attachLimited.add(section);
   }
 
-  unavailable(section: BrowserSection): void {
+  unavailable(
+    section: BrowserSection,
+    reason: BrowserExclusionReason = "provider_unavailable",
+    count: number | null = null,
+  ): void {
     this.#unavailable.add(section);
-    this.exclude(section, "provider_unavailable", null);
+    this.exclude(section, reason, count);
   }
 
   truncate(section: BrowserSection): void {

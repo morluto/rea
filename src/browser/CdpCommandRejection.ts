@@ -29,3 +29,10 @@ export const isCdpSessionGoneRejection = (cause: unknown): boolean =>
       /no session with given id|session with given id not found/iu.test(
         cause.reportedMessage,
       )));
+
+/** A routing failure for precisely the session addressed by the rejected command. */
+export const isCdpSessionNotFoundRejection = (cause: unknown): boolean =>
+  cause instanceof CdpCommandRejection &&
+  cause.code === -32_001 &&
+  cause.reportedMessage !== null &&
+  /^Session with given id not found\.?$/iu.test(cause.reportedMessage);

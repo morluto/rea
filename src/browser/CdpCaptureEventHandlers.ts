@@ -306,6 +306,7 @@ export const handleRequestWillBeSent = (
           "invalid_protocol_value",
         );
       redirects.push({
+        response_source: redirectResponse.sourceKind,
         url: previous.url,
         response_url: responseUrl.url.url,
         method: previous.method,
@@ -416,6 +417,7 @@ export const handleResponseReceived = (
     ...current,
     status: response.status.ok ? response.status.value : null,
     mime_type: response.mimeType ?? null,
+    response_source: response.sourceKind,
   });
   const metadata = safeResponseMetadata(
     requestId,

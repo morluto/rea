@@ -196,11 +196,9 @@ it.each([
     const diff = webCaptureDiffSchema.parse(
       parseEvidence(comparison.structuredContent).normalized_result,
     );
+    expect(capture.completeness.attach_limited_sections).toContain("workers");
     expect(diff.dimensions.scripts).toMatchObject({
-      status:
-        missing > 0 || race.allowed === false || race.deleteFirst
-          ? "unknown"
-          : "unchanged",
+      status: "unknown",
       total_changes: 0,
       changes: [],
     });

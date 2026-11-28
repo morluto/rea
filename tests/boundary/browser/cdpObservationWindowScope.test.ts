@@ -252,7 +252,7 @@ it.each([
 ] as const)(
   "ends on buffered untimestamped %s before collecting later events",
   async (_method, endReason, eventType, terminalEvent) => {
-    const { observation } = await observeWithFake({
+    const { observation, browser } = await observeWithFake({
       eventsBeforeReply: ["Performance.getMetrics"],
       commandResult: (command) =>
         command.method === "Performance.getMetrics"
@@ -279,6 +279,11 @@ it.each([
     });
 
     expect(observation.window.end_reason).toBe(endReason);
+    expect(
+      browser.commands.some(
+        ({ method }) => method === "Page.setLifecycleEventsEnabled",
+      ),
+    ).toBe(false);
     expect(observation.timeline).toContainEqual(
       expect.objectContaining({
         type: eventType,
