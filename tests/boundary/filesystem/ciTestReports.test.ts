@@ -34,6 +34,7 @@ const executeTimingReport = async (
       SOURCE_RESULT: "",
       CI_VERIFY_TEST_INVENTORY: "false",
       CI_TEST_SELECTION: "",
+      CI_APPLE_SELECTED: "",
       CI_COMPARE_TEST_SHADOW: "false",
       ...environment,
       GITHUB_STEP_SUMMARY: summary,
@@ -109,6 +110,9 @@ it("merges available failed-shard diagnostics and skips unavailable shard report
   );
   expect(summary?.env?.CI_TEST_SELECTION).toBe(
     "${{ needs.changes.outputs.test_selection }}",
+  );
+  expect(summary?.env?.CI_APPLE_SELECTED).toBe(
+    "${{ needs.changes.outputs.apple }}",
   );
   const command = steps[gate]?.run;
   if (command === undefined) throw new Error("Missing shard result gate");
@@ -406,6 +410,51 @@ it("reports skipped modules without treating an entirely skipped suite as succes
   await expect(
     readFile(join(root, ".cache/ci-test-history/test-results.json")),
   ).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("accepts an entirely skipped selection only when the macOS lane runs every module", async () => {
+  const root = await createTestTempDirectory("rea-ci-report-macos-only-");
+  await workflowGit(root, ["init"]);
+  await mkdir(join(root, "tests"));
+  await writeFile(
+    join(root, "tests/macos.test.ts"),
+    'describe.skipIf(process.platform !== "darwin")("macOS", () => {});\n',
+  );
+  await writeFile(join(root, "tests/portable.test.ts"), "// fixture\n");
+  await workflowGit(root, ["add", "tests"]);
+  const run = async (names: readonly string[], apple: string) => {
+    await writeFile(
+      join(root, "test-timings.json"),
+      JSON.stringify({
+        version: 1,
+        success: true,
+        files: names.map((name) => ({ name, durationMs: 1, state: "skipped" })),
+      }),
+    );
+    return executeTimingReport(root, {
+      CI_VERIFY_TEST_INVENTORY: "true",
+      CI_APPLE_SELECTED: apple,
+      CI_TEST_SELECTION: JSON.stringify({
+        version: 3,
+        mode: "selected",
+        reason: "Affected tests: 1 changed",
+        files: names,
+        shards: 1,
+      }),
+    });
+  };
+
+  const covered = await run(["tests/macos.test.ts"], "true");
+  expect(covered.summary).toContain(
+    "Every selected module is gated to macOS; the selected macOS lane runs them.",
+  );
+  for (const [names, apple] of [
+    [["tests/macos.test.ts"], "false"],
+    [["tests/macos.test.ts", "tests/portable.test.ts"], "true"],
+  ] as const)
+    await expect(run(names, apple)).rejects.toMatchObject({
+      stderr: expect.stringContaining("Every portable test module was skipped"),
+    });
 });
 
 it("runs the existing onboarding and Python producer guards from their selected CI owners", async () => {
