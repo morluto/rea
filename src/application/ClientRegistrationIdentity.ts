@@ -6,7 +6,7 @@ import {
   readlinkSync,
   realpathSync,
 } from "node:fs";
-import { isAbsolute, posix } from "node:path";
+import { isAbsolute, posix, resolve } from "node:path";
 import {
   CURRENT_ENTRYPOINT_PATH,
   normalizeEntrypointPath,
@@ -254,8 +254,28 @@ const entrypointOwnership = (
 };
 
 /**
+ * A launcher under another runtime never selects this installation, but its
+ * script may still be this installation's or another installed REA package's.
+ * That runtime may follow Node's lexical `..` or native traversal, so both
+ * spellings must select the current script.
+ */
+const otherRuntimeScriptOwnership = (
+  script: string,
+  currentCommandPath: string,
+): EntrypointOwnership => {
+  const current = [...new Set([script, resolve(script)])].map(
+    (spelling) => entrypointIdentity(spelling, currentCommandPath) === "owned",
+  );
+  if (current.every(Boolean))
+    return { identity: "owned", installation: "other" };
+  if (current.some(Boolean)) return { identity: "unknown" };
+  return entrypointOwnership("foreign", script);
+};
+
+/**
  * A shim that starts another runtime cannot select this installation, but its
- * target may still be another installed REA package. Undefined proves nothing.
+ * target may still be this installation's script or another installed REA
+ * package. Undefined proves nothing.
  */
 const aubeShimOwnership = (
   shim: AubeShimInspection | undefined,
@@ -272,10 +292,11 @@ const aubeShimOwnership = (
       entrypointIdentity(shim.target, currentCommandPath),
       shim.target,
     );
-  const evidence = installedReaPackageEvidence(shim.target);
-  if (evidence === "verified")
-    return { identity: "owned", installation: "other" };
-  return evidence === "unknown" ? { identity: "unknown" } : undefined;
+  const ownership = otherRuntimeScriptOwnership(
+    shim.target,
+    currentCommandPath,
+  );
+  return ownership.identity === "foreign" ? undefined : ownership;
 };
 
 /** A direct launcher may be a native executable or a Node shebang script. */
@@ -618,12 +639,10 @@ const inspectDirectRegistrationCommand = (
       interpreter,
       process.execPath,
     );
-    // Another runtime does not select this installation, but it may still
-    // launch an installed REA package that setup can refresh.
     if (interpreterIdentity !== "owned")
       return {
-        ...(currentPathAvailable
-          ? entrypointOwnership(interpreterIdentity, entrypoint)
+        ...(currentPathAvailable && interpreterIdentity === "foreign"
+          ? otherRuntimeScriptOwnership(entrypoint, currentCommandPath)
           : { identity: "unknown" }),
         launch: "runtime_script",
         entrypoint: undefined,

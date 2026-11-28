@@ -1,5 +1,5 @@
 import { mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -160,6 +160,34 @@ const installPackage = async (
 };
 
 const reaManifest = { name: "rea-agents", bin: { rea: "scripts/rea.mjs" } };
+
+cliTest(
+  "setup refreshes this installation's script under another runtime",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-setup-other-runtime-");
+    const config = join(home, ".claude.json");
+    const runtime = join(home, "old-runtime", "node");
+    await mkdir(dirname(runtime), { recursive: true });
+    await writeFile(runtime, "");
+    // The CLI fixture runs this checkout's script, outside any node_modules.
+    const original = JSON.stringify({
+      mcpServers: {
+        rea: { command: runtime, args: [resolve("scripts/rea.mjs"), "mcp"] },
+      },
+    });
+    await writeFile(config, original);
+    const result = await cli.run({
+      arguments: [...setup, "--yes"],
+      cwd: home,
+      environment: { HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: home },
+    });
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(JSON.parse(await readFile(config, "utf8"))).toMatchObject({
+      mcpServers: { rea: { command: process.execPath } },
+    });
+    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+  },
+);
 
 for (const runtime of ["current", "other"] as const)
   cliTest(
