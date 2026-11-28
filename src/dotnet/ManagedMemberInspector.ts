@@ -42,6 +42,7 @@ import { managedSignatureTypeNames } from "../domain/managed/managedSignatureTyp
 import { typeNameLookup } from "./ManagedTypeNames.js";
 import { managedTypeReferences } from "../domain/managed/managedTypeReferences.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
+import { readManagedAccessorDeclarations } from "./ManagedAccessorDeclarations.js";
 import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 import { prepareManagedMemberRecovery } from "./ManagedMemberRecovery.js";
 import {
@@ -499,6 +500,7 @@ export const inspectManagedMembersBytes = (
         exported_types: selectedExportedTypes,
         fields: fields.fields,
         methods: resolvedMethods,
+        accessors: null,
         member_refs: selectedMemberRefs,
         call_edges: related.callEdges,
         field_accesses: related.fieldAccesses,
@@ -523,14 +525,28 @@ export const inspectManagedMembersBytes = (
           "Field constants are file-backed Constant-table declarations, not runtime field values. Parameter and property defaults and enum-name mappings are not decoded.",
           "Exported types are reported from ExportedType rows as declared; forwarded types are not resolved in their implementing assemblies.",
           "User strings are the #US literals loaded by ldstr in the inspected method bodies, with their own coverage; instruction anchors and normalized CIL digests keep their build-local tokens.",
+          "Accessor declarations are MethodSemantics links for returned MethodDef rows, not a complete Property/Event inventory or a runtime-binding claim. They have separate coverage and are read after members and user strings; null means they were not examined within metadata capacity.",
           "Member signatures decode ECMA-335 primitive, class, valuetype, generic instantiation, generic variable, pointer, byref, single-dimension and general array, function pointer including VARARG sentinels, custom modifier, and typed reference forms; type operands keep their encoded TypeDefOrRefOrSpec values and append readable TypeDef/TypeRef names when resolved.",
           ...selectionLimitations,
         ],
       },
       budget,
     );
-    if (!readUserStrings)
-      return managedMemberInspectionSchema.parse(baseInspection);
+    const finish = (
+      userStrings: ManagedMemberInspection["user_strings"] = null,
+      limitations = baseInspection.limitations,
+    ): ManagedMemberInspection =>
+      managedMemberInspectionSchema.parse({
+        ...baseInspection,
+        user_strings: userStrings,
+        limitations,
+        accessors: readManagedAccessorDeclarations(
+          bytes,
+          layout,
+          baseInspection,
+        ),
+      });
+    if (!readUserStrings) return finish();
     let userStrings: ManagedMemberInspection["user_strings"];
     try {
       // #US literals sit beside the member inventory and carry their own
@@ -551,24 +567,20 @@ export const inspectManagedMembersBytes = (
             code === cause.issue.code && scope === cause.issue.scope,
         )
       )
-        return managedMemberInspectionSchema.parse(baseInspection);
-      return managedMemberInspectionSchema.parse({
-        ...baseInspection,
-        user_strings: {
+        return finish();
+      return finish(
+        {
           state: "partial",
           literals: [],
           issues: [{ ...cause.issue, scope: "metadata.#US" }],
         },
-        limitations: [
+        [
           ...baseInspection.limitations,
           "User string decoding exceeded max_metadata_representation_bytes after the member facts were decoded; the members are kept and the #US literals are not examined. Select fewer type_names or raise max_metadata_representation_bytes to read them.",
         ],
-      });
+      );
     }
-    return managedMemberInspectionSchema.parse({
-      ...baseInspection,
-      user_strings: userStrings,
-    });
+    return finish(userStrings);
   } catch (cause: unknown) {
     if (cause instanceof ManagedReaderFailure) {
       if (

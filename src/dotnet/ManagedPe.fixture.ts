@@ -1305,6 +1305,110 @@ export const buildManagedPeFixture = (
     buildManagedFixtureMetadata(options, methodRva),
   );
 
+/** Property/event relationships use physical MethodDef rows, including in #- metadata. */
+export const buildManagedAccessorFixture = (
+  options: {
+    readonly semantics?: readonly (readonly [number, number, number])[];
+    readonly methodPointers?: readonly number[];
+    readonly propertyName?: string;
+    readonly eventName?: string;
+    readonly unterminatedPropertyName?: boolean;
+  } = {},
+): Buffer =>
+  buildManagedFixtureImage({}, () => {
+    const strings = new StringHeap();
+    const blobs = new BlobHeap();
+    const moduleName = strings.add("Accessors.dll");
+    const namespace = strings.add("Example");
+    const typeNames = ["<Module>", "Widget", "Other"].map((name) =>
+      strings.add(name),
+    );
+    const methodNames = ["Read", "Write", "Attach", "Detach"].map((name) =>
+      strings.add(name),
+    );
+    const eventName = strings.add(options.eventName ?? "Changed");
+    const handlerName = strings.add("EventHandler");
+    const systemName = strings.add("System");
+    const propertyName = strings.add(options.propertyName ?? "Value");
+    const propertySignature = blobs.add(Buffer.from([0x28, 0, 0x08]));
+    const methodSignatures = [
+      [0x20, 0, 0x08],
+      [0x20, 1, 0x01, 0x08],
+      [0x20, 1, 0x01, 0x12, 5],
+      [0x20, 1, 0x01, 0x12, 5],
+    ].map((value) => blobs.add(Buffer.from(value)));
+    const rows = new Map<number, readonly Buffer[]>([
+      [0, [moduleRow(moduleName, 2, 2)]],
+      [1, [Buffer.concat([u16(0), u16(handlerName), u16(systemName)])]],
+      [
+        2,
+        typeNames.map((name, index) =>
+          typeDefRow({
+            name,
+            namespace: index === 0 ? 0 : namespace,
+            fieldList: 1,
+            methodList: index === 2 ? 3 : 1,
+            stringSize: 2,
+            typeDefOrRefSize: 2,
+            fieldListSize: 2,
+            methodListSize: 2,
+            extendsRaw: 0,
+            flags: index === 0 ? 0 : 1,
+          }),
+        ),
+      ],
+      [
+        6,
+        methodNames.map((name, index) =>
+          methodDefRow({
+            name,
+            signature: methodSignatures[index]!,
+            stringSize: 2,
+            blobSize: 2,
+            parameterSize: 2,
+            parameterList: 1,
+            flags: 0x0186,
+            implFlags: 3,
+          }),
+        ),
+      ],
+      [18, [Buffer.concat([u16(3), u16(1)])]],
+      [20, [Buffer.concat([u16(0), u16(eventName), u16(5)])]],
+      [21, [Buffer.concat([u16(2), u16(1)])]],
+      [
+        23,
+        [Buffer.concat([u16(0), u16(propertyName), u16(propertySignature)])],
+      ],
+      [
+        24,
+        (
+          options.semantics ?? [
+            [2, 1, 3],
+            [1, 2, 3],
+            [8, 3, 2],
+            [16, 4, 2],
+          ]
+        ).map(([flags, method, association]) =>
+          Buffer.concat([u16(flags), u16(method), u16(association)]),
+        ),
+      ],
+    ]);
+    if (options.methodPointers !== undefined)
+      rows.set(5, options.methodPointers.map(u16));
+    const stringBytes = strings.toBuffer();
+    if (options.unterminatedPropertyName === true && propertyName !== 0)
+      stringBytes[stringBytes.length - 1] = 0x78;
+    return metadataRoot(
+      {
+        tables: tablesStream(rows, 0n, 0),
+        strings: stringBytes,
+        guid: guidHeap(),
+        blob: blobs.toBuffer(),
+      },
+      options.methodPointers === undefined ? "#~" : "#-",
+    );
+  });
+
 /** Two attribute classes whose pointer-table slots can reorder physical members. */
 export const buildManagedMemberPointerFixture = (
   options: {

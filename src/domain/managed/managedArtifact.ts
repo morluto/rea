@@ -485,6 +485,26 @@ const managedParseIssueSchema = z.object({
   limit: analysisParameterLimitSchema.exactOptional(),
 });
 
+/** A raw MethodSemantics relationship; names describe rows, not runtime binding. */
+const managedAccessorDeclarationSchema = z.object({
+  token: managedMetadataTokenSchema,
+  row_offset: offsetSchema,
+  semantics_flags: z.int().min(0).max(0xffff),
+  roles: z.array(
+    z.enum(["setter", "getter", "other", "adder", "remover", "raiser"]),
+  ),
+  method_token: managedMetadataTokenSchema,
+  method_name: z.string(),
+  method_declaring_type_token: managedMetadataTokenSchema.nullable(),
+  method_declaring_type: z.string().nullable(),
+  association_raw: z.int().nonnegative().max(0xffff_ffff),
+  association_kind: z.enum(["property", "event", "unknown"]),
+  association_token: managedMetadataTokenSchema.nullable(),
+  association_row_offset: offsetSchema.nullable(),
+  association_name: z.string().nullable(),
+  association_flags: z.int().min(0).max(0xffff).nullable(),
+});
+
 /** Provider-neutral, execution-free PE/CLI triage and identity result. */
 export const managedArtifactInspectionSchema = z.object({
   artifact: managedArtifactReferenceSchema,
@@ -604,6 +624,17 @@ export const managedMemberInspectionSchema = z
     exported_types: z.array(managedExportedTypeSchema).nullable(),
     fields: z.array(managedFieldSchema),
     methods: z.array(managedMethodSchema),
+    accessors: z
+      .object({
+        state: knownCoverageStatusSchema,
+        declarations: z.array(managedAccessorDeclarationSchema),
+        issues: z.array(managedParseIssueSchema),
+      })
+      .nullable()
+      .exactOptional()
+      .describe(
+        "MethodSemantics declarations for the returned MethodDef rows, with their own coverage. Null means not examined within capacity; omitted in historical evidence. Association names and flags do not prove property/event ownership, signature agreement, or runtime binding.",
+      ),
     member_refs: z.array(managedMemberReferenceSchema),
     call_edges: z.array(managedCallEdgeSchema),
     field_accesses: z.array(managedFieldAccessSchema),
@@ -647,6 +678,20 @@ export const managedMemberInspectionSchema = z
   })
   .superRefine((result, context) => {
     validateUnresolvedDefinitions(result, context);
+    if (result.accessors !== undefined && result.accessors !== null) {
+      const methodTokens = new Set(result.methods.map(({ token }) => token));
+      for (const [
+        index,
+        declaration,
+      ] of result.accessors.declarations.entries())
+        if (!methodTokens.has(declaration.method_token))
+          context.addIssue({
+            code: "custom",
+            path: ["accessors", "declarations", index, "method_token"],
+            message:
+              "Accessor declarations must reference a returned MethodDef row.",
+          });
+    }
     if (result.signature_resolution !== null) return;
     // Null resolution means member decoding exceeded capacity, so no member was
     // examined; a member beside it would carry an unattested signature digest.
