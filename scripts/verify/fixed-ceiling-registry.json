@@ -332,13 +332,6 @@
       "reason": "Retained file-backed sections cannot exceed the admitted image size; the bound is the selected file and grows with it."
     }
   },
-  "src/native/elf/ElfDebugLinkProvider.ts": {
-    "\"The whole-file debug candidate read allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "The streamed candidate is hashed in bounded chunks; its 0xffffffff-byte whole-file ceiling states no format reason, so it is a policy awaiting a control or a stated reason."
-    }
-  },
   "src/native/elf/ElfDependenciesProvider.ts": {
     "text ? \"The ELF dependency text budget fixed by the admitted image length\" : `The ELF dependency ${limit.name} allowance`": {
       "class": "pending",

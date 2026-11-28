@@ -16,12 +16,12 @@ import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { ElfDebugLinkPort } from "../../ports/binaryDiagnostics/ElfDebugLinkPort.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
+  DEFAULT_ELF_DEBUG_CANDIDATE_BYTES,
   ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
   ELF_DEBUG_LINK_READ_BUDGETS,
-  MAX_ELF_DEBUG_CANDIDATE_BYTES,
+  elfDebugCandidateBudgetLimit,
   type ElfDebugLink,
   type InspectElfDebugLinkInput,
 } from "../../domain/native/elfDebugLink.js";
@@ -106,7 +106,7 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
           // a larger one keeps just its ELF header.
           candidate = await streamStableArtifact(
             input.candidate_path,
-            MAX_ELF_DEBUG_CANDIDATE_BYTES,
+            input.max_candidate_bytes ?? DEFAULT_ELF_DEBUG_CANDIDATE_BYTES,
             {
               retainBytes: (size) =>
                 size <= input.max_file_bytes ? size : ELF_HEADER_PREFIX_BYTES,
@@ -252,19 +252,17 @@ const candidatePhaseObservation = (
 const ELF_HEADER_PREFIX_BYTES = 64;
 
 /**
- * A candidate that is missing, unreadable, fails a data read, changed while
- * streamed, or is above the whole-file ceiling cannot be compared. Path-shape refusals, cancellation,
- * and descriptor close failures, including a close that failed after an
- * integrity or limit refusal, still fail the call.
+ * A candidate that is missing, unreadable, fails a data read, or changed while
+ * streamed cannot be compared. Exceeding `max_candidate_bytes`, path-shape
+ * refusals, cancellation, and descriptor close failures, including a close that
+ * failed after an integrity or limit refusal, still fail the call while
+ * retaining the decoded image linkage.
  */
 const candidateUnreadable = (cause: unknown): boolean => {
   // A failed close keeps the original reason beside the cleanup observation;
   // it must stay a failure so the pending handle remains visible.
   if (cause instanceof ArtifactReaderFailure)
-    return (
-      cause.cleanup === undefined &&
-      (cause.reason === "integrity" || cause.reason === "limit")
-    );
+    return cause.cleanup === undefined && cause.reason === "integrity";
   if (!(cause instanceof Error) || !("code" in cause)) return false;
   return (
     cause.code === "ENOENT" ||
@@ -322,6 +320,13 @@ const elfDebugLinkFailure = (
             ),
       fileSize: (failure) => {
         const candidate = field === "candidate_path";
+        const maxCandidateBytes =
+          input.max_candidate_bytes ?? DEFAULT_ELF_DEBUG_CANDIDATE_BYTES;
+        const requiredBytes =
+          failure.observedBytes !== undefined &&
+          failure.observedBytes <= BigInt(Number.MAX_SAFE_INTEGER)
+            ? Number(failure.observedBytes)
+            : undefined;
         return parseLimitConstraint(
           OPERATION,
           "file-size",
@@ -329,30 +334,24 @@ const elfDebugLinkFailure = (
             "elf-debug-link",
             failure.message,
             {
-              name: candidate ? "candidate_bytes" : "max_file_bytes",
-              maximum: candidate
-                ? MAX_ELF_DEBUG_CANDIDATE_BYTES
-                : input.max_file_bytes,
+              name: candidate ? "max_candidate_bytes" : "max_file_bytes",
+              maximum: candidate ? maxCandidateBytes : input.max_file_bytes,
+              ...(failure.observedBytes === undefined
+                ? {}
+                : { required: failure.observedBytes }),
             },
             { cause: failure },
           ),
-          candidate
-            ? fixedAllowanceOptions(
-                "The whole-file debug candidate read allowance",
-                "input",
-                {
-                  limit: MAX_ELF_DEBUG_CANDIDATE_BYTES,
-                  unit: "bytes",
-                },
-              )
-            : {
-                retryable: false,
-                limit: elfReadBudgetLimit(
+          {
+            retryable: false,
+            limit: candidate
+              ? elfDebugCandidateBudgetLimit(maxCandidateBytes, requiredBytes)
+              : elfReadBudgetLimit(
                   ELF_DEBUG_LINK_READ_BUDGETS,
                   "max_file_bytes",
                   input.max_file_bytes,
                 ),
-              },
+          },
         );
       },
     }),

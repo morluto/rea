@@ -267,3 +267,88 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "refuses an oversized debug candidate with --max-candidate-bytes recovery and recovers on retry",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-elf-debug-link-cli-candidate-budget-",
+    );
+    const candidate = elfDebugCandidateFixture();
+    const image = elfDebugLinkFixture({
+      debuglink: debuglinkSection(FIXTURE_DEBUG_NAME, 0xae159abd, true),
+    });
+    const imagePath = join(root, "prog");
+    const candidatePath = join(root, "prog.debug");
+    await writeFile(imagePath, image);
+    await writeFile(candidatePath, candidate);
+
+    const refused = await cli.run({
+      arguments: [
+        "inspect-elf-debug-link",
+        imagePath,
+        "--candidate-path",
+        candidatePath,
+        "--max-candidate-bytes",
+        "16",
+        "--json",
+      ],
+    });
+    expect(refused.exitCode).not.toBe(0);
+    expect(refused.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_candidate_bytes",
+          cli_flag: "--max-candidate-bytes",
+          effective_value: 16,
+          unit: "bytes",
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
+          default_value: 0xffffffff,
+          applies_at: "next_call",
+          required_value: candidate.length,
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_elf_debug_link",
+          control: "max_candidate_bytes",
+        },
+      },
+      remediation: {
+        action: expect.stringContaining("--max-candidate-bytes"),
+      },
+    });
+    const partialObservation = debugLinkContract.outputSchema.parse(
+      (refused.json as { details?: { partial_observation?: unknown } }).details
+        ?.partial_observation,
+    );
+    expect(partialObservation.normalized_result.artifact.path).toBe(imagePath);
+    expect(partialObservation.normalized_result.candidate).toBeNull();
+    expect(partialObservation.normalized_result.limitation_codes).toContain(
+      "candidate_read_incomplete",
+    );
+
+    const retried = await cli.run({
+      arguments: [
+        "inspect-elf-debug-link",
+        imagePath,
+        "--candidate-path",
+        candidatePath,
+        "--max-candidate-bytes",
+        String(candidate.length),
+        "--json",
+      ],
+    });
+    expect(retried.exitCode, retried.stderr).toBe(0);
+    const evidence = debugLinkContract.outputSchema.parse(retried.json);
+    expect(evidence.parameters).toEqual({
+      path: imagePath,
+      candidate_path: candidatePath,
+      max_candidate_bytes: candidate.length,
+    });
+    expect(evidence.normalized_result.verification?.status).toBe("matches");
+  },
+);

@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { contractNamed } from "../../../src/cli/contractCliDescription.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
-import { DEFAULT_INSPECT_ELF_DEBUG_LINK_ENTRIES } from "../../../src/domain/native/elfDebugLink.js";
+import {
+  DEFAULT_ELF_DEBUG_CANDIDATE_BYTES,
+  DEFAULT_INSPECT_ELF_DEBUG_LINK_ENTRIES,
+} from "../../../src/domain/native/elfDebugLink.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   debuglinkSection,
   elfDebugCandidateFixture,
@@ -114,5 +118,81 @@ fileInspectionTest(
     expect("_meta" in response ? response._meta : undefined).toMatchObject({
       provenance: { untrusted_content: true, source: "analysis_target" },
     });
+    expect(evidence.parameters).toEqual({
+      path: imagePath,
+      candidate_path: candidatePath,
+    });
+
+    const withoutCandidate = await client.callTool({
+      name: "inspect_elf_debug_link",
+      arguments: { path: imagePath, max_candidate_bytes: 64 },
+    });
+    expect(parseMcpToolError(withoutCandidate).error).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: ["max_candidate_bytes"] }] },
+    });
+
+    const refused = await client.callTool({
+      name: "inspect_elf_debug_link",
+      arguments: {
+        path: imagePath,
+        candidate_path: candidatePath,
+        max_candidate_bytes: 16,
+      },
+    });
+    const refusedError = parseMcpToolError(refused).error;
+    expect(refusedError).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_candidate_bytes",
+          effective_value: 16,
+          unit: "bytes",
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
+          default_value: DEFAULT_ELF_DEBUG_CANDIDATE_BYTES,
+          applies_at: "next_call",
+          required_value: candidate.length,
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_elf_debug_link",
+          control: "max_candidate_bytes",
+        },
+      },
+    });
+    expect(
+      (refusedError.details as { limit?: Record<string, unknown> } | undefined)
+        ?.limit,
+    ).not.toHaveProperty("cli_flag");
+    expect(refusedError.details).toMatchObject({
+      partial_observation: {
+        kind: "retained-evidence",
+        evidence_id: expect.any(String),
+      },
+    });
+
+    const retried = await client.callTool({
+      name: "inspect_elf_debug_link",
+      arguments: {
+        path: imagePath,
+        candidate_path: candidatePath,
+        max_candidate_bytes: candidate.length,
+      },
+    });
+    expect(retried.isError, JSON.stringify(retried.content)).not.toBe(true);
+    const retriedEvidence = debugLinkContract.outputSchema.parse(
+      retried.structuredContent,
+    );
+    expect(retriedEvidence.parameters).toEqual({
+      path: imagePath,
+      candidate_path: candidatePath,
+      max_candidate_bytes: candidate.length,
+    });
+    expect(retriedEvidence.normalized_result.verification?.status).toBe(
+      "matches",
+    );
   },
 );
