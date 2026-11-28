@@ -93,6 +93,7 @@ import { createPeImportsService } from "./binaryDiagnostics/peImports.js";
 import { createNativeExportsService } from "./binaryDiagnostics/nativeExports.js";
 import { createPeResourcesService } from "./binaryDiagnostics/peResources.js";
 import { createWindowsShortcutService } from "./binaryDiagnostics/windowsShortcut.js";
+import { createFirmwareArchitectureCandidatesService } from "./binaryDiagnostics/firmwareArchitectureCandidates.js";
 import { createRecordedCrashService } from "./binaryDiagnostics/recordedCrash.js";
 import { createBinaryLayoutService } from "./binaryDiagnostics/binaryLayout.js";
 import { createDevicetreeService } from "./binaryDiagnostics/devicetree.js";
@@ -434,6 +435,9 @@ const modules = {
   peCertificates: service(() => createPeCertificatesService()),
   peImports: service(() => createPeImportsService()),
   windowsShortcut: service(() => createWindowsShortcutService()),
+  firmwareArchitectureCandidates: service(() =>
+    createFirmwareArchitectureCandidatesService(),
+  ),
   electronFuses: service(
     ({ options }) => options.electronFuses ?? createElectronFuseService(),
   ),

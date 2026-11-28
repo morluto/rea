@@ -948,7 +948,13 @@ ComLoader rejects records `loader: "BinaryLoader"`, `load_address: "1000:0100"`
 analysis. PSP contents, stack, and device state remain unmodeled. See [DOS guide](https://github.com/morluto/rea/blob/main/docs/providers/ghidra-dos.md).
 
 Use `inspect_byte_entropy` to triage high- and low-entropy ranges before extraction,
-and `inspect_firmware_vector_table` (`rea inspect-firmware-vector-table PATH --architecture ARCH --base-address HEX`)
+and `inspect_firmware_architecture_candidates` (`rea inspect-firmware-architecture-candidates PATH`)
+when a firmware blob's CPU family, endianness, or Cortex-M `base_address` is
+unknown: it checks CRC-verified uImage headers, embedded ELF `e_machine`
+consensus (`mixed` without a strict majority), 128-byte aligned M-profile vector
+tables, and aligned prologue/return opcode margins without opening a session.
+See [firmware CPU candidates](https://github.com/morluto/rea/blob/main/docs/guides/firmware/firmware-architecture-candidates.md).
+Also use `inspect_firmware_vector_table` (`rea inspect-firmware-vector-table PATH --architecture ARCH --base-address HEX`)
 to decode ARM M-profile exception/IRQ tables for the raw-image variant names
 (`armv6-m` through `armv8.1-m.main`)
 or RISC-V `mtvec` jump slots, flag clear Thumb bit-0 anomalies and shared dummy

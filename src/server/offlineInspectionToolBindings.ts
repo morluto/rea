@@ -12,6 +12,7 @@ import type { ElfDebugLinkService } from "../application/binaryDiagnostics/ElfDe
 import type { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
 import type { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import type { ElfUnwindRangesService } from "../application/binaryDiagnostics/ElfUnwindRangesService.js";
+import type { FirmwareArchitectureCandidatesService } from "../application/binaryDiagnostics/FirmwareArchitectureCandidatesService.js";
 import type { KernelBuildConfigService } from "../application/binaryDiagnostics/KernelBuildConfigService.js";
 import type { KernelModuleService } from "../application/binaryDiagnostics/KernelModuleService.js";
 import type { LabviewArtifactService } from "../application/labview/LabviewArtifactService.js";
@@ -185,6 +186,12 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<WindowsShortcutService>,
+  firmwareArchitectureCandidates: ((service) => ({
+    inspect_firmware_architecture_candidates: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<FirmwareArchitectureCandidatesService>,
   recordedCrash: ((service) => ({
     inspect_recorded_crash: {
       admission: "application",

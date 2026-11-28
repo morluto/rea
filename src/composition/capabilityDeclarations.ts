@@ -38,6 +38,7 @@ import {
   ELF_DEPENDENCIES_PROVIDER,
   ELF_NOTES_PROVIDER,
   ELF_UNWIND_RANGES_PROVIDER,
+  FIRMWARE_ARCHITECTURE_CANDIDATES_PROVIDER,
   HARMONY_APPLICATION_PROVIDER,
   JAVASCRIPT_APPLICATION_PROVIDER,
   JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
@@ -537,6 +538,13 @@ export const CAPABILITY_DECLARATIONS = {
   windowsShortcut: {
     providers: [
       providerBinding(WINDOWS_SHORTCUT_PROVIDER, ["inspect_windows_shortcut"]),
+    ],
+  },
+  firmwareArchitectureCandidates: {
+    providers: [
+      providerBinding(FIRMWARE_ARCHITECTURE_CANDIDATES_PROVIDER, [
+        "inspect_firmware_architecture_candidates",
+      ]),
     ],
   },
   pythonPyc: {

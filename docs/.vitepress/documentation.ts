@@ -439,6 +439,11 @@ export const documentationSections = [
         route: "/firmware-vector-tables",
       },
       {
+        text: "Firmware CPU and load-base candidates",
+        source: "guides/firmware/firmware-architecture-candidates.md",
+        route: "/firmware-architecture-candidates",
+      },
+      {
         text: "Android OTA update payloads",
         source: "guides/firmware/android-ota-payload.md",
         route: "/android-ota-payload",

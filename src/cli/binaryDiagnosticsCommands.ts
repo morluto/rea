@@ -652,6 +652,39 @@ export const registerBinaryDiagnosticsCommands = (
   registerContractCommand(
     cli,
     logger,
+    contract("inspect_firmware_architecture_candidates"),
+    {
+      description:
+        "Propose CPU architecture, endianness, and Cortex-M load-base candidates for a firmware blob without opening a disassembler",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: {
+        path: {
+          description:
+            "Local firmware blob, flash dump, or container image path",
+        },
+        max_file_bytes: {
+          name: "max-file-bytes",
+          description: "Whole-file admission ceiling in bytes (default 64 MiB)",
+        },
+        max_scan_bytes: {
+          name: "max-scan-bytes",
+          description:
+            "Contiguous prefix bytes examined by header and opcode detectors (default 4 MiB)",
+        },
+      },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/firmwareArchitectureCandidates.js")
+        ).createFirmwareArchitectureCandidatesService(),
+      "rea-firmware-architecture-candidates",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
     contract("inspect_firmware_vector_table"),
     {
       description:
