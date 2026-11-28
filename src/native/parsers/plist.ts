@@ -25,6 +25,7 @@ import {
   PlistNestingLimitError,
 } from "../../domain/apple/plistValue.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
+import { xmlElementDepthConstraint } from "../../domain/xmlDocument.js";
 import {
   malformedInput,
   type ParseFailureError,
@@ -139,11 +140,16 @@ const plistDecodeBudgetError = (
  */
 const plistOutputError = (cause: unknown, reason?: string): PlistParseError => {
   if (cause instanceof InternalInvariantError) throw cause;
-  return cause instanceof PlistNestingLimitError
-    ? plistNestingError(cause)
-    : new AnalysisOutputError("inspect_plist", reason ?? errorMessage(cause), {
-        cause,
-      });
+  if (cause instanceof PlistNestingLimitError) return plistNestingError(cause);
+  const xmlDepth = xmlElementDepthConstraint("inspect_plist", undefined, cause);
+  if (xmlDepth !== undefined) return xmlDepth;
+  return new AnalysisOutputError(
+    "inspect_plist",
+    reason ?? errorMessage(cause),
+    {
+      cause,
+    },
+  );
 };
 
 /**

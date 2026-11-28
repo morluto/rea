@@ -13,6 +13,7 @@ import {
   parseLimitConstraint,
 } from "../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../domain/parseFailure.js";
+import { xmlElementDepthConstraint } from "../domain/xmlDocument.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
@@ -110,6 +111,12 @@ const mavenGradleMetadataFailure = (
         path: input.path,
         description: "Maven POM or Gradle module metadata",
         recognise: (failure) => {
+          const depth = xmlElementDepthConstraint(
+            OPERATION,
+            input.path,
+            failure,
+          );
+          if (depth !== undefined) return depth;
           if (!isParseLimit(failure, MAVEN_GRADLE_METADATA_FORMAT))
             return undefined;
           const { name, maximum, required } = failure.failure.limit;

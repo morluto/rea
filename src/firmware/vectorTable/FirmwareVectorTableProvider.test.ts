@@ -11,6 +11,10 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { inspectFirmwareVectorTableInputSchema } from "../../domain/firmware/firmwareVectorTable.js";
+import {
+  XML_ELEMENT_DEPTH_ALLOWANCE,
+  XML_ELEMENT_DEPTH_LIMIT,
+} from "../../domain/xmlDocument.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { FirmwareVectorTableProvider } from "./FirmwareVectorTableProvider.js";
 import {
@@ -277,6 +281,55 @@ describe("FirmwareVectorTableProvider", () => {
     await provider.close();
     if (integrityRes.ok) throw new Error("Expected read-coverage failure");
     expect(integrityRes.error).toBeInstanceOf(AnalysisArtifactChangedError);
+  });
+
+  it("reports a deep well-formed svd_xml as the XML element-depth ceiling", async () => {
+    const dir = await createTestTempDirectory("rea-fw-vt-xml-depth-");
+    const fwPath = join(dir, "fw.bin");
+    const image = Buffer.alloc(128, 0);
+    image.writeUInt32LE(0x20010000, 0);
+    image.writeUInt32LE(0x08000081, 4);
+    await writeFile(fwPath, image);
+    const provider = new FirmwareVectorTableProvider();
+    try {
+      const result = await provider.inspect(
+        inspectFirmwareVectorTableInputSchema.parse({
+          path: fwPath,
+          architecture: "armv7-m",
+          base_address: "0x08000000",
+          svd_xml: `<device>${"<a>".repeat(XML_ELEMENT_DEPTH_LIMIT)}x${"</a>".repeat(XML_ELEMENT_DEPTH_LIMIT)}</device>`,
+        }),
+      );
+      if (
+        result.ok ||
+        !(result.error instanceof AnalysisResourceConstraintError)
+      )
+        throw new Error("expected the XML depth ceiling");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "resource_constraint",
+        retryable: false,
+        details: {
+          reason: `XML element depth exceeds ${String(XML_ELEMENT_DEPTH_LIMIT)}. This release has no runtime override for this ceiling.`,
+          reported_limits: {
+            boundary: "xml-element-depth",
+            maximum: XML_ELEMENT_DEPTH_LIMIT,
+            required: XML_ELEMENT_DEPTH_LIMIT + 1,
+          },
+          refusal: {
+            kind: "fixed_ceiling",
+            allowance: XML_ELEMENT_DEPTH_ALLOWANCE.name,
+            allowance_kind: "parser",
+            limit: XML_ELEMENT_DEPTH_LIMIT,
+            unit: "levels",
+          },
+        },
+        remediation: {
+          action: expect.stringContaining("no runtime override"),
+        },
+      });
+    } finally {
+      await provider.close();
+    }
   });
 
   it("attributes rejected svd_xml, out-of-file vector_table_offset, and address overflow to caller inputs while keeping short images at offset 0 as target failures", async () => {

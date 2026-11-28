@@ -499,6 +499,7 @@ const parseVsixManifestDocument = (
     maximumNodes: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
     lineEndings: "normalize",
   });
+  if (!parsed.ok && parsed.error.kind === "limit") throw parsed.error;
   if (!parsed.ok && parsed.error.kind === "node-limit")
     throw decodeLimit(
       VSIX_PACKAGE_FORMAT,

@@ -1,4 +1,8 @@
 import { ParseFailureError } from "../domain/parseFailure.js";
+import {
+  XML_ELEMENT_DEPTH_ALLOWANCE,
+  XML_ELEMENT_DEPTH_LIMIT,
+} from "../domain/xmlDocument.js";
 import { expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -808,6 +812,49 @@ it("reports the package.json value refusal as a fixed parser allowance", async (
     expect(JSON.stringify(projectAnalysisError(result.error))).not.toMatch(
       /more memory|Raise /,
     );
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reports a deep vsixmanifest as the XML element-depth ceiling", async () => {
+  const root = await createTestTempDirectory("rea-vsix-depth-");
+  const path = join(root, "demo.hello-1.2.3.vsix");
+  const nested = XML_ELEMENT_DEPTH_LIMIT;
+  await writeFile(
+    path,
+    await vsixPackageFixture({
+      vsixmanifest: `<PackageManifest>${"<a>".repeat(nested)}x${"</a>".repeat(nested)}</PackageManifest>`,
+    }),
+  );
+  const provider = new VsixPackageProvider();
+  try {
+    const result = await provider.inspect(
+      inspectVsixPackageInputSchema.parse({ path }),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        reported_limits: {
+          boundary: "xml-element-depth",
+          maximum: XML_ELEMENT_DEPTH_LIMIT,
+          required: XML_ELEMENT_DEPTH_LIMIT + 1,
+        },
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance: XML_ELEMENT_DEPTH_ALLOWANCE.name,
+          allowance_kind: "parser",
+          limit: XML_ELEMENT_DEPTH_LIMIT,
+          unit: "levels",
+        },
+      },
+      remediation: {
+        action: expect.stringContaining("no runtime override"),
+      },
+    });
   } finally {
     await provider.close();
   }

@@ -15,6 +15,7 @@ import {
 } from "./KeyedArchiveReader.js";
 import { PlistNestingLimitError } from "../../domain/apple/plistValue.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
+import { XML_ELEMENT_DEPTH_LIMIT } from "../../domain/xmlDocument.js";
 import { deeplyNestedXmlPlist } from "../../../tests/fixtures/keyedArchiveXmlNesting.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { embedSubmillisecondDateInWideIntegerPayload } from "../../../tests/fixtures/binaryPlistScalarAlias.js";
@@ -1099,7 +1100,8 @@ describe("XML plist nesting preflight", () => {
     return cursor;
   };
 
-  it.each([129, 4000])(
+  // XML_ELEMENT_DEPTH_LIMIT - 2 leaves room for the plist envelope and the string.
+  it.each([129, XML_ELEMENT_DEPTH_LIMIT - 2])(
     "rejects %i-level XML nesting as the documented resource limit",
     (depth) => {
       // Recursive decoding exceeds the call stack before the projection limit
@@ -1113,6 +1115,28 @@ describe("XML plist nesting preflight", () => {
       ).toThrow(new PlistNestingLimitError(128));
     },
   );
+
+  it("rejects XML past the syntax depth ceiling before the plist walk", () => {
+    let failure: unknown;
+    try {
+      decodeKeyedArchiveBytes(
+        Buffer.from(deeplyNestedXmlPlist(XML_ELEMENT_DEPTH_LIMIT)),
+        selection,
+      );
+    } catch (cause: unknown) {
+      failure = cause;
+    }
+    expect(failure).toMatchObject({
+      kind: "limit",
+      failure: {
+        format: "xml",
+        limit: {
+          name: "xml-element-depth",
+          maximum: XML_ELEMENT_DEPTH_LIMIT,
+        },
+      },
+    });
+  });
 
   it("decodes a valid XML keyed archive exactly at the nesting limit", () => {
     const graph = decodeKeyedArchiveBytes(deeplyNestedArchive(126), {

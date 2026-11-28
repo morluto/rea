@@ -3,6 +3,7 @@ import { parse } from "plist";
 
 import { PlistNestingLimitError } from "./apple/plistValue.js";
 import { parseXmlPropertyList as parseWithNumbers } from "./propertyListKeys.js";
+import { XML_ELEMENT_DEPTH_LIMIT } from "./xmlDocument.js";
 
 // Numeric source facts have separate source-type and ambiguity controls.
 // Repeated keys stay visible so a last-value-wins case also shows its count.
@@ -253,10 +254,13 @@ it("rejects XML nesting beyond the projection limit with the limit diagnostic", 
   expect(() => parseXmlPropertyList(nestedArrays(129))).toThrow(
     PlistNestingLimitError,
   );
-  expect(() => parseXmlPropertyList(nestedDictionaries(3000))).toThrow(
+  // The plist envelope and the innermost string sit outside the container chain.
+  // This depth is the deepest chain the syntax check still admits.
+  const admitted = XML_ELEMENT_DEPTH_LIMIT - 2;
+  expect(() => parseXmlPropertyList(nestedDictionaries(admitted))).toThrow(
     PlistNestingLimitError,
   );
-  expect(() => parseXmlPropertyList(nestedArrays(4000))).toThrow(
+  expect(() => parseXmlPropertyList(nestedArrays(admitted))).toThrow(
     PlistNestingLimitError,
   );
   let failure: unknown;
@@ -272,6 +276,25 @@ it("rejects XML nesting beyond the projection limit with the limit diagnostic", 
     failure: { limit: { name: "plist-nesting-depth", maximum: 128 } },
     maximumDepth: 128,
     message: expect.stringMatching(/128 nesting levels.*no runtime override/iu),
+  });
+});
+
+it("refuses an XML plist past the syntax depth ceiling before the plist walk", () => {
+  let failure: unknown;
+  try {
+    parseXmlPropertyList(nestedDictionaries(XML_ELEMENT_DEPTH_LIMIT));
+  } catch (cause: unknown) {
+    failure = cause;
+  }
+  expect(failure).toMatchObject({
+    kind: "limit",
+    failure: {
+      format: "xml",
+      limit: {
+        name: "xml-element-depth",
+        maximum: XML_ELEMENT_DEPTH_LIMIT,
+      },
+    },
   });
 });
 
@@ -305,7 +328,9 @@ it.each(['"', "'"])(
   (quote) => {
     const opening = `<dict note=${quote}/>${quote}><key>k</key>`;
     const text = plist(
-      opening.repeat(3000) + "<string>x</string>" + "</dict>".repeat(3000),
+      opening.repeat(XML_ELEMENT_DEPTH_LIMIT - 2) +
+        "<string>x</string>" +
+        "</dict>".repeat(XML_ELEMENT_DEPTH_LIMIT - 2),
     );
     expect(() => parseXmlPropertyList(text)).toThrow(PlistNestingLimitError);
     expect(
@@ -331,7 +356,9 @@ it("ignores complete DOCTYPE internal subsets when checking value depth", () => 
 
 it("bounds nested plist wrappers before recursive decoding", () => {
   const text =
-    "<plist>".repeat(3000) + "<string>x</string>" + "</plist>".repeat(3000);
+    "<plist>".repeat(XML_ELEMENT_DEPTH_LIMIT - 1) +
+    "<string>x</string>" +
+    "</plist>".repeat(XML_ELEMENT_DEPTH_LIMIT - 1);
   expect(() => parseXmlPropertyList(text)).toThrow(PlistNestingLimitError);
   expect(
     parseXmlPropertyList(plist("<plist><string>x</string></plist>")).value,

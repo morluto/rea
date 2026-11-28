@@ -26,6 +26,7 @@ import { err, ok } from "../domain/result.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../providers/offlineArtifactFailure.js";
+import { xmlElementDepthConstraint } from "../domain/xmlDocument.js";
 import { parseNugetNupkg } from "./NugetNupkgParser.js";
 
 const OPERATION = "inspect_nuget_nupkg";
@@ -53,6 +54,8 @@ const nupkgFailure = (
       path: input.path,
       description: "NuGet package",
       recognise: (failure, origin) => {
+        const depth = xmlElementDepthConstraint(OPERATION, input.path, failure);
+        if (depth !== undefined) return depth;
         if (isParseLimit(failure, NUGET_NUPKG_FORMAT)) {
           const parameter = (
             Object.keys(NUGET_NUPKG_BUDGETS) as NugetNupkgBudget[]

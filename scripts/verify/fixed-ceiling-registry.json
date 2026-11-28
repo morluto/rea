@@ -215,6 +215,12 @@
       "reason": "`fixedNativeAllowance` relays the allowance its caller names."
     }
   },
+  "src/domain/xmlDocument.ts": {
+    "XML_ELEMENT_DEPTH_ALLOWANCE.name": {
+      "class": "representation",
+      "reason": "saxes walks the open-element stack for every start tag. 1024 is above the desktop XML view cap of 494 and the plist nesting cap of 128, so those later guards still see a document they accept. This release has no runtime override."
+    }
+  },
   "src/electron/ElectronFuseFailures.ts": {
     "fileSize ? \"the Electron fuse input allowance\" : \"The Electron fuse sentinel inventory\"": {
       "class": "pending",

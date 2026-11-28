@@ -586,6 +586,17 @@ JSON values stop at `MAX_JSON_DEPTH` (1000) in
 "JSON value exceeds maximum nesting depth of 1000. This release has no runtime
 override."
 
+XML syntax refuses element depth above 1024 (`xml-element-depth`) in
+[`xmlDocument.ts`](https://github.com/morluto/rea/blob/main/src/domain/xmlDocument.ts).
+saxes walks the open-element stack for every start tag, so an unbounded
+document is quadratic work before a later format guard runs. 1024 is above the
+desktop XML view cap of 494 and the plist nesting cap of 128, so those later
+guards still see a document they accept. This release has no runtime override.
+Callers see the fixed allowance "The XML element depth allowance" (1024
+levels). A provider that still holds the parse failure also reports
+`details.reported_limits.boundary` `xml-element-depth`. A deeper document
+fails at the syntax check and does not reach the plist nesting limit.
+
 Image4 DER parsing refuses four representation allowances. The Image4 DER depth
 allowance is 32 levels. The Image4 DER element allowance is 4096 elements. The
 Image4 property allowance is 256 properties. The Image4 string allowance is

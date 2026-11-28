@@ -22,6 +22,10 @@ import {
   type MacosPkgParseError,
 } from "../domain/macosPkgFormat.js";
 import { observedSymlinkTarget } from "../domain/symlinkTarget.js";
+import {
+  isXmlElementDepthLimit,
+  XML_ELEMENT_DEPTH_ALLOWANCE,
+} from "../domain/xmlDocument.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
@@ -223,6 +227,9 @@ const readerFailure = (error: MacosPkgParseError): ArtifactReaderFailure =>
     ? new ArtifactReaderFailure("limit", error.message, {
         boundary: "capacity",
         parserLimit: error.failure.limit,
+        ...(isXmlElementDepthLimit(error)
+          ? { fixedAllowance: XML_ELEMENT_DEPTH_ALLOWANCE }
+          : {}),
         cause: error,
       })
     : artifactFormatFailure(error.failure, { cause: error });

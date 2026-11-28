@@ -1,6 +1,11 @@
 import { expect, it } from "vitest";
 import { buildBinary, type PlistValue } from "plist";
 import { MAX_JSON_DEPTH, jsonValueSchema } from "../../domain/jsonValue.js";
+import {
+  XML_ELEMENT_DEPTH_ALLOWANCE,
+  XML_ELEMENT_DEPTH_LIMIT,
+} from "../../domain/xmlDocument.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { plistUidValue } from "../../domain/apple/plistUid.js";
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
@@ -125,6 +130,35 @@ it.each([
     }
   },
 );
+
+it("reports XML element depth from the native plist parser", () => {
+  const required = XML_ELEMENT_DEPTH_LIMIT + 1;
+  const parsed = parsePlistXmlSource(
+    Buffer.from(
+      `<plist>${"<array>".repeat(required)}${"</array>".repeat(required)}</plist>`,
+    ),
+  );
+  if (parsed.ok) throw new Error("Expected XML element-depth refusal");
+  if (!(parsed.error instanceof AnalysisError)) throw parsed.error;
+  expect(projectAnalysisError(parsed.error)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      reported_limits: {
+        boundary: "xml-element-depth",
+        maximum: XML_ELEMENT_DEPTH_LIMIT,
+        required,
+      },
+      refusal: {
+        kind: "fixed_ceiling",
+        allowance: XML_ELEMENT_DEPTH_ALLOWANCE.name,
+        allowance_kind: "parser",
+        limit: XML_ELEMENT_DEPTH_LIMIT,
+        unit: "levels",
+      },
+    },
+  });
+});
 
 it.each(["<bogus/>", "<plist><data>ＡＡＥ=</data></plist>"])(
   "keeps malformed XML conversion %s separate from nesting refusal",

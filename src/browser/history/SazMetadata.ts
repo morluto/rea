@@ -1,6 +1,10 @@
 import { captureBudgets } from "./CaptureBudgets.js";
 import type { Node } from "@xmldom/xmldom";
-import { parseXmlDocument } from "../../domain/xmlDocument.js";
+import {
+  isXmlElementDepthLimit,
+  parseXmlDocument,
+  XML_ELEMENT_DEPTH_ALLOWANCE,
+} from "../../domain/xmlDocument.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import {
   decodeXmlPlistText,
@@ -35,7 +39,15 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
     doctype: "reject",
     lineEndings: "preserve",
   });
-  if (!parsed.ok)
+  if (!parsed.ok) {
+    if (isXmlElementDepthLimit(parsed.error))
+      throw new CaptureFormatError(
+        {
+          fixedAllowance: XML_ELEMENT_DEPTH_ALLOWANCE,
+          boundary: "memory",
+        },
+        parsed.error.failure.detail,
+      );
     throw new CaptureFormatError(
       parsed.error.kind === "unsupported" ? "unsupported" : "malformed",
       parsed.error.kind === "unsupported"
@@ -44,6 +56,7 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
       "",
       parsed.error,
     );
+  }
   const document = parsed.value;
   if (document.documentElement?.tagName !== "Session")
     throw new CaptureFormatError(

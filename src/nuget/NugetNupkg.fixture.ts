@@ -135,6 +135,8 @@ export const nugetNupkgFixture = async (
     readonly nuspecBytes?: Uint8Array;
     readonly nuspecName?: string;
     readonly relsTarget?: string;
+    /** Exact OPC relationships document. Overrides `relsTarget`. */
+    readonly relationships?: string;
     readonly extraMembers?: Readonly<Record<string, string>>;
     readonly includeRels?: boolean;
     readonly includeContentTypes?: boolean;
@@ -148,7 +150,7 @@ export const nugetNupkgFixture = async (
     await addText(
       writer,
       "_rels/.rels",
-      relsXml(options.relsTarget ?? `/${nuspecName}`),
+      options.relationships ?? relsXml(options.relsTarget ?? `/${nuspecName}`),
     );
   if (options.nuspecBytes === undefined)
     await addText(writer, nuspecName, options.nuspec ?? defaultNuspec);

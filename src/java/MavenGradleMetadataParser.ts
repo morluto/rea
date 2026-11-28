@@ -317,6 +317,7 @@ const parsePom = (
       parsed.error.maximum,
       parsed.error.required,
     );
+  if (!parsed.ok && parsed.error.kind === "limit") throw parsed.error;
   if (!parsed.ok)
     throw parsed.error.kind === "unsupported"
       ? unsupportedInput(

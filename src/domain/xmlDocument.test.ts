@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import {
+  XML_ELEMENT_DEPTH_LIMIT,
   declaredDocumentType,
   isWellFormedXml,
   parseXmlDocument,
@@ -115,6 +116,27 @@ it("trims attributes and joins only direct character data", () => {
   expect(xmlTrimmedAttribute(item, "blank")).toBeNull();
   expect(xmlTrimmedAttribute(item, "missing")).toBeNull();
   expect(xmlTrimmedDirectText(item)).toBe("One & two three");
+});
+
+it("refuses element depth at the syntax check", () => {
+  const source =
+    "<e>".repeat(XML_ELEMENT_DEPTH_LIMIT + 1) +
+    "</e>".repeat(XML_ELEMENT_DEPTH_LIMIT + 1);
+  const parsed = parseXmlDocument(source, {
+    doctype: "reject",
+    lineEndings: "preserve",
+  });
+  expect(parsed.ok).toBe(false);
+  if (parsed.ok) return;
+  expect(parsed.error.failure).toMatchObject({
+    kind: "limit",
+    format: "xml",
+    limit: {
+      name: "xml-element-depth",
+      maximum: XML_ELEMENT_DEPTH_LIMIT,
+      required: XML_ELEMENT_DEPTH_LIMIT + 1,
+    },
+  });
 });
 
 it("counts projected XML nodes before creating their DOM", () => {
@@ -308,7 +330,9 @@ it("gives the source range of each picked element, the outermost, through line b
 });
 
 it("selects sibling outermost matches after a deeply nested nonmatching branch", () => {
-  const source = `<root>${"<n>".repeat(4000)}${"</n>".repeat(4000)}<x><x/></x><x/></root>`;
+  // The nonmatching branch sits on the syntax ceiling. A deeper document is the depth limit.
+  const nested = XML_ELEMENT_DEPTH_LIMIT - 1;
+  const source = `<root>${"<n>".repeat(nested)}${"</n>".repeat(nested)}<x><x/></x><x/></root>`;
   const ranges = xmlElementRanges(source, ({ local }) => local === "x", {
     doctype: "reject",
   });
