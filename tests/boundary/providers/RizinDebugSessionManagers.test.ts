@@ -42,6 +42,7 @@ writeFileSync(new URL("./args.json", import.meta.url), JSON.stringify(process.ar
 process.stdout.write("\\0");
 receiveLines((line) => {
   if (line === "dr") process.stdout.write("backend-event\\0rax=0x1234\\0");
+  else if (line === "e scr.color=1; dr") process.stdout.write("\\u001b[32mrax=0x1234\\u001b[0m\\0");
   else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\n\\0");
 });
 `);
@@ -57,6 +58,8 @@ receiveLines((line) => {
     expect(JSON.parse(args)).toEqual([
       "-N",
       "-0",
+      "-e",
+      "scr.color=0",
       "-d",
       "-R",
       `stdin=${tty}`,
@@ -80,6 +83,18 @@ receiveLines((line) => {
           output_scope: "command_and_interleaved_session_output",
           backend: "test-backend",
           completion_status: "complete",
+        },
+      },
+    });
+    const command = "e scr.color=1; dr";
+    const output = "\u001b[32mrax=0x1234\u001b[0m";
+    expect(await manager.execute(sessionId, command)).toMatchObject({
+      ok: true,
+      value: {
+        result: { output, completion_status: "complete" },
+        evidence: {
+          parameters: { command },
+          normalized_result: { output },
         },
       },
     });
