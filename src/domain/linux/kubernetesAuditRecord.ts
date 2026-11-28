@@ -94,7 +94,19 @@ export const parseKubernetesAuditLine = (
   let stringOverflow = false;
   /** Final fields whose last value was dropped for the text budget. */
   const budgetOmittedFields = new Set<string>();
-  const budgetOmitted = (): boolean => budgetOmittedFields.size > 0;
+  const REQUEST_OMISSION_KEYS = new Set([
+    "root:requestURI",
+    "root:verb",
+    "root:userAgent",
+    "user:username",
+    "list:groups",
+    "list:sourceIPs",
+    "object:resource",
+    "object:namespace",
+    "object:name",
+  ]);
+  const budgetOmitted = (): boolean =>
+    [...budgetOmittedFields].some((key) => REQUEST_OMISSION_KEYS.has(key));
   const fieldKey = (): string | undefined => {
     const frame = top();
     if (frame?.kind === "strings")
@@ -279,6 +291,7 @@ export const parseKubernetesAuditLine = (
     ) {
       sawObject = true;
       objectRef[pendingKey] = null;
+      forgetOmission();
       return;
     }
     if (frame?.kind === "responseStatus" && pendingKey === "code") {
@@ -323,6 +336,7 @@ export const parseKubernetesAuditLine = (
       pendingKey === "sourceIPs"
     ) {
       value.sourceIPs = null;
+      budgetOmittedFields.delete("list:sourceIPs");
       stack.push({
         kind: "strings",
         target: "sourceIPs",
@@ -338,6 +352,7 @@ export const parseKubernetesAuditLine = (
     ) {
       sawUser = true;
       user.groups = null;
+      budgetOmittedFields.delete("list:groups");
       stack.push({
         kind: "strings",
         target: "groups",
