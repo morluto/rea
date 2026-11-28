@@ -445,5 +445,67 @@ class HopperBridgeTest(unittest.TestCase):
         )
 
 
+    def test_out_of_segment_address_reports_rva_reading_as_a_hint(self):
+        bridge = load_bridge()
+        image = FakeSegment(0x140000000, 0x10000, {})
+        doc = FakeDocument([image])
+
+        with self.assertRaises(bridge["InvalidRequestError"]) as caught:
+            bridge["_segment"](doc, 0xB000)
+        error = caught.exception
+        self.assertEqual(
+            str(error),
+            "Address is outside every segment; image base is 0x140000000; if this is an RVA, use 0x14000b000",
+        )
+        hint = {
+            "rejected": "0xb000",
+            "image_base": "0x140000000",
+            "rva_candidate": "0x14000b000",
+        }
+        self.assertEqual(error.address_hint, hint)
+
+        # The diagnostic carries the structured hint beside the message.
+        diagnostic = bridge["_safe_diagnostic"](error)
+        self.assertEqual(diagnostic["type"], "invalid_request")
+        self.assertEqual(diagnostic["message"], str(error))
+        self.assertEqual(diagnostic["address_hint"], hint)
+
+    def test_rejected_address_without_rva_reading_keeps_the_plain_message(self):
+        bridge = load_bridge()
+        image = FakeSegment(0x140000000, 0x10000, {})
+        doc = FakeDocument([image])
+
+        # Above the image base no RVA reading exists.
+        with self.assertRaises(bridge["InvalidRequestError"]) as above:
+            bridge["_segment"](doc, 0x200000000)
+        # Below the base but relocating past the segment's end stays unhinted.
+        with self.assertRaises(bridge["InvalidRequestError"]) as past:
+            bridge["_segment"](doc, 0x20000)
+        for caught in (above, past):
+            self.assertEqual(str(caught.exception), "Address is outside every segment")
+            self.assertIsNone(caught.exception.address_hint)
+            self.assertNotIn("address_hint", bridge["_safe_diagnostic"](caught.exception))
+
+        # An address a segment contains resolves without an error or hint.
+        self.assertIs(bridge["_segment"](doc, 0x14000B000), image)
+
+    def test_rva_hint_relocates_by_the_lowest_segment_start(self):
+        bridge = load_bridge()
+        document_segment = FakeSegment(0x400000, 0x1000, {})
+        shared_segment = FakeSegment(0x10000000, 0x1000, {})
+        doc = FakeDocument([shared_segment, document_segment])
+
+        with self.assertRaises(bridge["InvalidRequestError"]) as caught:
+            bridge["_segment"](doc, 0x500)
+        self.assertEqual(
+            caught.exception.address_hint,
+            {
+                "rejected": "0x500",
+                "image_base": "0x400000",
+                "rva_candidate": "0x400500",
+            },
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

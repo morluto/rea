@@ -48,6 +48,21 @@ const hopperRemoteClassification = (
             : "execution_failure",
       };
 
+/**
+ * The bridge's RVA reading of an address that no segment contains, offered
+ * when relocating the rejected address by the image base would land it
+ * inside a segment. The caller confirms the coordinate kind; nothing is
+ * rewritten.
+ */
+export interface HopperAddressHint {
+  /** The rejected caller address, hex. */
+  readonly rejected: string;
+  /** The lowest segment start the reading relocates by, hex. */
+  readonly image_base: string;
+  /** `image_base` plus `rejected` when the caller meant an RVA, hex. */
+  readonly rva_candidate: string;
+}
+
 /** Base class for failures produced specifically by the Hopper provider. */
 export abstract class HopperError extends ProviderOwnedAnalysisError {}
 
@@ -257,6 +272,7 @@ export interface HopperRemoteErrorContext extends AnalysisErrorOptions {
   readonly operation?: string | undefined;
   readonly requestId?: number | undefined;
   readonly selector?: HopperSelectorResolution | undefined;
+  readonly addressHint?: HopperAddressHint | undefined;
 }
 
 /**
@@ -314,6 +330,7 @@ export class HopperRemoteError extends HopperError {
   readonly operation: string | undefined;
   readonly requestId: number | undefined;
   readonly selector: HopperSelectorResolution | undefined;
+  readonly addressHint: HopperAddressHint | undefined;
 
   constructor(
     readonly code: number,
@@ -336,6 +353,7 @@ export class HopperRemoteError extends HopperError {
     this.operation = context.operation;
     this.requestId = context.requestId;
     this.selector = context.selector;
+    this.addressHint = context.addressHint;
   }
 
   override providerRequest(): ProviderRequestFailure {
@@ -352,19 +370,24 @@ export class HopperRemoteError extends HopperError {
           requestId: this.requestId,
           diagnosticType: this.diagnosticType,
           selector: this.selector,
+          addressHint: this.addressHint,
         }),
     };
   }
 
   override ownPresentation(): AnalysisErrorOwnPresentation {
     const lookupMiss = this.diagnosticType === "selector_not_found";
+    const hint =
+      this.diagnosticType === "invalid_request" ? this.addressHint : undefined;
     return {
       ...hopperRemoteClassification(this.diagnosticType),
       message: `Hopper ${this.operation ?? "analysis"} failed (${String(this.code)}, ${this.diagnosticType}): ${this.safeMessage}`,
       remediation: lookupMiss
         ? hopperSelectorMissRecovery(this.selector).remediation
         : this.diagnosticType === "invalid_request"
-          ? "Correct the reported address, document, or arguments and retry."
+          ? hint !== undefined
+            ? "Correct the reported address, document, or arguments and retry. The RVA reading in the message and details.address_hint is a hint, not a rewrite; confirm the coordinate kind, then retry with the address you mean."
+            : "Correct the reported address, document, or arguments and retry."
           : "Review the Hopper diagnostic details and correct the request or target; run `rea doctor` if the provider itself is failing. Repeating the unchanged request is not expected to succeed.",
       details: {
         stage: "analysis",
@@ -373,6 +396,7 @@ export class HopperRemoteError extends HopperError {
         ...(lookupMiss && this.selector !== undefined
           ? { selector: { ...this.selector } }
           : {}),
+        ...(hint === undefined ? {} : { address_hint: { ...hint } }),
         ...(this.operation === undefined ? {} : { operation: this.operation }),
         ...(this.requestId === undefined ? {} : { request_id: this.requestId }),
       },

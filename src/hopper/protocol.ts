@@ -4,6 +4,7 @@ import {
   HOPPER_DIAGNOSTIC_TYPES,
   HopperProtocolError,
   HopperRemoteError,
+  type HopperAddressHint,
   type HopperSelectorResolution,
 } from "./HopperErrors.js";
 import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
@@ -32,12 +33,22 @@ const selectorResolutionSchema = z.discriminatedUnion("source", [
     .strict(),
 ]) satisfies z.ZodType<HopperSelectorResolution>;
 
+/** The bridge's RVA reading of an address that no segment contained. */
+const addressHintSchema = z
+  .object({
+    rejected: hopperAddressSchema,
+    image_base: hopperAddressSchema,
+    rva_candidate: hopperAddressSchema,
+  })
+  .strict() satisfies z.ZodType<HopperAddressHint>;
+
 const remoteErrorSchema = z
   .object({
     code: z.int(),
     message: z.string(),
     type: z.enum(HOPPER_DIAGNOSTIC_TYPES).default("remote"),
     selector: selectorResolutionSchema.optional(),
+    address_hint: addressHintSchema.optional(),
   })
   .strict();
 
@@ -129,6 +140,9 @@ const hopperRemoteError = (
   new HopperRemoteError(error.code, error.message, {
     diagnosticType: error.type,
     ...(error.selector === undefined ? {} : { selector: error.selector }),
+    ...(error.address_hint === undefined
+      ? {}
+      : { addressHint: error.address_hint }),
   });
 
 /** Project a parsed response into its result or expected remote failure. */
