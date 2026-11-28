@@ -243,6 +243,30 @@ it("keeps symbol names and debug presence", () => {
   });
 });
 
+it.each([
+  { missingLongwords: 1, missing: "payload", debug: true },
+  { missingLongwords: 3, missing: "length and payload", debug: false },
+])(
+  "reports debug presence as $debug with a truncated debug $missing",
+  ({ missingLongwords, debug }) => {
+    const bytes = amigaLoadFile({
+      hunks: [
+        { type: "code", bytes: CODE, debug: Buffer.alloc(8), omitEnd: true },
+      ],
+    });
+    const file = parseAmigaHunk(bytes.subarray(0, -missingLongwords * 4));
+    expect(file.entries[0]).toMatchObject({ storedBytes: CODE.length });
+    expect(file.hunks[0]).toMatchObject({ debug, debugLongwords: 0 });
+    expect(amigaHunkMetadata(file).hunks[0]).toMatchObject({
+      debug,
+      debug_longwords: 0,
+    });
+    expect(file.limitations).toMatchObject([
+      { kind: "truncated", detail: expect.stringContaining("debug hunk") },
+    ]);
+  },
+);
+
 it("records chip, fast and extended memory flags", () => {
   const file = parseAmigaHunk(
     amigaLoadFile({

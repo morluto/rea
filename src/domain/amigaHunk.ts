@@ -1084,13 +1084,13 @@ class AmigaHunkParser {
       this.failTruncated(at, "debug hunk");
       return;
     }
+    hunk.debug = true;
     const byteLength = nlongs * 4;
     if (!this.fits(byteLength)) {
       this.failTruncated(at, "debug hunk");
       return;
     }
     this.offset += byteLength;
-    hunk.debug = true;
     hunk.debugLongwords += nlongs;
   }
 

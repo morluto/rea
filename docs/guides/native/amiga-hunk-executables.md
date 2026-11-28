@@ -53,7 +53,7 @@ record per hunk:
 | `name`                        | The `HUNK_NAME` before the hunk, or null                         |
 | `relocations`                 | Counts per kind and target hunk. Offsets are not kept            |
 | `symbols`                     | Names and offsets. A name ends at the first NUL                  |
-| `debug`, `debug_longwords`    | Whether a debug hunk is present, and how many longwords it holds |
+| `debug`, `debug_longwords`    | Debug presence and longwords read from completed debug payloads. |
 
 ## Entries
 
