@@ -562,6 +562,16 @@ rea extract-artifact ./sbl1.mbn --json
 See [Qualcomm MBN images](../guides/firmware/qualcomm-mbn-images.md) for header
 recognition, regions, hash segments and what is not verified.
 
+Inventory and extract an Image4 firmware container:
+
+```sh
+rea inspect-artifact ./kernelcache.im4p --json
+rea extract-artifact ./kernelcache.im4p --json
+```
+
+See [Image4 containers](../guides/apple/image4-containers.md) for IM4P, IM4M
+and IMG4 facts, keybag reporting, and what is not decrypted.
+
 Inspect local model declarations without loading weights:
 
 ```bash

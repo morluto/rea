@@ -586,6 +586,13 @@ JSON values stop at `MAX_JSON_DEPTH` (1000) in
 "JSON value exceeds maximum nesting depth of 1000. This release has no runtime
 override."
 
+Image4 DER parsing refuses four representation allowances. The Image4 DER depth
+allowance is 32 levels. The Image4 DER element allowance is 4096 elements. The
+Image4 property allowance is 256 properties. The Image4 string allowance is
+4096 bytes. This release has no runtime override for them. A payload octet
+string counts as one element and is not loaded to measure it. See
+[Image4 containers](../guides/apple/image4-containers.md).
+
 ## Typed refusals
 
 A producer that refuses a request types the refusal instead of leaving

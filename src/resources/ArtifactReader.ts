@@ -293,6 +293,7 @@ export interface ArtifactReader {
     | "esp-flash-image"
     | "fit"
     | "qualcomm-mbn"
+    | "apple-img4"
     | "ntfs-mft"
     | "systemd-journal"
     | "auditd-log"
