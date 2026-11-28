@@ -458,7 +458,8 @@ it("compares declared digests without using limitation prose", () => {
   const different = changes(unavailable(claim), unavailable(edited));
   const noted = (
     integrity:
-      { readonly algorithm: "md5"; readonly digest: string } | undefined,
+      | { readonly algorithm: "md5"; readonly digest: string }
+      | undefined,
     limitations: readonly string[],
   ) =>
     observation({

@@ -2135,8 +2135,8 @@ when both are omitted, storage is not compared.
 (`pyinstaller-entry`), Node SEA members (`node-sea-entry`),
 UBI volumes (`ubi-volume`), ESP image segments (`esp-image-segment`), DfuSe elements (`dfuse-element`),
 ESP flash partitions (`esp-flash-partition`), Nintendo DS ROM members
-(`nds-entry`), FIT images (`fit-image`) and tar
-members (`tar-entry`)<!-- END:compare-artifacts:compared-format-metadata-kinds -->;
+(`nds-entry`), FIT images (`fit-image`), Amiga Hunk entries
+(`amiga-hunk-entry`) and tar members (`tar-entry`)<!-- END:compare-artifacts:compared-format-metadata-kinds -->;
 each format's guide names the compared fields. A changed declaration is a
 metadata change, including when content is unavailable. A declaration that
 only one side records, or that the other side records as another kind, is
