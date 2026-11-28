@@ -391,20 +391,24 @@ const redactStandaloneCssUrl = (value: string): string => {
       continue;
     }
 
-    if (/\s|,/u.test(ch)) {
+    if (/\s/u.test(ch)) {
       result += ch;
       pos++;
       continue;
     }
 
     let tokenEnd = pos + 1;
-    while (tokenEnd < len && !/[\s,"']/u.test(value[tokenEnd]!)) {
+    while (tokenEnd < len && !/[\s"']/u.test(value[tokenEnd]!)) {
       tokenEnd++;
     }
     const token = value.slice(pos, tokenEnd);
+    const hasTrailingComma = token.endsWith(",");
+    const candidate = hasTrailingComma ? token.slice(0, -1) : token;
     try {
-      const sanitized = redactCssUrl(token);
-      result += sanitized.redacted ? sanitized.url : token;
+      const sanitized = redactCssUrl(candidate);
+      result += sanitized.redacted
+        ? `${sanitized.url}${hasTrailingComma ? "," : ""}`
+        : token;
     } catch {
       result += token;
     }
