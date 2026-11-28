@@ -145,20 +145,22 @@ const nonempty = (value: string | undefined): string | null => {
 
 const UTF8_LENIENT = new TextDecoder("utf-8", { ignoreBOM: true });
 
-/**
- * A NUL-terminated tar name field as UTF-8. Names keep surrounding spaces
- * and backslashes, which are legal in Unix paths; `undecodable` is set when
- * the bytes are not UTF-8 and the text carries U+FFFD replacements.
- */
+/** Decode all bytes of a tar text value, retaining undecodable-name reporting. */
+const tarValueText = (
+  bytes: Uint8Array,
+): { readonly text: string; readonly undecodable: boolean } => {
+  const strict = decodeUtf8PreservingBomOrNull(bytes);
+  return strict === null
+    ? { text: UTF8_LENIENT.decode(bytes), undecodable: true }
+    : { text: strict, undecodable: false };
+};
+
+/** Fixed header and GNU long-name fields end at NUL; PAX values do not. */
 const tarText = (
   bytes: Uint8Array,
 ): { readonly text: string; readonly undecodable: boolean } => {
   const end = bytes.indexOf(0);
-  const field = end === -1 ? bytes : bytes.subarray(0, end);
-  const strict = decodeUtf8PreservingBomOrNull(field);
-  return strict === null
-    ? { text: UTF8_LENIENT.decode(field), undecodable: true }
-    : { text: strict, undecodable: false };
+  return tarValueText(end === -1 ? bytes : bytes.subarray(0, end));
 };
 
 const looksLike = (bytes: Uint8Array, magic: Uint8Array): boolean => {
@@ -599,7 +601,7 @@ const parseTar = (
         const key = Buffer.from(keyBytes).toString("utf8");
         if (key.startsWith("GNU.sparse.")) sparse = true;
         if (!isPaxKey(key)) return;
-        const decoded = tarText(valueBytes);
+        const decoded = tarValueText(valueBytes);
         fields[key] = decoded.text;
         if (decoded.undecodable) undecodable.add(key);
         else undecodable.delete(key);

@@ -45,7 +45,6 @@ describe("CLI --sensitive-value parser diagnostics", () => {
       // The parser refuses the schema key spelling; its value stays redacted.
       message:
         "Unknown flag: --sensitiveValue. Did you mean --sensitive-value?",
-      failure: { code: "PARSE_ERROR", retryable: false },
     },
     {
       // Incur removes builtin output flags before reading the declared value.
@@ -62,14 +61,15 @@ describe("CLI --sensitive-value parser diagnostics", () => {
     },
   ])(
     "excludes declarations from a JSON $name rejection",
-    async (
-      { arguments: arguments_, message, failure = { code: "UNKNOWN" } },
-      { cli },
-    ) => {
+    async ({ arguments: arguments_, message }, { cli }) => {
       const result = await cli.run({ arguments: [...arguments_, "--json"] });
 
       expectExcluded(result);
-      expect(JSON.parse(result.stdout)).toEqual({ ...failure, message });
+      expect(JSON.parse(result.stdout)).toEqual({
+        code: "PARSE_ERROR",
+        message,
+        retryable: false,
+      });
     },
   );
 
@@ -80,7 +80,7 @@ describe("CLI --sensitive-value parser diagnostics", () => {
         arguments: [
           ...CAPTURE,
           "har",
-          ...["flag", "code", "UNKNOWN"].flatMap((literal) => [
+          ...["flag", "code", "PARSE_ERROR"].flatMap((literal) => [
             "--sensitive-value",
             literal,
           ]),
@@ -91,8 +91,9 @@ describe("CLI --sensitive-value parser diagnostics", () => {
 
       expect(result.exitCode).toBe(1);
       expect(JSON.parse(result.stdout)).toEqual({
-        code: "UNKNOWN",
+        code: "PARSE_ERROR",
         message: "Unknown [REDACTED]: --no-x",
+        retryable: false,
       });
     },
   );
@@ -129,8 +130,9 @@ describe("CLI --sensitive-value parser diagnostics", () => {
       });
       expect(undeclared.exitCode).toBe(1);
       expect(JSON.parse(undeclared.stdout)).toEqual({
-        code: "UNKNOWN",
+        code: "PARSE_ERROR",
         message: `Unknown flag: --no-${LITERAL}`,
+        retryable: false,
       });
 
       // An accepted output value is honored, so the service failure is JSON.

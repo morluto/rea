@@ -785,16 +785,46 @@ const jsonChildRemovalEdits = (
   const siblings = object.children ?? [];
   const removed = new Set(properties);
   const anyKept = siblings.some((member) => !removed.has(member));
+  const separators = siblings.map((member) =>
+    nextJsoncToken(text, member.offset + member.length),
+  );
+  const whitespaceOnly = (from: number, to: number): boolean =>
+    /^[\t\n\r ]*$/u.test(text.slice(from, to));
   const edits: Edit[] = [];
   let earlierKept = false;
   for (const [index, member] of siblings.entries()) {
-    if (removed.has(member))
-      edits.push({ offset: member.offset, length: member.length, content: "" });
-    else earlierKept = true;
-    const separator = nextJsoncToken(text, member.offset + member.length);
+    const separator = separators[index]!;
     const next = siblings[index + 1];
     if (separator.kind !== JSON_COMMA && next !== undefined)
       throw new TypeError("JSON property separator was not found");
+    if (removed.has(member)) {
+      // Take the member's own line break and indentation with it, and an
+      // emptied object's closing indentation. A comment in either gap belongs
+      // to the surrounding text and keeps that gap intact.
+      const gapStart =
+        index === 0 ? object.offset + 1 : separators[index - 1]!.offset + 1;
+      const memberEnd = member.offset + member.length;
+      const start = whitespaceOnly(gapStart, member.offset)
+        ? gapStart
+        : member.offset;
+      // A trailing JSONC comma of an emptied object goes with that gap.
+      const closing =
+        separator.kind === JSON_COMMA && next === undefined
+          ? nextJsoncToken(text, separator.offset + 1).offset
+          : separator.offset;
+      const end =
+        !anyKept &&
+        next === undefined &&
+        whitespaceOnly(memberEnd, separator.offset) &&
+        whitespaceOnly(
+          separator.kind === JSON_COMMA ? separator.offset + 1 : closing,
+          closing,
+        )
+          ? closing
+          : memberEnd;
+      edits.push({ offset: start, length: end - start, content: "" });
+      if (end > separator.offset) continue;
+    } else earlierKept = true;
     // Keep the separator before the next retained member, matching the
     // existing single-member deletion rule. JSONC may retain a trailing comma.
     const keepSeparator =

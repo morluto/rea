@@ -146,6 +146,15 @@ const globalOptionRows = ({ formats, root }: GlobalOptionsHelp): Row[] =>
       description: "Filter output by key paths (e.g. foo,bar.baz,a[0,3])",
     },
     { label: `--format <${formats.join("|")}>`, description: "Output format" },
+    ...(formats.some((format) => format === "csv" || format === "tsv")
+      ? [
+          {
+            label: "--columns <fields>",
+            description:
+              "Comma-separated row fields for --format csv or tsv, in output order",
+          },
+        ]
+      : []),
     { label: "--help", description: "Show help" },
     { label: "--json", description: "Shorthand for --format json" },
     {
