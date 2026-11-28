@@ -65,8 +65,8 @@ describe("selectNativeImage subtype names", () => {
       [CPU_ARM64, 12],
     ]);
     for (const [architecture, index, other] of [
-      ["arm64", 0, "arm64e"],
-      ["arm64e", 1, "arm64"],
+      ["arm64", 0, "arm64e.x1"],
+      ["arm64e.x1", 1, "arm64"],
     ] as const) {
       expect(selectNativeImage(bytes, architecture)).toMatchObject({
         ok: true,
@@ -80,25 +80,25 @@ describe("selectNativeImage subtype names", () => {
     }
   });
 
-  it("distinguishes ambiguous and absent selectors for the same subtype table", () => {
-    const { bytes } = fat([
+  it("reads arm64e and arm64e.x1 slices of one table by their own selectors", () => {
+    const { bytes, offsets } = fat([
       [CPU_ARM64, 2],
       [CPU_ARM64, 12],
     ]);
-    expect(selectNativeImage(bytes, "arm64e")).toEqual({
-      ok: false,
-      error: {
-        kind: "ambiguous_architecture",
-        message:
-          "Universal Mach-O holds several arm64e slices (arm64 (subtype 0x2), arm64 (subtype 0xc)); no slice was selected.",
-      },
+    expect(selectNativeImage(bytes, "arm64e")).toMatchObject({
+      ok: true,
+      value: { fileOffset: offsets[0] },
+    });
+    expect(selectNativeImage(bytes, "arm64e.x1")).toMatchObject({
+      ok: true,
+      value: { fileOffset: offsets[1] },
     });
     expect(selectNativeImage(bytes, "arm64")).toEqual({
       ok: false,
       error: {
         kind: "architecture_not_present",
         message:
-          "Universal Mach-O holds arm64 (subtype 0x2), arm64 (subtype 0xc); no slice has the arm64 subtype.",
+          "Universal Mach-O holds arm64 (subtype 0x2), arm64 (subtype 0xc); no slice has the arm64 subtype. Select architecture arm64e or arm64e.x1.",
       },
     });
   });

@@ -1,5 +1,5 @@
 import { sha256 } from "../../../tests/support/sha256.js";
-import { open, readFile, stat, writeFile } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 
@@ -7,6 +7,7 @@ import { expect, it, vi } from "vitest";
 
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { collectEntries } from "../../../tests/fixtures/artifactEntries.js";
 import {
   materializeArtifactInventory,
   scanCanonicalArtifactInventory,
@@ -33,9 +34,9 @@ const PYTHON_313_MAGIC = Buffer.from("f30d0d0a", "hex");
 it.each(["close", "cancel"] as const)(
   "does not complete a PyInstaller inventory after %s while paused",
   async (interruption) => {
-    const path = join(await createTestTempDirectory("rea-pyi-paused-"), "app");
-    await writeFile(
-      path,
+    const path = await createTestTempFile(
+      "rea-pyi-paused-",
+      "app",
       cArchiveExecutable({
         layout: "2.1",
         pythonVersion: 311,
@@ -134,8 +135,7 @@ it("preserves legacy pyc bytes and derives only modern headerless CArchive bytec
   const path = await writeArchive("bytecode-layouts", fixture.archive);
   const reader = new PyInstallerArtifactReader(path);
   try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
+    const entries = await collectEntries(reader);
     for (const module of fixture.modules) {
       const entry = entries.find((item) => item.path === module.name)!;
       expect(entry.formatMetadata).toMatchObject({
@@ -1085,8 +1085,7 @@ it("reads a PE signature beyond the carrier prefix before projecting paths", asy
   );
   const reader = new PyInstallerArtifactReader(path);
   try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
+    const entries = await collectEntries(reader);
     expect(entries.map((entry) => entry.path)).toContain("pkg/data.bin");
   } finally {
     await reader.close();
@@ -1118,8 +1117,7 @@ it("requires DOS magic before a PE-like record can select Windows path semantics
       await writeArchive("carrier", bytes),
     );
     try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
+      const entries = await collectEntries(reader);
       expect(entries).toContainEqual(
         expect.objectContaining({
           path: expectedPath,
@@ -1285,8 +1283,7 @@ it("opens selected PYZ modules lazily and permits repeat reads without retaining
   );
   const reader = new PyInstallerArtifactReader(path);
   try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
+    const entries = await collectEntries(reader);
     const selected = entries.find(
       (entry) => entry.path === "PYZ.pyz/selected.pyc",
     );
@@ -1333,8 +1330,7 @@ it.each([false, true])(
     );
     const reader = new PyInstallerArtifactReader(path);
     try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
+      const entries = await collectEntries(reader);
       const selected = entries.find(
         (entry) => entry.path === "PYZ.pyz/selected.pyc",
       );
@@ -1629,8 +1625,7 @@ it.each([
     );
     const reader = new PyInstallerArtifactReader(path);
     try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
+      const entries = await collectEntries(reader);
       const framed = entries.find((entry) => entry.path === "framed");
       if (framed === undefined) throw new Error("Missing framed module");
       expect(framed.formatMetadata).toMatchObject({
@@ -1708,8 +1703,7 @@ it("keeps mixed CArchive roles distinct across declarations, bytecode, and store
   const path = await writeArchive("mixed-roles", fixture.archive);
   const reader = new PyInstallerArtifactReader(path);
   try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
+    const entries = await collectEntries(reader);
     expect(reader.formatMetadata()).toMatchObject({
       entry_count: 9,
       runtime_option_count: 1,

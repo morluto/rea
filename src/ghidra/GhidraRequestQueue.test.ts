@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
+import type { GhidraRequestOptions } from "./GhidraClientTypes.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { GhidraRequestQueue } from "./GhidraRequestQueue.js";
 import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
@@ -419,3 +421,280 @@ it.each([
     expect(aggregate.cleanupIncomplete).toBe(false);
   },
 );
+
+it("does not admit a read-ahead request removed while it is queued", async () => {
+  const execution = phaseGate<void, Result<JsonValue, GhidraSessionError>>();
+  const admitted: string[] = [];
+  const queue = new GhidraRequestQueue(
+    () => execution.hold(),
+    failure,
+    () => Promise.resolve(ok(null)),
+  );
+  const active = queue.run("active", {}, {});
+  const queued = new AbortController();
+  const waiting = queue.run(
+    "read-ahead",
+    {},
+    {
+      signal: queued.signal,
+      onAdmitted: () => {
+        admitted.push("read-ahead");
+      },
+    },
+  );
+  expect(admitted).toEqual([]);
+  queued.abort();
+  const removed = await waiting;
+  expect(admitted).toEqual([]);
+  expect(removed).toMatchObject({
+    ok: false,
+    error: { kind: "cancelled" },
+  });
+  execution.release(ok(null));
+  await active;
+});
+
+describe("Ghidra request queue interruptible cancellation", () => {
+  const cancelledReply = (): GhidraSessionError =>
+    new GhidraSessionError(
+      "remote",
+      "Ghidra decompilation was cancelled",
+      {},
+      { remoteCode: "decompile_cancelled" },
+    );
+  /** One interruptible queue whose first execution is held by the test. */
+  const interruptibleQueue = (
+    graceMs: number,
+    source: "default" | "setting" = "setting",
+  ) => {
+    const execution = phaseGate<void, Result<JsonValue, GhidraSessionError>>();
+    const cleanup = phaseGate<void, CleanupResult>();
+    const executed: { method: string; options: GhidraRequestOptions }[] = [];
+    const stop = vi.fn(() => cleanup.hold());
+    const queue = new GhidraRequestQueue(
+      (method, _parameters, options) => {
+        executed.push({ method, options });
+        return executed.length === 1
+          ? execution.hold()
+          : Promise.resolve(ok({ method }));
+      },
+      failure,
+      stop,
+      {
+        interruptible: (method) => method === "decompile",
+        grace: { graceMs, source },
+      },
+    );
+    return { queue, execution, cleanup, executed, stop };
+  };
+
+  it.each([
+    { reply: "cancelled", order: "cancel-first" },
+    { reply: "success", order: "cancel-first" },
+    { reply: "success", order: "reply-first" },
+  ] as const)(
+    "keeps the session and queued work when a $reply reply settles the interrupted request ($order)",
+    async ({ reply, order }) => {
+      const { queue, execution, executed, stop } = interruptibleQueue(60_000);
+      const controller = new AbortController();
+      const reason = new Error("caller stopped");
+      const active = queue.run("decompile", {}, { signal: controller.signal });
+      const queued = queue.run("queued", {}, {});
+      const completed = reply === "success" ? ok(null) : err(cancelledReply());
+      if (order === "reply-first") execution.release(completed);
+      controller.abort(reason);
+      // The request is asked to stop while its reply is still awaited.
+      expect(executed[0]?.options.interrupt?.aborted).toBe(true);
+      expect(executed[0]?.options.signal?.aborted).toBe(false);
+      execution.release(completed);
+
+      const result = await active;
+      if (result.ok) throw new Error("Expected the cancellation");
+      expect(result.error).toMatchObject({
+        kind: "cancelled",
+        cancellation: { reason },
+      });
+      expect(result.error.cleanupFailure).toBeUndefined();
+      expect(result.error.concurrentCancellation).toBeUndefined();
+      await expect(queued).resolves.toEqual(ok({ method: "queued" }));
+      await expect(queue.run("later", {}, {})).resolves.toEqual(
+        ok({ method: "later" }),
+      );
+      expect(stop).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps an unrelated bridge failure primary without recording a session close", async () => {
+    const { queue, execution, stop } = interruptibleQueue(60_000);
+    const controller = new AbortController();
+    const original = new GhidraSessionError(
+      "remote",
+      "decompile limit reached",
+      {},
+      { remoteCode: "decompile_timed_out" },
+    );
+    const active = queue.run("decompile", {}, { signal: controller.signal });
+    const queued = queue.run("queued", {}, {});
+    controller.abort(null);
+    execution.release(err(original));
+    const result = await active;
+    if (result.ok) throw new Error("Expected the remote failure");
+    expect(result.error).toBe(original);
+    await expect(queued).resolves.toEqual(ok({ method: "queued" }));
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it("closes the session when no reply settles within the grace period, then keeps it closed for a late reply", async () => {
+    const { queue, execution, cleanup, executed, stop } = interruptibleQueue(5);
+    const controller = new AbortController();
+    const reason = new Error("caller stopped");
+    let settled = false;
+    const active = queue
+      .run("decompile", {}, { signal: controller.signal })
+      .then((result) => {
+        settled = true;
+        return result;
+      });
+    const queued = queue.run("queued", {}, {});
+    controller.abort(reason);
+    await cleanup.reached(active, "active cancellation cleanup");
+    // The fallback is the closure used before: the reply is abandoned with
+    // the caller's reason and queued work fails with the session.
+    expect(executed[0]?.options.signal?.aborted).toBe(true);
+    expect(executed[0]?.options.signal?.reason).toBe(reason);
+    await expect(queued).resolves.toMatchObject({
+      ok: false,
+      error: {
+        kind: "process",
+        // The expired grace is the control that closed the session.
+        message:
+          "Ghidra session closed after active request cancellation: Ghidra did not answer the cancelled request within the cancel grace (REA_GHIDRA_CANCEL_GRACE_MS is 5 ms (source launch environment; default 2000, floor 100, maximum 60000); set in the environment that starts REA)",
+      },
+    });
+    // A reply that arrives during the final cleanup does not revive the session.
+    execution.release(err(cancelledReply()));
+    await nextTurn();
+    expect(settled).toBe(false);
+    cleanup.release(ok(null));
+    const result = await active;
+    if (result.ok) throw new Error("Expected the cancellation");
+    expect(result.error).toMatchObject({
+      kind: "remote",
+      remoteCode: "decompile_cancelled",
+      concurrentCancellation: { reason },
+      diagnostics: { session_closed_by_cancellation: true },
+    });
+    expect(stop).toHaveBeenCalledOnce();
+    expect(executed.map(({ method }) => method)).toEqual(["decompile"]);
+  });
+
+  it.each([
+    { graceMs: 2_000, source: "default" },
+    { graceMs: 150, source: "setting" },
+    { graceMs: 45_000, source: "setting" },
+  ] as const)(
+    "defers the fallback for exactly the $graceMs ms grace ($source)",
+    async ({ graceMs, source }) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const { queue, execution, cleanup, stop } = interruptibleQueue(
+          graceMs,
+          source,
+        );
+        const controller = new AbortController();
+        const active = queue.run(
+          "decompile",
+          {},
+          { signal: controller.signal },
+        );
+        const queued = queue.run("queued", {}, {});
+        controller.abort(new Error("caller stopped"));
+        await vi.advanceTimersByTimeAsync(graceMs - 1);
+        expect(stop).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(stop).toHaveBeenCalledOnce();
+        const refused = await queued;
+        if (refused.ok) throw new Error("Expected the session close");
+        expect(refused.error.message).toContain(
+          `REA_GHIDRA_CANCEL_GRACE_MS is ${String(graceMs)} ms (source ${source === "setting" ? "launch environment" : "default"};`,
+        );
+        // The abandoned wire wait settles, then the forced close finishes.
+        execution.release(err(failure("cancelled", "abandoned")));
+        cleanup.release(ok(null));
+        await expect(active).resolves.toMatchObject({ ok: false });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("closes the session when the interrupted request fails without a bridge reply", async () => {
+    const { queue, execution, cleanup, stop } = interruptibleQueue(60_000);
+    const controller = new AbortController();
+    const original = failure("process", "Ghidra bridge socket closed");
+    const cleanupFailure = new ProviderCleanupError(
+      "ghidra",
+      ["owned-runtime"],
+      {},
+    );
+    const active = queue.run("decompile", {}, { signal: controller.signal });
+    const queued = queue.run("queued", {}, {});
+    controller.abort(null);
+    execution.release(err(original));
+    await cleanup.reached(active, "active cancellation cleanup");
+    cleanup.release(err(cleanupFailure));
+    const result = await active;
+    if (result.ok) throw new Error("Expected the process failure");
+    expect(result.error).toMatchObject({ kind: "process" });
+    expect(result.error.cleanupFailure).toBe(cleanupFailure);
+    await expect(queued).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "process" },
+    });
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it("does not interrupt the active request when a queued request is cancelled", async () => {
+    const { queue, execution, executed, stop } = interruptibleQueue(60_000);
+    const controller = new AbortController();
+    const active = queue.run("decompile", {}, { signal: controller.signal });
+    const queuedController = new AbortController();
+    const queued = queue.run(
+      "decompile",
+      {},
+      { signal: queuedController.signal },
+    );
+    queuedController.abort("queued caller stopped");
+    await expect(queued).resolves.toMatchObject({
+      ok: false,
+      error: {
+        kind: "cancelled",
+        cancellation: { reason: "queued caller stopped" },
+      },
+    });
+    expect(executed[0]?.options.interrupt?.aborted).toBe(false);
+    execution.release(ok(null));
+    await expect(active).resolves.toEqual(ok(null));
+    expect(executed).toHaveLength(1);
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it("closes the session at once for an operation that is not interruptible", async () => {
+    const { queue, execution, cleanup, executed, stop } =
+      interruptibleQueue(60_000);
+    const controller = new AbortController();
+    const active = queue.run("rename", {}, { signal: controller.signal });
+    controller.abort(null);
+    await cleanup.reached(active, "active cancellation cleanup");
+    expect(executed[0]?.options.interrupt).toBeUndefined();
+    expect(executed[0]?.options.signal).toBe(controller.signal);
+    // A reply that raced the cancel does not keep the edit's session.
+    execution.release(ok(null));
+    cleanup.release(ok(null));
+    await expect(active).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "cancelled", cancellation: { reason: null } },
+    });
+    expect(stop).toHaveBeenCalledOnce();
+  });
+});

@@ -163,6 +163,12 @@ APK signing block is accounted for, as is all-zero padding under 4 KiB that
 aligns that block to a 4 KiB boundary); otherwise coverage is `unknown` and a
 limitation gives the unaccounted bytes, which may hold local entries the
 directory does not list.
+Nonempty single-volume classic and Zip64 ZIPs can be recognized after an
+unclaimed prefix, including an inert launch script. The prefix remains part of
+the root identity and unaccounted-byte coverage; it is never executed. Zip64
+recognition follows a complete end record at its declared location, or the
+fixed-size record immediately before its locator when prepended bytes shifted
+the original offsets. Native executable signatures keep their existing route.
 An extent must fit before the directory and agree with the local header's
 size or deferred-size mode, including local Zip64 sizes. A deferred extent
 requires a matching data descriptor. Conflicting or unreadable extent claims
@@ -966,6 +972,17 @@ Unrecognized bytes keep kind `unknown`. Optional `order_by`, with `field`
 and ties keep inventory order. The container's own `.` row has a size, so add
 `path_globs: ["**"]` to rank only its entries.
 These selectors do not reopen the artifact or resolve filesystem paths.
+The exception is `format_record_headers`, which pages the per-record headers a
+root artifact retains only a window of inline, such as a systemd journal's
+object headers past the first 32. The caller names the root file in the view's
+required absolute `artifact_path`; Evidence's subject path is display metadata and never
+selects what is opened. Each page re-reads that file through its format reader,
+starting at `offset`, after binding it to the inventory's root digest. A changed file fails with
+`artifact_integrity_mismatch` (`integrity_check: "container-identity"`) instead
+of returning shifted rows, and an Evidence bundle source cannot reopen it. A
+page holds at most one window; `coverage.next_offset` continues it, and memory
+stays one read chunk plus one window whatever the file size. A format with no
+record window is refused with an `invalid_request` naming the view.
 `source_complete` records whether the available inventory passes the complete
 graph checks. Exhausting a page from a partial source does not establish that
 unreturned paths are absent. Views carry their own Evidence IDs and preserve
@@ -1159,7 +1176,13 @@ invalid, and keeps live-server state `unknown` unless the active connection
 supplies identity.
 
 By default, `tools/list` returns the complete canonical tool inventory, including tools that
-are currently unavailable. Opening or closing a target or observing a provider
+are currently unavailable. When the serialized listing would exceed one SSE
+event under the strictest known client limit, the server pages it per the MCP
+cursor contract instead: each page carries a `nextCursor` until the last page,
+and following the cursors returns the complete inventory. Catalogs that fit are
+returned in one response, exactly as before. A cursor is bound to the catalog
+snapshot it started from; if the catalog changes mid-listing, the server
+rejects the cursor and the client restarts without one. Opening or closing a target or observing a provider
 health transition leaves that catalog unchanged and does not emit
 `notifications/tools/list_changed`.
 
@@ -2060,6 +2083,20 @@ selected files face destination name collisions; input path and integrity checks
 still cover the full inventory. The extraction manifest records exactly which
 occurrences were materialized and retains the source manifest identity.
 
+`extract_artifact` delivery follows the agent result budget. Omitted `detail`
+returns the complete extraction Evidence when it fits
+`delivery.agent_result_budget_bytes`; a larger one, such as an APK's thousands
+of written files, is retained behind its summary. The summary keeps the
+manifests, `output_root`, containment and cleanup verification, coverage and
+counts of written files, created files, bytes written and integrity
+contradictions, with at most 16 provenance commands, contradictions and residual
+paths each. `inspect_analysis_view` with
+`{"kind": "artifact-extraction", "collection": "artifacts"}` pages written files
+by exact `relative_paths`, `path_globs` or `artifact_ids`, with optional
+`fields`; `integrity_contradictions` and `residual_paths` page those lists.
+`detail: "complete"` (`--detail complete`) returns everything inline. The files
+are written whichever delivery is selected.
+
 `extract_artifact` accepts the same policy in MCP and as `--integrity-policy`
 on `rea extract-artifact`. With `record-and-continue` it writes the observed
 bytes and returns the `integrity_contradictions` records for the extracted
@@ -2105,8 +2142,9 @@ when both are omitted, storage is not compared.
 
 `compare_artifacts` also compares the declarations in the `format_metadata` of <!-- BEGIN:compare-artifacts:compared-format-metadata-kinds -->UnityFS members (`unityfs-entry`), PyInstaller entries
 (`pyinstaller-entry`), Node SEA members (`node-sea-entry`),
-ESP image segments (`esp-image-segment`), DfuSe elements (`dfuse-element`),
-ESP flash partitions (`esp-flash-partition`), FIT images (`fit-image`) and tar
+UBI volumes (`ubi-volume`), ESP image segments (`esp-image-segment`), DfuSe elements (`dfuse-element`),
+ESP flash partitions (`esp-flash-partition`), Nintendo DS ROM members
+(`nds-entry`), FIT images (`fit-image`) and tar
 members (`tar-entry`)<!-- END:compare-artifacts:compared-format-metadata-kinds -->;
 each format's guide names the compared fields. A changed declaration is a
 metadata change, including when content is unavailable. A declaration that
@@ -2166,6 +2204,25 @@ does not check unpacked companions against those hashes at runtime. Integrity
 failures for such entries name this cause and the operation to rerun with
 `record-and-continue`; REA does not exempt unpacked entries silently.
 
+When an unpacked PE companion already mismatches and removing
+`IMAGE_DIRECTORY_ENTRY_SECURITY` (plus zeroing the security directory and PE
+checksum) restores the declared SHA-256, the contradiction records a
+`signing_explanation` with `kind: "signed-after-packing"`, `platform:
+"pe-authenticode"`, the unsigned digest, certificate-table size, and signer
+subjects when PKCS#7 decoding supplies a unique issuer-and-serial match. Exact
+encoded issuer identity is required; unmatched or ambiguous signers are not
+named. `signer_subjects_complete: false` indicates unresolved signers, incomplete
+certificate coverage, a decoding limit, or unreadable PKCS#7. The optional
+reconstruction buffers the companion in memory and is capped at 67108864 bytes
+(representation bound for one PE rebuild); inventory acquisition
+`maximumBytes` also bounds the second read. When either budget refuses the
+companion, the contradiction stays unexplained and a limitation names the
+effective ceiling. This does not verify a signature or certificate chain.
+Observed bytes stay `observed-untrusted` and `hash_status` remains `mismatched`;
+the explanation is additive evidence, not a trust upgrade. Mach-O
+code-signature growth is not classified yet. A mismatch that does not restore
+the declared digest stays an ordinary unexplained contradiction.
+
 ## Schema advertisement
 
 Advertised input and output schemas contain no reachable recursive references.
@@ -2181,6 +2238,8 @@ operands instead of repeating their full output schemas in the input catalog.
 Pass the original `inspect_web_page` normalized result in `before.inspection`
 and `after.inspection`, optional complete `discover_webmcp_tools` results in
 `webmcp`, or complete `capture_browser_scenario` results in the scenario fields.
+Each field also accepts a retained Evidence reference, described under
+[Comparison input shapes](#comparison-input-shapes).
 Do not construct partial observations from the abbreviated declaration: the
 server still validates every canonical field before comparison. Input groups
 and analyst-authored normalization rules remain explicit. This presentation
@@ -2356,6 +2415,9 @@ annotations, handlers and client approval rules. Loading does not execute an
 analysis, open a target, or initialize the deferred analysis runtime. A batch
 emits one list-change notification; repeating it emits none. Loaded tools remain
 available until the connection ends. There is no generic execution gateway.
+Calling an in-scope tool before it is loaded returns a JSON-RPC `-32602` error
+that names the `discover_tools` call with that exact name; a tool excluded from
+the server keeps the SDK's `disabled` refusal.
 If a loaded tool does not appear in the client, enable client catalog refresh
 or reconnect using `REA_MCP_TOOL_CATALOG_PROFILE=full`.
 
@@ -2473,6 +2535,9 @@ the MCP specification does not require an output schema for
 For the 1 MiB FastMCP SSE limit reported by Unsloth in
 [#9093](https://github.com/morluto/rea/issues/9093), see the
 [tested catalog configuration](../getting-started/client-configuration.md#fastmcp-and-unsloth-sse-catalog-limits).
+The default catalog now pages itself when it exceeds one event, so a client
+that follows `nextCursor` loads the complete inventory without those settings;
+the settings remain the way to reduce the context the catalog costs.
 Hot/cold selection alone does not bound later catalog refreshes.
 
 `compact` keeps the complete validation structure when it fits the budget.
@@ -2552,6 +2617,15 @@ and the identity dimension unknown.
   `normalized_result` objects from `capture_browser_scenario`. Optional
   `normalization` defaults to `{ "rules": [] }` in the canonical scenario parser;
   this scenario-only default is omitted from the merged advertised input.
+
+Each capture may instead be `{"kind":"retained-evidence","evidence_id":...}`.
+The ID names retained producer Evidence in the current session, or the
+`inspect_analysis_view` summary that budgeted delivery returned for it. REA
+reads the complete retained record, validates its `normalized_result` as the
+inline capture, and lists the records it read in `evidence_links`. The
+comparison result and parameters are the same as for the same captures sent
+inline. A reference to other Evidence, or to Evidence the session does not
+retain, is refused.
 
 The advertised schema includes complete nested capture fields and rejects
 incomplete pairs and structurally malformed captures. Mixed comparison families,

@@ -19,7 +19,7 @@ import { lifecycleResultOf } from "../../../src/contracts/toolOutputSchemaPrimit
 import { evidenceRecordSelectionSchema } from "../../../src/domain/evidenceRecordSummary.js";
 
 cliTest(
-  "reports the fixed trace nesting limit through CLI and MCP",
+  "names trace_limits.nesting_depth and recovers the same trace through CLI and MCP",
   async ({ cli }) => {
     const trace =
       '{"type":"context-options","version":10}\n' +
@@ -29,13 +29,31 @@ cliTest(
       code: "resource_constraint",
       retryable: false,
       details: {
-        reason: expect.stringContaining("fixed JSON nesting allowance"),
+        reason: expect.stringContaining("trace_limits.nesting_depth"),
         reported_limits: {
           boundary: "nesting-depth",
           maximum: 64,
           nesting_levels: 64,
         },
-        refusal: { kind: "fixed_ceiling", limit: 64, unit: "nesting levels" },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_playwright_trace",
+          control: "trace_limits.nesting_depth",
+          effective_value: 64,
+          default_value: 64,
+          range: { minimum: 1, maximum: 996 },
+          unit: "count",
+        },
+        limit: {
+          control_kind: "parameter",
+          parameter: "trace_limits.nesting_depth",
+          effective_value: 64,
+          unit: "count",
+          minimum: 1,
+          maximum: 996,
+          default_value: 64,
+          applies_at: "next_call",
+        },
       },
     };
     const result = await cli.run({
@@ -43,6 +61,18 @@ cliTest(
     });
     expect(result.exitCode, result.stderr).toBe(1);
     expect(result.json).toMatchObject(expected);
+    const recovered = await cli.run({
+      arguments: [
+        "inspect-playwright-trace",
+        fixture.path,
+        "--detail",
+        "complete",
+        "--trace-limits",
+        '{"nesting_depth":66}',
+        "--json",
+      ],
+    });
+    expect(recovered.exitCode, recovered.stderr).toBe(0);
     const { call } = await connectLocalToolsMcp({
       REA_MCP_TOOL_FAMILIES: "application",
     });
@@ -51,6 +81,18 @@ cliTest(
     });
     expect(response.isError).toBe(true);
     expect(parseMcpToolError(response).error).toMatchObject(expected);
+    const raised = await call("inspect_playwright_trace", {
+      path: fixture.path,
+      detail: "complete",
+      trace_limits: { nesting_depth: 66 },
+    });
+    expect(raised.isError, JSON.stringify(raised)).not.toBe(true);
+    // The caller's selection is recorded as given, without filled defaults.
+    expect(parseEvidence(raised.structuredContent).parameters).toEqual({
+      path: fixture.path,
+      decoder_profile: "playwright-trace-v10",
+      trace_limits: { nesting_depth: 66 },
+    });
   },
 );
 
@@ -85,11 +127,12 @@ cliTest(
         {
           path: "./resources/x",
           logical_path: "resources/x",
-          limitations: [expect.stringContaining("leading current-directory")],
+          limitations: [],
         },
       ],
       coverage: { total: 1, exhausted: true },
-      source_coverage: { interpretation: "partial" },
+      // A normalized member name keeps its recorded path and is fully read.
+      source_coverage: { interpretation: "scoped" },
     });
     const { members, streams, events, summary } = playwrightTraceSchema.parse(
       parent.normalized_result,

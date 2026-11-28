@@ -9,7 +9,8 @@ export type HopperUrlRefusal =
   | "non_https"
   | "credentials"
   | "redirect_without_location"
-  | "redirect_limit";
+  | "redirect_limit"
+  | "redirect_cross_origin";
 
 /**
  * Transport facts for one Hopper request that yielded no admitted bytes.
@@ -252,6 +253,7 @@ const fetchHopperResponse = async (
     return err("invalid_url");
   }
   let requested = url;
+  const expectedOrigin = selected.origin;
   for (let redirects = 0; ; redirects++) {
     if (selected.protocol !== "https:") return err("non_https");
     // Fetch cannot request userinfo and would echo it in its TypeError message.
@@ -273,6 +275,14 @@ const fetchHopperResponse = async (
     } catch {
       return err("invalid_url");
     }
+    // Check the destination's own refusals before its origin, so an HTTPS
+    // downgrade still reports non_https and a credentialed destination
+    // still reports credentials, as the next loop pass would.
+    if (next.protocol !== "https:") return err("non_https");
+    if (next.username !== "" || next.password !== "") return err("credentials");
+    // Redirects may leave the validated origin; only the initial URL was
+    // checked by callers, so refuse a hop another origin would produce.
+    if (next.origin !== expectedOrigin) return err("redirect_cross_origin");
     // Fetch inherits the previous fragment when Location has none.
     if (!location.includes("#")) next.hash = selected.hash;
     selected = next;
@@ -292,6 +302,7 @@ const refusals: Readonly<Record<HopperUrlRefusal, string>> = {
   credentials: "a request or redirect URL contained credentials",
   redirect_without_location: "a redirect response omitted its Location",
   redirect_limit: `the response redirected more than ${FETCH_REDIRECT_LIMIT} times`,
+  redirect_cross_origin: "a redirect response left the requested origin",
 };
 
 /** One sentence naming the failed request, its URL and the observed outcome. */

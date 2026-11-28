@@ -588,6 +588,7 @@ export class PwntoolsDecoder<
             reply.reported_limits ?? null,
             {
               capturedOutput,
+              measuredExhaustion: true,
               remediationAction: `Review reported limits and available host memory; allocation failure alone does not prove exhaustion. ${pwntoolsBudgetRecovery(producerLimits)}`,
             },
           );

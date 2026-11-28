@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import { literalFeatureMatchSchema } from "../native/literalFeatureMatch.js";
 import {
@@ -18,16 +19,12 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 
-const page = {
-  kind: z.literal("native-feature-trace"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("native-feature-trace");
 export const nativeFeatureTraceRequests = {
   matches: z.strictObject({
     ...page,
@@ -113,11 +110,7 @@ export const projectNativeFeatureTraceView = (
     source_provider: parent.provider ?? null,
     source_analysis_profile_digest: parent.analysisProfile?.digest ?? null,
     source_parameters: jsonValueSchema.parse(parent.parameters ?? null),
-    limitations: boundedViewMessages(
-      parent.limitations,
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: [
       "Page coverage describes retained trace rows, not completeness of provider discovery. See the retained unknowns and source Evidence for limitations.",
     ],

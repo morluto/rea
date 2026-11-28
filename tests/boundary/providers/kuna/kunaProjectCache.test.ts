@@ -978,6 +978,12 @@ it("refuses an export larger than the whole cache may hold", async () => {
       _tag: "AnalysisResourceConstraintError",
       resource: "capacity",
       reportedLimits: { cache_max_bytes: 4096 },
+      limit: {
+        control_kind: "environment",
+        environment: "REA_KUNA_CACHE_MAX_BYTES",
+        effective_value: 4096,
+        applies_at: "next_startup",
+      },
     },
   });
   expect(await entries(cacheRoot, "projects")).toEqual([]);

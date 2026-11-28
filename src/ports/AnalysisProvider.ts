@@ -15,6 +15,7 @@ import type { AnalysisCapabilityUnavailableError } from "../domain/analysisError
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
+import type { EngineCloseReport } from "../domain/engineCloseReport.js";
 import type {
   Evidence,
   EvidenceAuthority,
@@ -40,12 +41,31 @@ import {
   type RelationshipCoverage,
 } from "../domain/relationshipCoverage.js";
 
+/**
+ * How many functions one decompile request names in `upcomingDecompiles`,
+ * its own first. A provider that prepares them together retains that many
+ * results at most, so a larger window would only discard work. This is a
+ * batching size, not an analysis limit, and a provider is free to ignore it.
+ */
+export const UPCOMING_DECOMPILES_WINDOW = 32;
+
 export interface ExecutionOptions {
   /** Ephemeral state shared only by one composed workflow. */
   readonly workScope?: AnalysisWorkScope;
-  /** A single CLI answer bound to its isolated target, not a persistent default document. */
-  readonly snapshotContext?: "one-shot-target";
+  /**
+   * A caller's own read of the bound target, not a workflow-internal read:
+   * `one-shot-target` is a single CLI answer bound to its isolated target, and
+   * `session-target` is a direct tool call on the session's active target.
+   * Neither names a persistent default document.
+   */
+  readonly snapshotContext?: "one-shot-target" | "session-target";
   readonly signal?: AbortSignal;
+  /**
+   * Procedures a composed workflow will decompile next, this request's own
+   * first. Advisory: a provider may prepare them together, and every later
+   * request still returns its own result or failure.
+   */
+  readonly upcomingDecompiles?: readonly string[];
   /** Bundle facts from the current target admission, even when a client is reused. */
   readonly bundleExecutableProvenance?: BundleExecutableProvenance | null;
   readonly progress?: ProgressReporter;
@@ -294,14 +314,22 @@ export interface AnalysisClient extends AnalysisOperationPort {
   reuseReadiness?(): "ready" | "blocked" | "unknown";
   /** Current operational health for the active provider bridge. */
   operationHealthSnapshot?(): ProviderOperationHealth | undefined;
-  /** Close owned resources and retain failed cleanup for a later retry. */
+  /**
+   * What closing now would report as engine state released unsaved, without
+   * closing. Only a close reports it, so other transitions refuse to release it.
+   */
+  unsavedCloseReport?(): EngineCloseReport | null;
+  /**
+   * Close owned resources and retain failed cleanup for a later retry. A
+   * report names engine state the close released without persisting it.
+   */
   close(
     options?: Pick<ExecutionOptions, "progress"> & {
       readonly retainDocument?: boolean;
       /** Report each owned cleanup failure as soon as its owner observes it. */
       readonly onCleanupFailure?: (failure: AnalysisError) => void;
     },
-  ): Promise<Result<null, AnalysisError>>;
+  ): Promise<Result<EngineCloseReport | null, AnalysisError>>;
 }
 
 /** Per-client identity allocated before any provider side effect starts. */

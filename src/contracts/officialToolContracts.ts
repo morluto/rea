@@ -21,7 +21,10 @@ import {
   providerUiNetworkEvidenceEffects,
   toolEffects,
 } from "./toolEffects.js";
-import { nativeDataTypeInputSchema } from "../domain/native/nativeDataType.js";
+import {
+  nativeDataTypeDefinitionsInputSchema,
+  nativeDataTypeInputSchema,
+} from "../domain/native/nativeDataType.js";
 import { nativeInstructionInputSchema } from "../domain/native/nativeInstruction.js";
 import { functionInstructionInputSchema } from "./functionInstructionContract.js";
 import { HOPPER_MEMORY_TOOL_DEFINITIONS } from "./hopperMemoryContracts.js";
@@ -37,6 +40,7 @@ export const decompileAnalysisSelection = decompileAnalysisSchema
 /** The contracts below that the CLI exposes as commands. */
 const OFFICIAL_CLI_CONTRACTS: ReadonlySet<string> = new Set([
   "annotate_native_function",
+  "define_native_data_types",
   "inspect_native_load_image",
   "inspect_native_data_type",
   "inspect_native_instruction",
@@ -85,8 +89,20 @@ export const OFFICIAL_TOOL_CONTRACTS = [
       writesFilesystem: true,
       mayDiscardData: true,
     }),
-    "Atomically rename one function and/or change entry comments, verify readback, and return its refreshed complete dossier. Ghidra resolves interior addresses to function entries; use procedure_address to select the entry explicitly. Edits change analysis metadata, never executable bytes; empty comment text clears it. Invalid edits roll back together. Ghidra checkpoint mode saves on normal close; ephemeral mode discards edits, including in CLI cleanup. Check binary_session for the mode. Windows P0 and providers without this capability are unsupported.",
+    "Atomically rename one function, set its prototype and/or change entry comments, verify readback, and return its refreshed complete dossier. signature is a C prototype over types the database holds, e.g. `double f(struct session *s, unsigned mask)`; it makes pseudocode use those parameter and field names. Its function name is a placeholder (rename with name); add missing types with define_native_data_types first. Ghidra resolves interior addresses to function entries; use procedure_address to select the entry explicitly. Edits change analysis metadata, never executable bytes; empty comment text clears it. Invalid edits roll back together. Ghidra checkpoint mode saves on normal close; ephemeral mode discards edits, including in CLI cleanup. Check binary_session for the mode. Windows P0 and providers without this capability are unsupported.",
     nativeFunctionAnnotationsInputSchema,
+  ),
+  official(
+    "define_native_data_types",
+    // Additive: an existing type is never replaced, so no data is discarded.
+    toolEffects({
+      mutatesTarget: true,
+      mutatesSession: true,
+      launchesProcess: true,
+      writesFilesystem: true,
+    }),
+    "Add caller-authored C struct, union, enum and typedef definitions to the analysis database, e.g. declarations `struct session { int id; struct session *next; };`, so annotate_native_function signatures can use them. All are stored or none; a name the database already holds is refused, never replaced. Returns each type's id for inspect_native_data_type, which reports source caller-defined. Changes analysis metadata, never executable bytes; persistence follows annotate_native_function. Windows P0 and providers without this capability are unsupported.",
+    nativeDataTypeDefinitionsInputSchema,
   ),
   official(
     "inspect_native_load_image",
@@ -98,7 +114,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "inspect_native_data_type",
     evidenceEffects,
-    "Inspect one recovered type by exact database category path or defined typed data address. Returns observed size, alignment, packing, fields, bitfields, enum values, and child type identities; source-level authority and flexible-tail semantics remain unknown unless substantiated.",
+    "Inspect one recovered or caller-defined type by exact database category path or defined typed data address. Returns observed size, alignment, packing, fields, bitfields, enum values, and child type identities; source-level authority and flexible-tail semantics remain unknown unless substantiated.",
     nativeDataTypeInputSchema,
   ),
   official(

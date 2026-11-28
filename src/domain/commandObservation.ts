@@ -72,6 +72,24 @@ export const gdbOutputLimitSchema = z.strictObject({
 });
 export type GdbOutputLimit = z.infer<typeof gdbOutputLimitSchema>;
 
+/** The MI stream record prefix of each GDB console, target and log record. */
+const GDB_STREAM_RECORD_PREFIXES = {
+  console: "~",
+  target: "@",
+  log: "&",
+} as const;
+
+/** Whether one ordered MI record belongs to the named stream grouping. */
+export const isGdbStreamRecord = (
+  record: string,
+  stream?: keyof typeof GDB_STREAM_RECORD_PREFIXES,
+): boolean =>
+  stream === undefined
+    ? Object.values(GDB_STREAM_RECORD_PREFIXES).some((prefix) =>
+        record.startsWith(prefix),
+      )
+    : record.startsWith(GDB_STREAM_RECORD_PREFIXES[stream]);
+
 /** The GDB owner retains ordered records and derives its stream groupings. */
 export const gdbCommandResultSchema = z.strictObject({
   command: z.string(),

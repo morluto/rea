@@ -19,7 +19,7 @@ import {
 } from "./routedContractCommand.js";
 import {
   captureWebScreenshot,
-  compareWebCaptureEvidence,
+  compareParsedWebCaptureEvidence,
   compareWebScreenshotEvidence,
   discoverWebMcpTools,
 } from "../application/BrowserObservationService.js";
@@ -27,7 +27,7 @@ import { CdpBrowserProvider } from "../browser/CdpBrowserProvider.js";
 import { BROWSER_TOOL_CONTRACTS } from "../contracts/browserToolContracts.js";
 import {
   isScenarioCaptureDocument,
-  type BrowserCaptureComparisonInput,
+  type BrowserCaptureComparisonRequest,
 } from "../domain/browserCaptureComparison.js";
 
 /** Register WebMCP, capture-diff, and screenshot CLI equivalents. */
@@ -152,12 +152,12 @@ const compareCaptures = async (
     parsed,
   }: ContractCommandContext<
     Readonly<Record<string, unknown>>,
-    BrowserCaptureComparisonInput
+    BrowserCaptureComparisonRequest
   >,
 ): Promise<unknown> => {
   if (parsed === undefined)
     throw new Error(`${operation} admits its decoded captures`);
-  const result = await compareWebCaptureEvidence(
+  const result = await compareParsedWebCaptureEvidence(
     new CdpBrowserProvider(),
     parsed,
   );

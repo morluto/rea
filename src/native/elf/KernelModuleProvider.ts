@@ -1,4 +1,3 @@
-import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectStableArtifactFailure,
   closeArtifactResources,
@@ -12,7 +11,6 @@ import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_KERNEL_MODULE_ENTRIES,
   MAX_INSPECT_KERNEL_MODULE_FILE_BYTES,
@@ -21,10 +19,8 @@ import {
 } from "../../domain/native/kernelModule.js";
 import { err, ok } from "../../domain/result.js";
 import { KERNEL_MODULE_PROVIDER } from "../../domain/investigationProviders.js";
-import {
-  BinaryResourceFailure,
-  binaryResourceCeiling,
-} from "../../domain/binaryContainer.js";
+import { isNativeStructureFailure } from "../../domain/binaryContainer.js";
+import { nativeStructureConstraint } from "../../domain/native/nativeStructureBudget.js";
 import { parseKernelModuleFromHandle } from "./KernelModuleParser.js";
 
 const OPERATION = "inspect_kernel_module";
@@ -112,17 +108,8 @@ const kernelModuleFailure = (
       description: "kernel module",
       fallbackMessage: "Kernel module inspection failed.",
       recognise: (failure, origin) => {
-        if (failure instanceof BinaryResourceFailure)
-          return parseLimitConstraint(
-            OPERATION,
-            "memory",
-            failure,
-            fixedAllowanceOptions(
-              "The ELF structural decoding allowance",
-              "parser",
-              binaryResourceCeiling(failure),
-            ),
-          );
+        if (isNativeStructureFailure(failure))
+          return nativeStructureConstraint(OPERATION, failure);
         if (
           origin === "owned-or-classified" &&
           failure instanceof ArtifactReaderFailure &&

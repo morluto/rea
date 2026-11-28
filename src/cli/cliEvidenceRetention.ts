@@ -12,7 +12,8 @@ import { basename, dirname, join, resolve } from "node:path";
 
 import { CLI_RETAINED_EVIDENCE_MAX_AGE_MS } from "../domain/analysisResourceLimits.js";
 import type { Evidence } from "../domain/evidence.js";
-import { jsonParts } from "../domain/jsonSerialization.js";
+import type { EvidenceBundle } from "../domain/evidenceBundle.js";
+import { canonicalJsonParts, jsonParts } from "../domain/jsonSerialization.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { reaCacheDirectory } from "../filesystem/cacheDirectory.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -35,42 +36,53 @@ export const cliRetainedEvidenceDirectory = (
 ): string => reaCacheDirectory(environment, platform, "evidence");
 
 /**
- * The cache key: the SHA-256 of the complete record's exact JSON. The
- * Evidence ID leaves out caller-input paths and local subject metadata, so
- * two runs with the same semantic result can differ in what they record;
- * hashing the whole record keeps each invocation's own record.
+ * The public record_sha256 receipt: SHA-256 of the complete parent's exact JSON.
+ * It preserves caller-input paths and local subject metadata omitted from the
+ * semantic Evidence ID. The bundle cache key separately covers source records.
  */
-export const retainedEvidenceDigest = (evidence: Evidence): string => {
+export const retainedEvidenceDigest = (evidence: Evidence): string =>
+  retainedJsonDigest(jsonParts(evidence));
+
+/** Hash the same canonical bytes the bundle writer publishes, including sources. */
+export const retainedEvidenceBundleDigest = (bundle: EvidenceBundle): string =>
+  retainedJsonDigest(canonicalJsonParts(bundle));
+
+const retainedJsonDigest = (parts: Iterable<string>): string => {
   const hash = createHash("sha256");
-  for (const part of jsonParts(evidence)) hash.update(part, "utf8");
+  for (const part of parts) hash.update(part, "utf8");
   return hash.digest("hex");
 };
 
-/** A retained bundle is named by its record's digest, so one record has one file. */
+/** A retained bundle is named by its complete bundle digest. */
 const RETAINED_NAME = /^[0-9a-f]{64}\.json$/u;
 
 /** One retained record: its file, size, digest and whether it was already there. */
 export interface RetainedEvidenceFile {
   readonly path: string;
   readonly bytes: number;
-  readonly sha256: string;
+  readonly cacheKey: string;
   readonly reused: boolean;
 }
 
 /**
  * Why nothing was retained. `committed` carries the writer's failure when
  * the file was published but a later step (staging cleanup, cancellation)
- * failed: its caller reports that failure and its cleanup owner.
+ * failed; `cleanupIncomplete` carries a pre-commit failure whose staging
+ * cleanup stayed incomplete. In both cases the caller reports that failure
+ * and its cleanup owner.
  */
 export interface RetentionStop<Committed> {
   readonly reason: string;
   readonly committed?: Committed;
+  readonly cleanupIncomplete?: Committed;
   /**
    * True when the file was published and remains on disk because a post-write
    * removal (such as discarding an oversized bundle) failed; the caller must
    * retain the published file's receipt.
    */
   readonly fileRemains?: true;
+  /** Surviving file receipt details when `fileRemains` is true. */
+  readonly remainingFile?: RetainedEvidenceFile;
 }
 
 /** The writer's outcome: the bytes it published, that the name exists, or a stop. */
@@ -185,7 +197,7 @@ const evict = async (
  * file exclusively (0600) and refuses an existing name.
  */
 export const retainCliEvidence = async <Committed>(input: {
-  readonly sha256: string;
+  readonly cacheKey: string;
   readonly completeBytes: number;
   readonly retention: CliEvidenceRetention;
   readonly write: (path: string) => Promise<RetentionWrite<Committed>>;
@@ -193,10 +205,10 @@ export const retainCliEvidence = async <Committed>(input: {
   readonly now?: number;
 }): Promise<Result<RetainedEvidenceFile, RetentionStop<Committed>>> => {
   const { directory, capBytes } = input.retention;
-  const { sha256 } = input;
-  const name = `${sha256}.json`;
+  const { cacheKey } = input;
+  const name = `${cacheKey}.json`;
   if (!RETAINED_NAME.test(name))
-    return err({ reason: `${sha256} is not a SHA-256 digest.` });
+    return err({ reason: `${cacheKey} is not a SHA-256 digest.` });
   const tooLarge = (bytes: number) => ({
     reason: `The complete Evidence (${String(bytes)} bytes) is larger than the retained-Evidence cache (${String(capBytes)} bytes).`,
   });
@@ -222,8 +234,11 @@ export const retainCliEvidence = async <Committed>(input: {
           reason:
             "A file that is not a retained Evidence record holds its name.",
         });
+      // A prior invocation may have kept the bundle with a larger cap.
+      // Its cited source records count towards the current invocation's cap.
+      if (bytes > capBytes) return err(tooLarge(bytes));
       await renew(path, now);
-      return ok({ path, bytes, sha256, reused: true });
+      return ok({ path, bytes, cacheKey, reused: true });
     };
     let kept = await reuse();
     if (kept === undefined) {
@@ -234,15 +249,21 @@ export const retainCliEvidence = async <Committed>(input: {
           await rm(path, { force: true });
         } catch (cause: unknown) {
           return err({
-            reason: `The oversized retained-Evidence bundle could not be removed: ${errorMessage(cause)}`,
+            reason: `The oversized retained-Evidence bundle (${String(written.value.bytes)} bytes) is larger than the retained-Evidence cache (${String(capBytes)} bytes) and could not be removed: ${errorMessage(cause)}`,
             fileRemains: true,
+            remainingFile: {
+              path,
+              bytes: written.value.bytes,
+              cacheKey,
+              reused: false,
+            },
           });
         }
         return err(tooLarge(written.value.bytes));
       }
       // Another run kept the same record between the check and the write.
       kept = written.ok
-        ? ok({ path, bytes: written.value.bytes, sha256, reused: false })
+        ? ok({ path, bytes: written.value.bytes, cacheKey, reused: false })
         : written.error === "exists"
           ? ((await reuse()) ??
             err({ reason: "The retained Evidence file could not be written." }))

@@ -8,7 +8,7 @@ import {
   goStringLiteralsSchema,
   type GoBinary,
 } from "../go/goBinary.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { requireMetadataReportSubject } from "./metadataReportSubject.js";
 import {
@@ -17,17 +17,15 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
   unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
-import {
-  analysisViewInputError,
-  invalidAnalysisView,
-} from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
+import { filterSet, selectViewRows } from "./selectViewRows.js";
 
 const indexSchema = z.number().int().nonnegative();
 const count = z.number().int().nonnegative();
@@ -215,11 +213,7 @@ export const projectGoBinaryView = (
             ? ("truncated" as const)
             : ("complete" as const),
     },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: boundedViewMessages(
       unknowns.values,
       parent.evidenceId,
@@ -279,23 +273,15 @@ export const projectGoBinaryView = (
       coverage: completeWithinViewCoverage(1),
     });
   }
-  const indices =
-    view.indices === undefined ? undefined : new Set(view.indices);
-  const fields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const indices = filterSet(view.indices);
+  const fields = filterSet<string>(view.fields);
   if (view.collection === "string_literals") {
     if (stringLiterals === undefined)
-      return err(
-        analysisViewInputError([
-          {
-            path: ["view", "collection"],
-            reason: "invalid_value",
-            message:
-              "Parent Go Evidence did not collect string_literals; re-run inspect_go_binary with include_string_literals: true.",
-          },
-        ]),
+      return invalidAnalysisView(
+        "Parent Go Evidence did not collect string_literals; re-run inspect_go_binary with include_string_literals: true.",
+        "collection",
       );
-    const values = view.values === undefined ? undefined : new Set(view.values);
+    const values = filterSet(view.values);
     const needle = view.contains;
     const matchLiteral =
       values === undefined && needle === undefined
@@ -317,21 +303,13 @@ export const projectGoBinaryView = (
         reference_count: row.reference_count,
       }),
     });
-    const selected =
-      indices === undefined
-        ? selectViewRows(
-            stringLiterals.items,
-            view,
-            matchLiteral,
-            projectLiteral,
-          )
-        : selectIndexedViewRows(
-            stringLiterals.items,
-            indices,
-            view,
-            matchLiteral,
-            projectLiteral,
-          );
+    const selected = selectViewRows(
+      stringLiterals.items,
+      view,
+      matchLiteral,
+      projectLiteral,
+      indices,
+    );
     return ok({
       kind: "go" as const,
       view,
@@ -353,7 +331,7 @@ export const projectGoBinaryView = (
       coverage: unavailableViewCoverage(),
     });
   if (view.collection === "dependencies") {
-    const paths = view.paths === undefined ? undefined : new Set(view.paths);
+    const paths = filterSet(view.paths);
     const matchDep =
       paths === undefined
         ? undefined
@@ -371,16 +349,13 @@ export const projectGoBinaryView = (
         replacement: row.replacement,
       }),
     });
-    const selected =
-      indices === undefined
-        ? selectViewRows(info.module.dependencies, view, matchDep, projectDep)
-        : selectIndexedViewRows(
-            info.module.dependencies,
-            indices,
-            view,
-            matchDep,
-            projectDep,
-          );
+    const selected = selectViewRows(
+      info.module.dependencies,
+      view,
+      matchDep,
+      projectDep,
+      indices,
+    );
     return ok({
       kind: "go" as const,
       view,
@@ -393,7 +368,7 @@ export const projectGoBinaryView = (
       ),
     });
   }
-  const keys = view.keys === undefined ? undefined : new Set(view.keys);
+  const keys = filterSet(view.keys);
   const matchSetting =
     keys === undefined
       ? undefined
@@ -406,16 +381,13 @@ export const projectGoBinaryView = (
     ...((fields?.has("key") ?? true) && { key: row.key }),
     ...((fields?.has("value") ?? true) && { value: row.value }),
   });
-  const selected =
-    indices === undefined
-      ? selectViewRows(info.module.settings, view, matchSetting, projectSetting)
-      : selectIndexedViewRows(
-          info.module.settings,
-          indices,
-          view,
-          matchSetting,
-          projectSetting,
-        );
+  const selected = selectViewRows(
+    info.module.settings,
+    view,
+    matchSetting,
+    projectSetting,
+    indices,
+  );
   return ok({
     kind: "go" as const,
     view,

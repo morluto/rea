@@ -19,7 +19,10 @@ import {
   RegularFileChangedError,
 } from "../filesystem/RegularFile.js";
 import { writeClientRegistrationBackup } from "./ClientRegistrationBackup.js";
-import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
+import {
+  isEnoentError,
+  resolveClientConfigTransactionPath,
+} from "./ClientConfigPath.js";
 import {
   ClientPrivateProfileError,
   privateProfilePermissions,
@@ -121,9 +124,6 @@ export const registerMcpClients = async (
   }
   return outcomes;
 };
-
-const isMissing = (cause: unknown): boolean =>
-  cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 
 /** One selected document owner admits, merges and verifies exact launcher facts. */
 export const registerMcpClient = async (
@@ -368,7 +368,7 @@ const verifyRegistration = async (
       await publication.assertCurrent(readback);
       verified = await verifyEffectiveRegistration(prepared, readback);
     } catch (cause: unknown) {
-      if (cause instanceof RegularFileChangedError || isMissing(cause))
+      if (cause instanceof RegularFileChangedError || isEnoentError(cause))
         throw cause;
       verified = err(
         await registrationFailure(cause, settingsPath, resources, {

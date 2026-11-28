@@ -236,6 +236,12 @@ struct Process : Resource {
 
 void check(napi_status status);
 napi_value failureValue(napi_env env, const Failure& failure);
+// True when this N-API turn already has an exception. A failed query is
+// treated as pending so a later napi_throw cannot replace it.
+bool exceptionPending(napi_env env) noexcept;
+// Settle deferred, or throw when deferred is null. Never lets Failure escape
+// an N-API callback. A pending exception is left as the turn's result.
+void deliverFailure(napi_env env, napi_deferred deferred, const Failure& failure) noexcept;
 napi_value object(napi_env env);
 napi_value string(napi_env env, const std::string& value);
 napi_value string(napi_env env, const std::wstring& value);

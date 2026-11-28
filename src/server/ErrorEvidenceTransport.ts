@@ -8,6 +8,8 @@ import {
   isJSONRPCResultResponse,
   type CallToolResult,
   type JSONRPCMessage,
+  type JSONRPCNotification,
+  type JSONRPCRequest,
   type MessageExtraInfo,
   type RequestId,
   type Transport,
@@ -17,6 +19,11 @@ import { unknownTarget } from "../domain/targetIdentity.js";
 import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import { transportClosedByOwner } from "./transportOwnerClose.js";
 import { ForwardingTransport } from "./ForwardingTransport.js";
+import {
+  formatUnknownMcpToolMessage,
+  formatUnloadedMcpToolMessage,
+  type AdvertisedToolCatalog,
+} from "./toolCatalogSearch.js";
 import {
   advertiseToolOutput,
   type AdvertisedToolPresentation,
@@ -45,6 +52,8 @@ import {
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
+import type { McpToolsListPageBudget } from "../config/mcpToolsListPageBudget.js";
+import { paginateToolsList } from "./toolListPagination.js";
 import {
   currentMcpToolRequest,
   McpToolRequest,
@@ -57,6 +66,29 @@ const currentRequestSignal = new AsyncLocalStorage<AbortSignal>();
 /** Signal for the completion request currently being dispatched by the SDK. */
 export const currentMcpRequestSignal = (): AbortSignal | undefined =>
   currentRequestSignal.getStore();
+
+/**
+ * One accepted JSON-RPC request. The id stays reserved until this owner's
+ * reply leaves send(), or until cancellation when no reply has entered send()
+ * — the SDK suppresses that reply, so nothing later will settle the id.
+ */
+interface InFlightMcpRequest {
+  readonly id: RequestId;
+  toolName?: string;
+  validation?: McpToolRequest;
+  /** Set for tools/list, including a request that sent no cursor. */
+  tracksToolList: boolean;
+  toolListCursor?: string;
+  completion?: AbortController;
+  /**
+   * True once this owner's reply has entered send(). Cancellation must not
+   * drop the id before that send settles, or the reply would clear whichever
+   * request reused the id.
+   */
+  replySettling: boolean;
+}
+
+const currentInFlight = new AsyncLocalStorage<InFlightMcpRequest>();
 
 /** Recognize the SDK's argument diagnostic after its wire size is checked. */
 const sdkInputValidationDiagnostic = (
@@ -198,25 +230,9 @@ const presentOutputSchemasForToolsList = (
   } as JSONRPCMessage;
 };
 
-/** Release every transport-owned reference for a cancelled/completed request. */
-export const forgetPendingMcpRequest = (
-  pendingTools: Map<RequestId, string>,
-  pendingToolLists: Set<RequestId>,
-  pendingCompletions: Map<RequestId, AbortController>,
-  id: RequestId,
-  reason: CallerAbort | OwnerCancellation,
-): void => {
-  pendingTools.delete(id);
-  pendingToolLists.delete(id);
-  pendingCompletions.get(id)?.abort(reason);
-  pendingCompletions.delete(id);
-};
-
 export class ErrorEvidenceTransport extends ForwardingTransport {
-  private readonly pendingTools = new Map<RequestId, string>();
-  private readonly pendingValidation = new Map<RequestId, McpToolRequest>();
-  private readonly pendingToolLists = new Set<RequestId>();
-  private readonly pendingCompletions = new Map<RequestId, AbortController>();
+  /** Every accepted request, including methods with no other bookkeeping. */
+  private readonly inFlight = new Map<RequestId, InFlightMcpRequest>();
   private closing = false;
 
   private get recordEvidence(): EvidenceWriter["recordEvidence"] | undefined {
@@ -237,6 +253,8 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     private readonly outputPresentation: AdvertisedToolPresentation["output"],
     private readonly maximumInputElements: number,
     private readonly evidenceReferenceAlternatives: ReadonlySet<string>,
+    private readonly toolsListPageBudget: McpToolsListPageBudget,
+    private readonly currentAdvertisedTools: () => AdvertisedToolCatalog,
   ) {
     super(transport);
   }
@@ -245,76 +263,137 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     message: JSONRPCMessage,
     extra?: MessageExtraInfo,
   ): void {
-    // The pinned SDK classifies generic method schema failures as internal
-    // errors. Validate these wire requests with its canonical schemas before
-    // dispatch, leaving callback failures and negotiated-era checks to it.
     if (isJSONRPCRequest(message)) {
-      const schema = discoveryRequestSchema(message.method);
-      const result = schema?.["~standard"].validate(message);
-      if (result?.issues !== undefined) {
-        void this.send({
-          jsonrpc: "2.0",
-          id: message.id,
-          error: {
-            code: -32602,
-            message: `Invalid ${message.method} request: ${JSON.stringify(result.issues)}`,
-          },
-        }).catch((cause: unknown) =>
-          this.onerror?.(
-            cause instanceof Error ? cause : new Error(String(cause)),
-          ),
-        );
-        return;
-      }
+      this.receiveRequest(message, extra);
+      return;
     }
-    let validation: McpToolRequest | undefined;
-    if (
-      isJSONRPCRequest(message) &&
-      message.method === "tools/call" &&
-      typeof message.params?.["name"] === "string"
-    ) {
-      this.pendingTools.set(message.id, message.params["name"]);
-      validation = new McpToolRequest(message.id, message.params["name"]);
-      this.pendingValidation.set(message.id, validation);
-    }
-    if (isJSONRPCRequest(message) && message.method === "tools/list")
-      this.pendingToolLists.add(message.id);
-    if (isJSONRPCRequest(message) && message.method === "completion/complete")
-      this.pendingCompletions.set(message.id, new AbortController());
     // The SDK suppresses replies after cancellation, so send() cannot release
     // this bookkeeping. Keep transport authentication outside retained data.
     if (
       isJSONRPCNotification(message) &&
       message.method === "notifications/cancelled"
-    ) {
-      const id = message.params?.["requestId"];
-      if (typeof id === "string" || typeof id === "number") {
-        const cancellation = new CallerAbort(
-          "request-cancelled",
-          message.params?.["reason"],
-        );
-        this.pendingValidation.get(id)?.cancel(cancellation);
-        this.pendingValidation.delete(id);
-        forgetPendingMcpRequest(
-          this.pendingTools,
-          this.pendingToolLists,
-          this.pendingCompletions,
-          id,
-          cancellation,
-        );
-      }
+    )
+      this.cancelOwnedRequest(message);
+    this.onmessage?.(message, extra);
+  }
+
+  private receiveRequest(
+    message: JSONRPCRequest,
+    extra: MessageExtraInfo | undefined,
+  ): void {
+    const current = this.inFlight.get(message.id);
+    if (current !== undefined) {
+      this.rejectDuplicate(message.id);
+      return;
     }
-    const completion =
-      isJSONRPCRequest(message) && message.method === "completion/complete"
-        ? this.pendingCompletions.get(message.id)
-        : undefined;
-    if (validation !== undefined)
-      runMcpToolRequest(validation, () => this.onmessage?.(message, extra));
-    else if (completion === undefined) this.onmessage?.(message, extra);
-    else
-      currentRequestSignal.run(completion.signal, () =>
-        this.onmessage?.(message, extra),
+    const owner: InFlightMcpRequest = {
+      id: message.id,
+      tracksToolList: false,
+      replySettling: false,
+    };
+    // Reserve the id before any await. A prompt, ping, or other method with
+    // no method map is still in flight and must not share its id.
+    this.inFlight.set(message.id, owner);
+    // The pinned SDK classifies generic method schema failures as internal
+    // errors. Validate these wire requests with its canonical schemas before
+    // dispatch, leaving callback failures and negotiated-era checks to it.
+    const schema = discoveryRequestSchema(message.method);
+    const result = schema?.["~standard"].validate(message);
+    if (result?.issues !== undefined) {
+      void this.send({
+        jsonrpc: "2.0",
+        id: message.id,
+        error: {
+          code: -32602,
+          message: `Invalid ${message.method} request: ${JSON.stringify(result.issues)}`,
+        },
+      }).catch((cause: unknown) =>
+        this.onerror?.(
+          cause instanceof Error ? cause : new Error(String(cause)),
+        ),
       );
+      return;
+    }
+    this.observeMethod(owner, message);
+    currentInFlight.run(owner, () => this.dispatch(owner, message, extra));
+  }
+
+  /** Refuse the duplicate without touching the request that already owns the id. */
+  private rejectDuplicate(id: RequestId): void {
+    void this.transport
+      .send({
+        jsonrpc: "2.0",
+        id,
+        error: {
+          code: -32600,
+          message: `Invalid Request: Duplicate in-flight request ID ${String(id)}`,
+        },
+      })
+      .catch((cause: unknown) =>
+        this.onerror?.(
+          cause instanceof Error ? cause : new Error(String(cause)),
+        ),
+      );
+  }
+
+  private observeMethod(
+    owner: InFlightMcpRequest,
+    message: JSONRPCRequest,
+  ): void {
+    if (
+      message.method === "tools/call" &&
+      typeof message.params?.["name"] === "string"
+    ) {
+      const name = message.params["name"];
+      owner.toolName = name;
+      owner.validation = new McpToolRequest(message.id, name);
+      return;
+    }
+    if (message.method === "tools/list") {
+      owner.tracksToolList = true;
+      const params = message.params;
+      if (isRecord(params) && typeof params.cursor === "string")
+        owner.toolListCursor = params.cursor;
+      return;
+    }
+    if (message.method === "completion/complete")
+      owner.completion = new AbortController();
+  }
+
+  private dispatch(
+    owner: InFlightMcpRequest,
+    message: JSONRPCMessage,
+    extra: MessageExtraInfo | undefined,
+  ): void {
+    const deliver = (): void => this.onmessage?.(message, extra);
+    if (owner.validation !== undefined)
+      runMcpToolRequest(owner.validation, deliver);
+    else if (owner.completion === undefined) deliver();
+    else currentRequestSignal.run(owner.completion.signal, deliver);
+  }
+
+  private cancelOwnedRequest(message: JSONRPCNotification): void {
+    const id = message.params?.["requestId"];
+    if (typeof id !== "string" && typeof id !== "number") return;
+    const owner = this.inFlight.get(id);
+    if (owner === undefined) return;
+    const cancellation = new CallerAbort(
+      "request-cancelled",
+      message.params?.["reason"],
+    );
+    owner.validation?.cancel(cancellation);
+    owner.completion?.abort(cancellation);
+    // A reply already inside send() still owns this id. Dropping it would let
+    // that reply settle the request that reused the id.
+    if (!owner.replySettling) this.inFlight.delete(id);
+  }
+
+  private cancelAll(reason: CallerAbort | OwnerCancellation): void {
+    for (const owner of this.inFlight.values()) {
+      owner.validation?.cancel(reason);
+      owner.completion?.abort(reason);
+    }
+    this.inFlight.clear();
   }
 
   protected override closed(): void {
@@ -322,14 +401,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       this.closing || transportClosedByOwner(this.transport)
         ? OwnerCancellation.ownerClosed
         : new CallerAbort("client-disconnected");
-    this.pendingTools.clear();
-    for (const validation of this.pendingValidation.values())
-      validation.cancel(disconnected);
-    this.pendingValidation.clear();
-    this.pendingToolLists.clear();
-    for (const completion of this.pendingCompletions.values())
-      completion.abort(disconnected);
-    this.pendingCompletions.clear();
+    this.cancelAll(disconnected);
     this.onclose?.();
   }
 
@@ -338,14 +410,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     try {
       await this.transport.close();
     } finally {
-      this.pendingTools.clear();
-      for (const validation of this.pendingValidation.values())
-        validation.cancel(OwnerCancellation.ownerClosed);
-      this.pendingValidation.clear();
-      this.pendingToolLists.clear();
-      for (const completion of this.pendingCompletions.values())
-        completion.abort(OwnerCancellation.ownerClosed);
-      this.pendingCompletions.clear();
+      this.cancelAll(OwnerCancellation.ownerClosed);
     }
   }
 
@@ -358,27 +423,39 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       (typeof message.id === "string" || typeof message.id === "number")
         ? message.id
         : undefined;
-    const tool = id === undefined ? undefined : this.pendingTools.get(id);
-    const scopedRequest = currentMcpToolRequest();
-    const request =
-      id === undefined ||
-      (!isJSONRPCResultResponse(message) && !isJSONRPCErrorResponse(message))
-        ? undefined
-        : (this.pendingValidation.get(id) ??
-          (scopedRequest?.id === id ? scopedRequest : undefined));
-    const rewritesOutputSchemas =
-      id !== undefined && this.pendingToolLists.has(id);
+    const settlesRequest =
+      id !== undefined &&
+      (isJSONRPCResultResponse(message) || isJSONRPCErrorResponse(message));
+    const scopedOwner = currentInFlight.getStore();
+    // Prefer the request that produced this reply. The id map can already
+    // name a later request when this send continues after cancellation.
+    const owner = !settlesRequest
+      ? undefined
+      : scopedOwner?.id === id
+        ? scopedOwner
+        : scopedOwner === undefined
+          ? this.inFlight.get(id)
+          : undefined;
+    if (owner !== undefined && this.inFlight.get(owner.id) === owner)
+      owner.replySettling = true;
+    const tool = owner?.toolName;
+    const request = this.toolRequestForReply(id, owner);
+    const toolList =
+      owner?.tracksToolList === true
+        ? { cursor: owner.toolListCursor }
+        : undefined;
     try {
       const publish = async (): Promise<void> => {
         const recovered = this.recoverProtocolError(message, tool, request);
-        const advertised = rewritesOutputSchemas
-          ? presentOutputSchemasForToolsList(
-              recovered,
-              id,
-              this.outputPresentation,
-            )
-          : recovered;
-        await this.publish(advertised, tool, options, request);
+        const advertised =
+          toolList !== undefined && id !== undefined
+            ? presentOutputSchemasForToolsList(
+                recovered,
+                id,
+                this.outputPresentation,
+              )
+            : recovered;
+        await this.publish(advertised, tool, options, request, toolList);
       };
       const admission = this.currentAdmission();
       if (
@@ -411,22 +488,39 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
             tool,
             options,
             request,
+            toolList,
           );
       } else await publish();
     } finally {
       request?.finishPublication();
-      if (!isJSONRPCRequest(message) && id !== undefined) {
-        this.pendingValidation.delete(id);
-        // The reply settled the request, so REA ends any work it left behind.
-        forgetPendingMcpRequest(
-          this.pendingTools,
-          this.pendingToolLists,
-          this.pendingCompletions,
-          id,
-          OwnerCancellation.ownerClosed,
-        );
-      }
+      this.dropSettledOwner(id, owner);
     }
+  }
+
+  /**
+   * Finish the tool that owns this reply. A non-tool reply must not finish a
+   * tool merely because that tool's id is still, or newly, in the map.
+   */
+  private toolRequestForReply(
+    id: RequestId | undefined,
+    owner: InFlightMcpRequest | undefined,
+  ): McpToolRequest | undefined {
+    if (owner?.validation !== undefined) return owner.validation;
+    if (owner !== undefined || id === undefined) return undefined;
+    const scoped = currentMcpToolRequest();
+    return scoped?.id === id ? scoped : undefined;
+  }
+
+  private dropSettledOwner(
+    id: RequestId | undefined,
+    owner: InFlightMcpRequest | undefined,
+  ): void {
+    if (owner === undefined || id === undefined) return;
+    if (this.inFlight.get(id) !== owner) return;
+    this.inFlight.delete(id);
+    // The reply has left this process. Stop leftover completion work; an
+    // earlier cancellation already aborted the controller and keeps its reason.
+    owner.completion?.abort(OwnerCancellation.ownerClosed);
   }
 
   /** Keep the SDK wire envelope while removing private diagnostic carriers. */
@@ -435,18 +529,27 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     tool: string | undefined,
     options: TransportSendOptions | undefined,
     request: McpToolRequest | undefined,
+    toolList: { readonly cursor: string | undefined } | undefined,
   ): Promise<void> {
     request?.beginPublication();
+    // Measure the advertised schema presentation, not the canonical schemas
+    // retained by SDK registrations, before publishing a tools/list page.
+    const paged =
+      toolList !== undefined &&
+      isJSONRPCResultResponse(message) &&
+      message.id !== undefined
+        ? paginateToolsList(message, toolList.cursor, this.toolsListPageBudget)
+        : message;
     if (
-      !isJSONRPCResultResponse(message) ||
-      !isCallToolResult(message.result) ||
-      message.result.isError !== true
+      !isJSONRPCResultResponse(paged) ||
+      !isCallToolResult(paged.result) ||
+      paged.result.isError !== true
     ) {
-      await this.transport.send(message, options);
+      await this.transport.send(paged, options);
       return;
     }
     // Oversized recovery has already consumed this private structured carrier.
-    const { structuredContent: _diagnostic, ...result } = message.result;
+    const { structuredContent: _diagnostic, ...result } = paged.result;
     // SDK-built errors bypass ToolResultDelivery's target-content marker.
     const marked =
       tool !== undefined &&
@@ -457,7 +560,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
             _meta: { ...result._meta, ...TARGET_CONTENT_RESULT_META },
           }
         : result;
-    await this.transport.send({ ...message, result: marked }, options);
+    await this.transport.send({ ...paged, result: marked }, options);
   }
 
   private recoverError(
@@ -539,7 +642,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
           tool,
           targetContent,
           sdkDiagnostic,
-          this.pendingValidation.get(message.id)?.validation,
+          request?.validation,
         )
       : undefined;
     if (
@@ -799,16 +902,31 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     if (
       !isJSONRPCErrorResponse(recovered) ||
       tool === undefined ||
-      recovered.error.code !== -32602 ||
-      recovered.error.message !== `Tool ${tool} not found`
+      recovered.error.code !== -32602
     )
       return recovered;
+    // The SDK rejects a disabled registration before any handler runs. In a
+    // dynamic catalog that is an in-scope tool the caller has not loaded yet.
+    if (
+      recovered.error.message === `Tool ${tool} disabled` &&
+      this.currentAdvertisedTools().unloadedTools?.has(tool) === true
+    )
+      return {
+        ...recovered,
+        error: {
+          ...recovered.error,
+          message: formatUnloadedMcpToolMessage(tool),
+        },
+      };
+    if (recovered.error.message !== `Tool ${tool} not found`) return recovered;
     return {
       ...recovered,
       error: {
         ...recovered.error,
-        message:
-          "The requested MCP tool is not advertised by this REA server. Call tools/list, select an advertised tool, and retry; do not repeat the unknown tool name.",
+        message: formatUnknownMcpToolMessage(
+          tool,
+          this.currentAdvertisedTools(),
+        ),
       },
     };
   }

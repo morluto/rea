@@ -1,10 +1,9 @@
 import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { once } from "node:events";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { expect, it, vi } from "vitest";
-import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../../tests/fixtures/temporaryDirectory.js";
 import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 import * as artifactPaths from "../../resources/ArtifactPaths.js";
 import { BunStandaloneArtifactReader } from "../BunStandaloneArtifactReader.js";
@@ -19,18 +18,22 @@ import {
   elfAppendedBunPayload,
 } from "./BunStandalone.fixture.js";
 
+const writeAppendedBunGraph = (
+  prefix: string,
+  graph: Parameters<typeof bunModuleGraphPayload>[0],
+): Promise<string> =>
+  createTestTempFile(
+    prefix,
+    "app",
+    elfAppendedBunPayload(bunModuleGraphPayload(graph)),
+  );
+
 it.each(["close", "cancel"] as const)(
   "does not report a complete inventory after %s while iteration is paused",
   async (interruption) => {
-    const path = join(await createTestTempDirectory("rea-bun-paused-"), "app");
-    await writeFile(
-      path,
-      elfAppendedBunPayload(
-        bunModuleGraphPayload({
-          modules: [{ name: "main.js", contents: Buffer.from("body") }],
-        }),
-      ),
-    );
+    const path = await writeAppendedBunGraph("rea-bun-paused-", {
+      modules: [{ name: "main.js", contents: Buffer.from("body") }],
+    });
     const reader = new BunStandaloneArtifactReader(path);
     const controller = new AbortController();
     try {
@@ -50,20 +53,11 @@ it.each(["close", "cancel"] as const)(
 it.each([9, 12, 13])(
   "does not use a %i-module budget to resolve an ambiguous Bun layout",
   async (moduleCount) => {
-    const path = join(
-      await createTestTempDirectory("rea-bun-layout-budget-"),
-      "app",
-    );
     // 468 bytes admit thirteen 36-byte records and nine 52-byte records.
-    await writeFile(
-      path,
-      elfAppendedBunPayload(
-        bunModuleGraphPayload({
-          modules: [{ loader: 0, moduleFormat: 0 }],
-          tableLength: 468,
-        }),
-      ),
-    );
+    const path = await writeAppendedBunGraph("rea-bun-layout-budget-", {
+      modules: [{ loader: 0, moduleFormat: 0 }],
+      tableLength: 468,
+    });
     const limits = resolveArtifactReaderLimits({
       bun: { module_count: moduleCount },
     });
@@ -80,21 +74,12 @@ it.each([9, 12, 13])(
 );
 
 it("admits a unique nine-module layout at its exact budget", async () => {
-  const path = join(
-    await createTestTempDirectory("rea-bun-exact-layout-"),
-    "app",
-  );
-  await writeFile(
-    path,
-    elfAppendedBunPayload(
-      bunModuleGraphPayload({
-        modules: Array.from({ length: 9 }, (_, index) => ({
-          name: `module-${index}.js`,
-          contents: Buffer.from(`source-${index}`),
-        })),
-      }),
-    ),
-  );
+  const path = await writeAppendedBunGraph("rea-bun-exact-layout-", {
+    modules: Array.from({ length: 9 }, (_, index) => ({
+      name: `module-${index}.js`,
+      contents: Buffer.from(`source-${index}`),
+    })),
+  });
   const reader = new BunStandaloneArtifactReader(
     path,
     undefined,
@@ -116,19 +101,13 @@ it("admits a unique nine-module layout at its exact budget", async () => {
 });
 
 it("keeps duplicate and unsafe names distinct while extracting exact bytes", async () => {
-  const path = join(await createTestTempDirectory("rea-bun-reader-"), "app");
-  await writeFile(
-    path,
-    elfAppendedBunPayload(
-      bunModuleGraphPayload({
-        modules: [
-          { name: "/$bunfs/a.js", contents: Buffer.from("first") },
-          { name: "/$bunfs/a.js", contents: Buffer.from("second") },
-          { name: "../../escape", contents: Buffer.from("third") },
-        ],
-      }),
-    ),
-  );
+  const path = await writeAppendedBunGraph("rea-bun-reader-", {
+    modules: [
+      { name: "/$bunfs/a.js", contents: Buffer.from("first") },
+      { name: "/$bunfs/a.js", contents: Buffer.from("second") },
+      { name: "../../escape", contents: Buffer.from("third") },
+    ],
+  });
   const reader = new BunStandaloneArtifactReader(path);
   try {
     const entries = await collect(reader.entries());
@@ -164,7 +143,6 @@ it("keeps duplicate and unsafe names distinct while extracting exact bytes", asy
 });
 
 it("keeps exhausted Bun recognition distinct from a native ELF inventory and recovers the same carrier", async () => {
-  const path = join(await createTestTempDirectory("rea-bun-inventory-"), "app");
   const bytes = elfBunSection(
     bunPrefixedPayload(
       bunModuleGraphPayload({
@@ -172,7 +150,7 @@ it("keeps exhausted Bun recognition distinct from a native ELF inventory and rec
       }),
     ),
   );
-  await writeFile(path, bytes);
+  const path = await createTestTempFile("rea-bun-inventory-", "app", bytes);
   const rootSha256 = createHash("sha256").update(bytes).digest("hex");
   const scan = async (recognitionTableBytes: number) => {
     const scope = new ArtifactResourceScope();
@@ -263,12 +241,9 @@ it.each([
         stringTableSize,
       );
     }
-    const path = join(
-      await createTestTempDirectory("rea-bun-elf-section-"),
+    const path = await createTestTempFile(
+      "rea-bun-elf-section-",
       "app",
-    );
-    await writeFile(
-      path,
       declaration === "truncated section-header table"
         ? bytes.subarray(0, -1)
         : bytes,
@@ -293,15 +268,9 @@ async function collect<T>(values: AsyncIterable<T>): Promise<T[]> {
 }
 
 it("cancels buffered member bytes after production finishes", async () => {
-  const path = join(await createTestTempDirectory("rea-bun-buffered-"), "app");
-  await writeFile(
-    path,
-    elfAppendedBunPayload(
-      bunModuleGraphPayload({
-        modules: [{ name: "main.js", contents: Buffer.from("buffered") }],
-      }),
-    ),
-  );
+  const path = await writeAppendedBunGraph("rea-bun-buffered-", {
+    modules: [{ name: "main.js", contents: Buffer.from("buffered") }],
+  });
   const reader = new BunStandaloneArtifactReader(path);
   const controller = new AbortController();
   const reason = new Error("cancel buffered Bun member");
@@ -322,18 +291,9 @@ it("cancels buffered member bytes after production finishes", async () => {
 });
 
 it("allows an uncancelled inventory after a cancelled graph preparation", async () => {
-  const path = join(
-    await createTestTempDirectory("rea-bun-cancel-retry-"),
-    "app",
-  );
-  await writeFile(
-    path,
-    elfAppendedBunPayload(
-      bunModuleGraphPayload({
-        modules: [{ name: "/$bunfs/a.js", contents: Buffer.from("source") }],
-      }),
-    ),
-  );
+  const path = await writeAppendedBunGraph("rea-bun-cancel-retry-", {
+    modules: [{ name: "/$bunfs/a.js", contents: Buffer.from("source") }],
+  });
   const reader = new BunStandaloneArtifactReader(path);
   const controller = new AbortController();
   const reason = { stop: "first inventory" };
@@ -370,18 +330,9 @@ it("allows an uncancelled inventory after a cancelled graph preparation", async 
 });
 
 it("keeps another caller's in-flight inventory independent of cancelled preparation", async () => {
-  const path = join(
-    await createTestTempDirectory("rea-bun-concurrent-cancel-"),
-    "app",
-  );
-  await writeFile(
-    path,
-    elfAppendedBunPayload(
-      bunModuleGraphPayload({
-        modules: [{ name: "/$bunfs/a.js", contents: Buffer.from("source") }],
-      }),
-    ),
-  );
+  const path = await writeAppendedBunGraph("rea-bun-concurrent-cancel-", {
+    modules: [{ name: "/$bunfs/a.js", contents: Buffer.from("source") }],
+  });
   const reader = new BunStandaloneArtifactReader(path);
   const controller = new AbortController();
   const reason = { stop: "first inventory" };
@@ -427,18 +378,9 @@ it("keeps another caller's in-flight inventory independent of cancelled preparat
 });
 
 it("keeps an independent physical read failure when its caller also aborts", async () => {
-  const path = join(
-    await createTestTempDirectory("rea-bun-physical-failure-"),
-    "app",
-  );
-  await writeFile(
-    path,
-    elfAppendedBunPayload(
-      bunModuleGraphPayload({
-        modules: [{ name: "/$bunfs/a.js", contents: Buffer.from("source") }],
-      }),
-    ),
-  );
+  const path = await writeAppendedBunGraph("rea-bun-physical-failure-", {
+    modules: [{ name: "/$bunfs/a.js", contents: Buffer.from("source") }],
+  });
   const reader = new BunStandaloneArtifactReader(path);
   const controller = new AbortController();
   const failure = Object.assign(new Error("physical graph read failed"), {
@@ -466,22 +408,13 @@ it("keeps an independent physical read failure when its caller also aborts", asy
 });
 
 it("does not publish partially built entries when preparation is cancelled", async () => {
-  const path = join(
-    await createTestTempDirectory("rea-bun-partial-build-"),
-    "app",
-  );
-  await writeFile(
-    path,
-    elfAppendedBunPayload(
-      bunModuleGraphPayload({
-        modules: [
-          { name: "/$bunfs/a.js", contents: Buffer.from("a") },
-          { name: "/$bunfs/b.js", contents: Buffer.from("b") },
-          { name: "/$bunfs/c.js", contents: Buffer.from("c") },
-        ],
-      }),
-    ),
-  );
+  const path = await writeAppendedBunGraph("rea-bun-partial-build-", {
+    modules: [
+      { name: "/$bunfs/a.js", contents: Buffer.from("a") },
+      { name: "/$bunfs/b.js", contents: Buffer.from("b") },
+      { name: "/$bunfs/c.js", contents: Buffer.from("c") },
+    ],
+  });
   const reader = new BunStandaloneArtifactReader(path);
   const control = new BunStandaloneArtifactReader(path);
   const controller = new AbortController();
