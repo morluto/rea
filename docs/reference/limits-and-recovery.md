@@ -835,7 +835,11 @@ stays that count and reports `artifact.member_count` as the limit, with
 `parameter` unset. Raise the count with `update_analysis_settings`, or correct
 `REA_ARTIFACT_MEMBER_COUNT` for a CLI process. Android JNI library inventory
 uses the same session count. When that count stops the scan, the report stays
-partial and names the unexamined remainder.
+partial and names that count, the unexamined remainder, and recovery through
+`update_analysis_settings` or `REA_ARTIFACT_MEMBER_COUNT`.
+`inspect_analysis_settings` includes this setting for `identify_flutter_build`,
+`inspect_dart_aot`, `inspect_playwright_trace`, `inspect_web_network_capture`,
+and `inspect_android_jni_bindings`.
 
 Failures preserve `details.reader_limit` with the exact parameter, effective
 value, units, supported range, required value when known, next-call scope and

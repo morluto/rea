@@ -209,7 +209,22 @@ export const ANALYSIS_SETTINGS = {
     unit: "count",
     appliesAt: "next_operation",
     provider: "rea-artifact-graph",
-    operations: ["inspect_artifact", "inventory_artifact", "extract_artifact"],
+    relatedProviders: [
+      "flutter",
+      "rea-playwright-trace",
+      "web-network-capture",
+      "jadx",
+    ],
+    operations: [
+      "inspect_artifact",
+      "inventory_artifact",
+      "extract_artifact",
+      "identify_flutter_build",
+      "inspect_dart_aot",
+      "inspect_playwright_trace",
+      "inspect_web_network_capture",
+      "inspect_android_jni_bindings",
+    ],
   },
   "asar.max_listing_bytes": {
     updateMode: "runtime",
