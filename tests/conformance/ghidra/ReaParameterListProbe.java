@@ -23,10 +23,11 @@ import java.util.List;
 /**
  * Real x86-64 decoding, function signatures and decompilation. Two functions
  * keep Ghidra's default signature, one without and one with used argument
- * registers; three get user-defined int f(void), int f(...) and int f(int x)
- * signatures, as an analyst would author them. The production bridge must
- * report each HighFunction's parameter-list basis and varargs flag, with the
- * value-flow parameters matching the API boundary. The bytes are never executed.
+ * registers; four get user-defined int f(void), int f(...), int f(int x) and
+ * int f(int x, ...) signatures, as an analyst would author them. The production
+ * bridge must report each HighFunction's parameter-list basis and varargs flag,
+ * with the value-flow parameters matching the API boundary, and keep the named
+ * parameter's storage before an ellipsis. The bytes are never executed.
  */
 public class ReaParameterListProbe extends GhidraScript {
     @Override
@@ -46,9 +47,11 @@ public class ReaParameterListProbe extends GhidraScript {
         Function userVarargs = function(base.add(0x10));   // mov eax, 1; ret
         Function userOne = function(base.add(0x18));       // mov eax, 1; ret
         Function defaultUsed = function(base.add(0x20));   // lea eax, [rdi + rcx]; ret
+        Function userOneVarargs = function(base.add(0x28)); // mov eax, 1; ret
         author(userVoid, false);
         author(userVarargs, true);
         author(userOne, false, new ParameterImpl("x", IntegerDataType.dataType, currentProgram));
+        author(userOneVarargs, true, new ParameterImpl("x", IntegerDataType.dataType, currentProgram));
         require(defaultEmpty.getSignatureSource() == SourceType.DEFAULT &&
             defaultUsed.getSignatureSource() == SourceType.DEFAULT, "Default fixture signatures");
 
@@ -69,12 +72,17 @@ public class ReaParameterListProbe extends GhidraScript {
             check(bridge, decompile, boundary, flow, defaultEmpty, "recovered", false, 0);
             check(bridge, decompile, boundary, flow, userVoid, "signature", false, 0);
             check(bridge, decompile, boundary, flow, userVarargs, "signature", true, 0);
-            check(bridge, decompile, boundary, flow, userOne, "signature", false, 1);
+            JsonObject one = check(bridge, decompile, boundary, flow, userOne, "signature", false, 1);
             check(bridge, decompile, boundary, flow, defaultUsed, "recovered", false, -1);
+            // A named parameter before the ellipsis keeps its type-locked
+            // storage; only the variable arguments have none.
+            JsonObject oneVarargs = check(bridge, decompile, boundary, flow, userOneVarargs, "signature", true, 1);
+            require(parameterStorage(oneVarargs).equals(parameterStorage(one)),
+                "Fixed parameter storage before the ellipsis: " + parameterStorage(oneVarargs));
         } finally {
             ((DecompInterface) decompiler.get(bridge)).dispose();
         }
-        println("REA_PARAMETER_LIST_OK default=recovered void=signature varargs=variadic one=signature used=recovered");
+        println("REA_PARAMETER_LIST_OK default=recovered void=signature varargs=variadic one=signature used=recovered one_varargs=variadic");
     }
 
     private List<Instruction> instructions(Function function) {
@@ -103,7 +111,11 @@ public class ReaParameterListProbe extends GhidraScript {
             "Authored signature " + function.getSignature().getPrototypeString());
     }
 
-    private void check(Object bridge, Method decompile, Method boundary, Method flow,
+    private static String parameterStorage(JsonObject api) {
+        return api.getAsJsonArray("parameters").get(0).getAsJsonObject().get("storage").getAsString();
+    }
+
+    private JsonObject check(Object bridge, Method decompile, Method boundary, Method flow,
             Function function, String basis, boolean variadic, int parameters) throws Exception {
         DecompileResults results = (DecompileResults) invoke(decompile, bridge, function);
         JsonObject api = (JsonObject) invoke(boundary, bridge, function, results, instructions(function));
@@ -122,6 +134,7 @@ public class ReaParameterListProbe extends GhidraScript {
         require(values.get("available").getAsBoolean() &&
             values.getAsJsonArray("parameters").size() == count,
             "Value-flow parameters match the API boundary for " + label);
+        return api;
     }
 
     private static Method method(Object owner, String name, Class<?>... types)

@@ -99,10 +99,14 @@ const availableResidualUnknowns = (
       );
   }
   // The provider reports that the prototype is open, not where callers put
-  // the extra arguments, so no storage is claimed for them.
-  if (boundary.parameter_list?.variadic === true)
+  // the extra arguments, so no storage is claimed for them. Only a signature
+  // fixes how many parameters precede them; a recovered list may omit some.
+  const list = boundary.parameter_list;
+  if (list?.variadic === true)
     unknowns.push(
-      `Which arguments do callers pass after the ${String(boundary.parameters.length)} fixed parameter(s), and where are they stored?`,
+      list.basis === "signature"
+        ? `Which arguments do callers pass after the ${String(boundary.parameters.length)} fixed parameter(s), and where are they stored?`
+        : "How many fixed parameters precede the variable arguments, which arguments do callers pass, and where are they stored?",
     );
   for (const value of [boundary.return_type, ...boundary.parameters]) {
     if (value.confidence === "low")

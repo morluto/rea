@@ -167,6 +167,17 @@ describe("native API parameter lists", () => {
     expect(inspection.residual_unknowns).toContain(variadicUnknown);
   });
 
+  it("keeps the fixed-parameter count unknown for a recovered variadic list", () => {
+    const unknowns = projectNativeApiInspection(
+      withParameterList({ basis: "recovered", variadic: true }),
+    ).residual_unknowns;
+    // A recovered list may omit fixed parameters, so no count is claimed.
+    expect(unknowns).not.toContain(variadicUnknown);
+    expect(unknowns).toContain(
+      "How many fixed parameters precede the variable arguments, which arguments do callers pass, and where are they stored?",
+    );
+  });
+
   it.each([
     { basis: "signature", variadic: false },
     { basis: "recovered", variadic: false },
