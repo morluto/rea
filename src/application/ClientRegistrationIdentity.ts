@@ -34,6 +34,7 @@ import {
   msixPackagesDirectory,
   packagePrivateLauncherBlocker,
 } from "./MsixPackageStorage.js";
+import { installedReaPackageEntrypoint } from "./InstalledReaPackage.js";
 
 /** Package runners recognized for invocation guidance and legacy registrations. */
 type PackageRunner = "npx" | "bunx";
@@ -234,11 +235,19 @@ type EntrypointOwnership = Pick<
   "identity" | "installation"
 >;
 
-/** An owned absolute entry selects this installation. */
+/**
+ * Another installed REA package still owns the registration, so setup can
+ * refresh it; it does not select this installation. Unresolved paths stay unknown.
+ */
 const entrypointOwnership = (
   identity: ClientRegistrationCommandIdentity,
-): EntrypointOwnership =>
-  identity === "owned" ? { identity, installation: "current" } : { identity };
+  candidate: string,
+): EntrypointOwnership => {
+  if (identity === "owned") return { identity, installation: "current" };
+  if (identity === "foreign" && installedReaPackageEntrypoint(candidate))
+    return { identity: "owned", installation: "other" };
+  return { identity };
+};
 
 /** A direct launcher may be a native executable or a Node shebang script. */
 const directEntrypointIdentity = (
@@ -479,10 +488,11 @@ export interface ClientRegistrationCommandFacts {
   /** Selected absolute launcher/script path; excludes package and unresolved PATH commands. */
   readonly entrypoint: string | undefined;
   /**
-   * Present when an owned absolute launcher selects this installation
-   * (runtime and REA entry); absent when none was resolved.
+   * Whether an owned absolute launcher selects this installation (runtime and
+   * REA entry) or another installed REA package or runtime. Absent when no
+   * owned absolute launcher was resolved.
    */
-  readonly installation?: "current";
+  readonly installation?: "current" | "other";
   /** The fallback must reach the current interpreter without the shim's sibling. */
   readonly independentFallback?: boolean;
   readonly package:
@@ -548,6 +558,7 @@ const inspectDirectRegistrationCommand = (
         ? { identity: "unknown" }
         : entrypointOwnership(
             entrypointIdentity(shim.target, currentCommandPath),
+            shim.target,
           )),
       entrypoint: shim?.target,
       independentFallback:
@@ -576,9 +587,13 @@ const inspectDirectRegistrationCommand = (
       interpreter,
       process.execPath,
     );
+    // Another runtime does not select this installation, but it may still
+    // launch an installed REA package that setup can refresh.
     if (interpreterIdentity !== "owned")
       return {
-        identity: currentPathAvailable ? interpreterIdentity : "unknown",
+        ...(currentPathAvailable
+          ? entrypointOwnership(interpreterIdentity, entrypoint)
+          : { identity: "unknown" }),
         launch: "runtime_script",
         entrypoint: undefined,
         package: undefined,
@@ -592,6 +607,7 @@ const inspectDirectRegistrationCommand = (
         ? { identity: "unknown" }
         : entrypointOwnership(
             entrypointIdentity(selectedEntrypoint, currentCommandPath),
+            selectedEntrypoint,
           )),
       entrypoint: selectedEntrypoint,
       package: undefined,
@@ -617,6 +633,7 @@ const inspectDirectRegistrationCommand = (
         ...(currentPathAvailable
           ? entrypointOwnership(
               entrypointIdentity(managedTarget, currentCommandPath),
+              managedTarget,
             )
           : { identity: "unknown" }),
         entrypoint: managedTarget,
@@ -628,6 +645,7 @@ const inspectDirectRegistrationCommand = (
         ...(currentPathAvailable
           ? entrypointOwnership(
               directEntrypointIdentity(executable, currentCommandPath),
+              executable,
             )
           : { identity: "unknown" }),
         entrypoint: executable,

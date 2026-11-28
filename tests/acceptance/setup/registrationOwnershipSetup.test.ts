@@ -144,6 +144,132 @@ cliTest(
   },
 );
 
+/** Lay out a package with REA's CLI script shape and the given manifest. */
+const installPackage = async (
+  root: string,
+  manifest: Readonly<Record<string, unknown>>,
+): Promise<string> => {
+  const script = join(root, "scripts", "rea.mjs");
+  await mkdir(dirname(script), { recursive: true });
+  await writeFile(script, "");
+  await writeFile(join(root, "package.json"), JSON.stringify(manifest));
+  return script;
+};
+
+const reaManifest = { name: "rea-agents", bin: { rea: "scripts/rea.mjs" } };
+
+for (const runtime of ["current", "other"] as const)
+  cliTest(
+    `setup refreshes a launcher of another installed REA package (${runtime} runtime)`,
+    async ({ cli }) => {
+      const home = await createTestTempDirectory("rea-setup-other-install-");
+      const config = join(home, ".claude.json");
+      const script = await installPackage(
+        join(
+          home,
+          "npm-cache",
+          "_npx",
+          "af752b90",
+          "node_modules",
+          "rea-agents",
+        ),
+        reaManifest,
+      );
+      let command = process.execPath;
+      if (runtime === "other") {
+        command = join(home, "old-runtime", "node");
+        await mkdir(dirname(command), { recursive: true });
+        await writeFile(command, "");
+      }
+      const original = JSON.stringify({
+        mcpServers: {
+          rea: { command, args: [script, "mcp"], env: { CUSTOM: "keep" } },
+          peer: { command: "peer" },
+        },
+      });
+      await writeFile(config, original);
+      const environment = {
+        HOME: home,
+        USERPROFILE: home,
+        CLAUDE_CONFIG_DIR: home,
+      };
+      const doctor = await cli.run({
+        arguments: [
+          "doctor",
+          "--client",
+          "claude_code",
+          "--skill=false",
+          "--json",
+        ],
+        cwd: home,
+        environment,
+      });
+      expect(doctor.json).toMatchObject({
+        identity: {
+          registrations: expect.arrayContaining([
+            expect.objectContaining({
+              client: "claude_code",
+              command_identity: "owned",
+              state: "stale",
+              remediation: expect.stringContaining(
+                "another installed rea-agents package or runtime",
+              ),
+            }),
+          ]),
+        },
+      });
+      const result = await cli.run({
+        arguments: [...setup, "--yes"],
+        cwd: home,
+        environment,
+      });
+      expect(result.exitCode, result.stdout).toBe(0);
+      const refreshed = JSON.parse(await readFile(config, "utf8"));
+      expect(refreshed).toMatchObject({
+        mcpServers: {
+          rea: { command: process.execPath, env: { CUSTOM: "keep" } },
+          peer: { command: "peer" },
+        },
+      });
+      expect(refreshed.mcpServers.rea.args).not.toContain(script);
+      expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+    },
+  );
+
+for (const [label, root, manifest] of [
+  [
+    "another package name",
+    ["node_modules", "rea-agents"],
+    { ...reaManifest, name: "other-agents" },
+  ],
+  ["a source checkout", ["checkout", "rea-agents"], reaManifest],
+  [
+    "a different CLI script",
+    ["node_modules", "rea-agents"],
+    { ...reaManifest, bin: { rea: "scripts/other.mjs" } },
+  ],
+] as const)
+  cliTest(`setup keeps a launcher of ${label} foreign`, async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-setup-unproven-install-");
+    const config = join(home, ".claude.json");
+    const script = await installPackage(join(home, ...root), manifest);
+    const original = JSON.stringify({
+      mcpServers: { rea: { command: process.execPath, args: [script, "mcp"] } },
+    });
+    await writeFile(config, original);
+    const result = await cli.run({
+      arguments: [...setup, "--yes"],
+      cwd: home,
+      environment: { HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: home },
+    });
+    expect(result.exitCode, result.stdout).toBe(1);
+    expect(result.json).toMatchObject({
+      status: "needs_human",
+      remediation: expect.stringContaining("foreign ownership"),
+    });
+    expect(await readFile(config, "utf8")).toBe(original);
+  });
+
 for (const repeated of [false, true])
   cliTest(
     `OpenCode setup preserves foreign legacy fallback (shadowed=${repeated})`,
