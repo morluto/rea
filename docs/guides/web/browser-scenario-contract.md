@@ -4,8 +4,9 @@
 `browserScenarioSchema` through both MCP and the
 `capture-browser-scenario INPUT_JSON` CLI command. The request is declarative:
 it admits a fixed action vocabulary, explicit HTTP(S) targets, deterministic
-browser settings, explicit storage seeds, and provider-owned
-liveness deadlines. `INPUT_JSON` may be inline JSON or a JSON file path.
+browser settings, explicit storage seeds, optional per-action deadlines, and a
+configurable CDP command deadline. `INPUT_JSON` may be inline JSON or a JSON
+file path.
 
 The minimal request contains only browser launch/connect selection, `start_url`,
 and at least one `actions` entry. Launch `headless` defaults to `true` and can
@@ -36,10 +37,11 @@ that rejection does not roll back browser effects. REA removes its owned
 future-document scripts, restores live frame methods, then disconnects.
 Add secret declarations, storage seeds, and additional artifact or event
 capture only when needed. Missing environment-backed secrets fail as input errors before browser acquisition, naming the declaration and required variable. An explicitly set empty string is a resolved value. Action, secret, and storage counts are not capped.
-Duration, action, and navigation timeouts remain separate from CDP command
-deadlines. `command_timeout_ms` (default 20000; omit it to keep that default
-and leave it out of Evidence) bounds launch startup, the connect-over-CDP
-handshake, target lookup, environment commands, and storage CDP commands,
+Action `timeout_ms` and `wait_for_timeout.duration_ms` are caller-selected and
+remain separate from CDP command deadlines. `command_timeout_ms` (default 20000;
+omit it to keep that default and leave it out of Evidence) bounds launch
+startup, the connect-over-CDP handshake, target lookup, environment commands,
+and storage CDP commands,
 including replies from attached child targets. It also bounds the initial
 `start_url` navigation through the load event; a redirect or replacement
 navigation cannot leave startup waiting indefinitely. Set it in the scenario JSON.
