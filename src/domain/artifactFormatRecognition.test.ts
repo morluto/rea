@@ -312,7 +312,7 @@ it("does not claim JSON with nested or malformed Kubernetes audit fields", () =>
     expect(recognize(Buffer.from(line))).toBeUndefined();
 });
 
-it("recognizes complete top-level audit fields before a clipped request body", () => {
+it("seeks the remainder after seeing audit fields in a clipped JSON prefix", () => {
   const first = String.raw`{"auditID":"a","st\u0061ge":"RequestReceived","requestObject":{"message":"`;
   const document = Buffer.from(`${first}€"}}\n`);
   const clipped = document.subarray(0, Buffer.byteLength(first) + 1);
@@ -323,7 +323,7 @@ it("recognizes complete top-level audit fields before a clipped request body", (
       espFlashLayout: false,
     }),
   ).toMatchObject({
-    state: "recognized",
+    state: "needs-input",
     format: "kubernetes-audit-log",
   });
 });
