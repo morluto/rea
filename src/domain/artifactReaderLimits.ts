@@ -213,7 +213,6 @@ export const DEFAULT_ZIP_READER_LIMITS = {
 export const zipReaderLimitsSchema = z.strictObject({
   member_count: count,
 });
-export type ZipReaderLimits = z.output<typeof zipReaderLimitsSchema>;
 
 export const DEFAULT_TAR_READER_LIMITS = {
   extended_header_bytes: 1024 * 1024,
