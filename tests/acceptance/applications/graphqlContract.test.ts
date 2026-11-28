@@ -6,7 +6,10 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import {
+  connectLocalToolsMcp,
+  lazyLocalToolsMcp,
+} from "../../fixtures/localToolsMcp.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
@@ -145,6 +148,11 @@ const checkAdvertisedSchema = async (
     );
 };
 
+/** One stdio MCP session for the file; each test passes its own schema path. */
+const graphqlMcp = lazyLocalToolsMcp({
+  REA_MCP_TOOL_FAMILIES: "application,session",
+});
+
 cliTest(
   "imports unchanged SWAPI SDL through public CLI/MCP with exact bindings, selected replies and source-free retained pages",
   async ({ cli }) => {
@@ -157,9 +165,7 @@ cliTest(
     );
     await writeFile(path, bytes);
     await writeFile(operationsPath, operations);
-    const { client, call } = await connectLocalToolsMcp({
-      REA_MCP_TOOL_FAMILIES: "application,session",
-    });
+    const { client, call } = await graphqlMcp();
     const input = {
       path,
       format: "graphql-sdl",
@@ -293,9 +299,7 @@ cliTest(
       operations_path = join(root, "queries.graphql");
     await writeFile(path, "type Query { value: String value: Int }");
     await writeFile(operations_path, "query Q { value ...Missing }");
-    const { call } = await connectLocalToolsMcp({
-      REA_MCP_TOOL_FAMILIES: "application,session",
-    });
+    const { call } = await graphqlMcp();
     const result = await call("inspect_api_contract", {
       path,
       format: "graphql-sdl",
@@ -368,9 +372,7 @@ cliTest(
     const path = join(root, "malformed.graphql");
     const text = 'type Query { field: "https://u:p@host/path" }';
     await writeFile(path, text);
-    const { call } = await connectLocalToolsMcp({
-      REA_MCP_TOOL_FAMILIES: "application,session",
-    });
+    const { call } = await graphqlMcp();
     const response = await call("inspect_api_contract", {
       path,
       format: "graphql-sdl",
@@ -483,9 +485,7 @@ cliTest(
     });
     expect(cliAdmitted.exitCode, cliAdmitted.stderr).toBe(0);
 
-    const { call } = await connectLocalToolsMcp({
-      REA_MCP_TOOL_FAMILIES: "application,session",
-    });
+    const { call } = await graphqlMcp();
     const mcpRefused = await call("inspect_api_contract", {
       path,
       format: "graphql-sdl",
