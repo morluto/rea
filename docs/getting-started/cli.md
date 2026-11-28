@@ -58,7 +58,9 @@ is supported by the command.
 Command options use the kebab-case spelling that `rea <command> --help`
 lists, such as `--max-rows`. The camelCase spelling of an option, such as
 `--maxRows`, fails with `PARSE_ERROR` and names the documented flag:
-`Unknown flag: --maxRows. Did you mean --max-rows?`
+`Unknown flag: --maxRows. Did you mean --max-rows?` Other unknown flags,
+missing flag values and surplus positional arguments also fail with
+`PARSE_ERROR` before the command runs.
 
 For a numeric option whose `--schema` also accepts decimal strings, the string
 branch carries the same numeric range as the integer branch, so a client that

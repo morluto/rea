@@ -506,10 +506,14 @@ describe("Command-owned JSON Lines parser diagnostics", () => {
         });
         await stream.output.finish();
         expect(status).toBe(1);
-        const diagnostic = {
-          code: extra.length === 0 ? "VALIDATION_ERROR" : "UNKNOWN",
-          message: expect.any(String),
-        };
+        const diagnostic =
+          extra.length === 0
+            ? { code: "VALIDATION_ERROR", message: expect.any(String) }
+            : {
+                code: "PARSE_ERROR",
+                message: expect.any(String),
+                retryable: false,
+              };
         expect(lines(stream.text())).toEqual([
           expect.objectContaining({
             $rea: "jsonl/v1",

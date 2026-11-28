@@ -4,7 +4,14 @@ import { promisify } from "node:util";
 const graph = {
   target_sha256: "a".repeat(64),
   seed: "0x1000",
-  procedures: [],
+  procedures: [
+    {
+      address: "0x1000",
+      evidence_id: "ev_" + "b".repeat(64),
+      provider: "ghidra",
+      analysis_profile_digest: "c".repeat(64),
+    },
+  ],
   nodes: [
     {
       id: "c",
@@ -60,6 +67,7 @@ const evidence = {
     },
   },
   normalized_result: graph,
+  evidence_links: ["ev_" + "b".repeat(64)],
 };
 
 /** Shared stand-in state for one native verifier cleanup process. */

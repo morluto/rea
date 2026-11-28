@@ -1,3 +1,4 @@
+import { artifactComparisonResultSchema } from "../../src/domain/artifactComparison.js";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -18,6 +19,58 @@ import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
 } from "../../src/domain/artifactGraph.js";
+
+cliTest(
+  "compares the stored TAR symlink destination and permissions",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-tar-link-compare-");
+    const left = join(directory, "left.tar");
+    const right = join(directory, "right.tar");
+    const link = {
+      name: "current",
+      type: "2",
+      linkname: "",
+      mode: 0o777,
+    };
+    await writeFile(left, tarFixture([link]));
+    const compare = async (other: string) => {
+      const result = await cli.run({
+        arguments: [
+          "compare-artifacts",
+          JSON.stringify({
+            left: { kind: "path", path: left },
+            right: { kind: "path", path: other },
+          }),
+          "--json",
+        ],
+      });
+      expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+      return artifactComparisonResultSchema.parse(
+        parseEvidence(result.json).normalized_result,
+      );
+    };
+    expect(await compare(left)).toMatchObject({
+      status: "unchanged",
+      changes: [],
+    });
+    await writeFile(right, tarFixture([{ ...link, linkname: "target-b" }]));
+    expect((await compare(right)).changes).toContainEqual(
+      expect.objectContaining({
+        logical_path: "current",
+        classification: "changed",
+        dimensions: ["content"],
+      }),
+    );
+    await writeFile(right, tarFixture([{ ...link, mode: 0o755 }]));
+    expect((await compare(right)).changes).toContainEqual(
+      expect.objectContaining({
+        logical_path: "current",
+        classification: "changed",
+        dimensions: ["metadata"],
+      }),
+    );
+  },
+);
 
 cliTest.for([
   {

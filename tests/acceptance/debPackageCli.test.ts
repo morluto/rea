@@ -9,6 +9,7 @@ import { debPackageSchema } from "../../src/domain/deb/debPackage.js";
 import {
   debPackageFixture,
   notArBytes,
+  paxRecord,
 } from "../../src/deb/DebPackage.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -140,6 +141,85 @@ cliTest(
       present: 2,
       missing_from_inventory: 0,
       missing_from_md5sums: 0,
+    });
+  },
+);
+
+cliTest(
+  "keeps length-delimited PAX text distinct from NUL-terminated header fields",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-deb-pax-nul-");
+    const path = join(root, "nul.deb");
+    const bytes = debPackageFixture({
+      controlEntries: [
+        {
+          name: "./control",
+          content: "Package: actual\nVersion: 1\nArchitecture: all\n",
+        },
+        {
+          name: "local",
+          type: "x",
+          content: paxRecord("path", "./control\0suffix"),
+        },
+        {
+          name: "./header",
+          content: "Package: spoofed\nVersion: 1\nArchitecture: all\n",
+        },
+      ],
+      dataEntries: [
+        {
+          name: "global",
+          type: "g",
+          content: Buffer.concat([
+            paxRecord("uname", "alice\0suffix"),
+            paxRecord("gname", "staff\0suffix"),
+          ]),
+        },
+        {
+          name: "local",
+          type: "x",
+          content: Buffer.concat([
+            paxRecord("path", "./one\0suffix"),
+            paxRecord("linkpath", "target\0suffix"),
+          ]),
+        },
+        { name: "./header-link", type: "2", linkname: "header-target" },
+        {
+          name: "local",
+          type: "x",
+          content: paxRecord("path", "./one\0other"),
+        },
+        { name: "./header-file", content: "payload" },
+      ],
+    });
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-deb-package", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = completeDebEvidenceSchema.parse(result.json);
+    expect(evidence.normalized_result).toMatchObject({
+      artifact: {
+        path,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      },
+      control: { package: "actual" },
+      data_entries: [
+        {
+          path: "one\0suffix",
+          type: "symlink",
+          link_target: "target\0suffix",
+          user: "alice\0suffix",
+          group: "staff\0suffix",
+        },
+        {
+          path: "one\0other",
+          type: "file",
+          size: 7,
+          user: "alice\0suffix",
+          group: "staff\0suffix",
+        },
+      ],
     });
   },
 );

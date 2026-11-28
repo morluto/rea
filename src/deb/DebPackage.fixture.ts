@@ -304,3 +304,15 @@ export const truncatedAfterDebianBinaryBytes = (): Buffer => {
   const header = arHeader("control.tar.gz", 64);
   return Buffer.concat([prefix, header, Buffer.from("short")]);
 };
+
+/** One byte-counted PAX record, including its decimal length and newline. */
+export const paxRecord = (key: string, value: string | Uint8Array): Buffer => {
+  const body = Buffer.concat([
+    Buffer.from(` ${key}=`, "utf8"),
+    typeof value === "string" ? Buffer.from(value, "utf8") : value,
+    Buffer.from("\n", "utf8"),
+  ]);
+  let length = body.length + 1;
+  while (String(length).length + body.length !== length) length += 1;
+  return Buffer.concat([Buffer.from(String(length), "utf8"), body]);
+};

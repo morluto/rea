@@ -1,8 +1,9 @@
 $ rea inspect-byte-entropy <workspace>/sample.bin --block-size
 exit: 1
 --- stdout
-code: UNKNOWN
+code: PARSE_ERROR
 message: "Missing value for flag: --block-size"
+retryable: false
 <end>
 --- stderr
 <end>
