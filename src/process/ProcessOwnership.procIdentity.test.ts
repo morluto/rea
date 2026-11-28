@@ -654,3 +654,53 @@ it.each([
     }
   },
 );
+
+it.each([
+  ["status", "ENOENT", "exited"],
+  ["status", "ENOENT", "reused"],
+  ["generation", "ESRCH", "exited"],
+  ["generation", "ESRCH", "reused"],
+] as const)(
+  "does not report credentials as readable when the %s read sees %s and the PID was %s",
+  async (read, code, probe) => {
+    const host = createSystemProcessOwnershipHost("linux", {});
+    let statReads = 0;
+    filesystem.readFile.mockImplementation(async (path) => {
+      if (String(path) === "/proc/42/status") {
+        if (read === "status") throw filesystemError(code);
+        return "Uid:\t1010\t1010\t1010\t1010\nGid:\t1010\t1010\t1010\t1010\n";
+      }
+      if (String(path) !== "/proc/42/stat")
+        throw new Error(`unexpected path: ${String(path)}`);
+      statReads += 1;
+      if (statReads > 1) throw filesystemError(code);
+      return procStat(100);
+    });
+    filesystem.stat.mockResolvedValue({ uid: 1010 } as never);
+    const signalProbe = vi.spyOn(process, "kill").mockImplementation(() => {
+      if (probe === "reused") return true;
+      throw filesystemError("ESRCH");
+    });
+
+    try {
+      const identities = await withCaller(1000, 1000, async () =>
+        host.processIdentities?.([entry], undefined, new Set([entry.pid])),
+      );
+
+      // A credential-less readable identity would hide the foreign UID.
+      expect(identities?.get(entry.pid)).toEqual(
+        probe === "exited"
+          ? { state: "absent", reason: "not-found-in-caller-pid-namespace" }
+          : {
+              state: "unavailable",
+              reason: "proc_stat_missing_but_process_signal_probe_succeeded",
+            },
+      );
+      expect(signalProbe).toHaveBeenCalledExactlyOnceWith(entry.pid, 0);
+    } finally {
+      signalProbe.mockRestore();
+      filesystem.stat.mockReset();
+      filesystem.stat.mockRejectedValue(filesystemError("ENOENT"));
+    }
+  },
+);
