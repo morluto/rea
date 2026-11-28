@@ -5,7 +5,11 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { buildLabviewRsrc } from "../../fixtures/labview/rsrc.js";
+import {
+  buildLabviewRsrc,
+  labviewXor8320,
+  labviewZipArchive,
+} from "../../fixtures/labview/rsrc.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -62,7 +66,13 @@ describe("inspect_labview_artifact delivery", () => {
     expect(summary.normalized_result).toMatchObject({
       kind: "summary",
       parent_operation: "inspect_labview_artifact",
-      summary: { block_count: 3, section_count: 5 },
+      summary: {
+        block_count: 3,
+        section_count: 5,
+        program_tree_listed: false,
+        program_tree_entry_count: null,
+        program_tree_total_bytes: null,
+      },
     });
     expect(summary.normalized_result).not.toHaveProperty("blocks");
     const parentId = summary.evidence_links[0];
@@ -138,6 +148,24 @@ describe("inspect_labview_artifact delivery", () => {
       coverage: { total: 5 },
     });
 
+    // No LVzp: the program tree was never listed, so its page is unavailable,
+    // not an empty collection.
+    const treeRes = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: { kind: "retained-evidence", evidence_id: parentId },
+        view: { kind: "labview-artifact", collection: "program_tree" },
+      },
+    });
+    expect(treeRes.isError).not.toBe(true);
+    expect(
+      (treeRes.structuredContent as { normalized_result: unknown })
+        .normalized_result,
+    ).toMatchObject({
+      items: [],
+      coverage: { status: "unavailable", total: null, exhausted: false },
+    });
+
     const completeRes = await client.callTool({
       name: "inspect_labview_artifact",
       arguments: { path, detail: "complete" },
@@ -151,5 +179,123 @@ describe("inspect_labview_artifact delivery", () => {
       "DFDS",
       "LIvi",
     ]);
+  });
+
+  it("summarizes and pages the embedded program tree from retained Evidence", async () => {
+    const dir = await createTestTempDirectory("rea-labview-tree-mcp-");
+    const path = join(dir, "tree.vi");
+    await writeFile(
+      path,
+      buildLabviewRsrc([
+        {
+          ident: "LVzp",
+          sections: [
+            labviewXor8320(
+              labviewZipArchive([
+                { name: "a.vi", content: Buffer.from("1") },
+                { name: "b/c.vi", content: Buffer.from("22") },
+              ]),
+            ),
+          ],
+        },
+      ]),
+    );
+    const client = await connect();
+
+    const summaryRes = await client.callTool({
+      name: "inspect_labview_artifact",
+      arguments: { path, detail: "summary" },
+    });
+    expect(summaryRes.isError).not.toBe(true);
+    const summary = summaryRes.structuredContent as {
+      evidence_links: string[];
+      normalized_result: Record<string, unknown>;
+    };
+    expect(summary.normalized_result).toMatchObject({
+      summary: {
+        program_tree_listed: true,
+        program_tree_entry_count: 2,
+        program_tree_total_bytes: 3,
+      },
+    });
+    const parentId = summary.evidence_links[0];
+
+    const pageRes = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: { kind: "retained-evidence", evidence_id: parentId },
+        view: {
+          kind: "labview-artifact",
+          collection: "program_tree",
+          offset: 1,
+          limit: 1,
+        },
+      },
+    });
+    expect(pageRes.isError).not.toBe(true);
+    expect(
+      (pageRes.structuredContent as { normalized_result: unknown })
+        .normalized_result,
+    ).toMatchObject({
+      items: [{ name: "b/c.vi", bytes: 2, source_index: 1 }],
+      coverage: { total: 2 },
+    });
+  });
+
+  it("bounds a program-tree page by serialized bytes", async () => {
+    const longName = "n".repeat(65_535);
+    const members = Array.from({ length: 17 }, () => ({
+      name: longName,
+      content: Buffer.alloc(0),
+    }));
+    const dir = await createTestTempDirectory("rea-labview-tree-bytes-");
+    const path = join(dir, "tree.vi");
+    await writeFile(
+      path,
+      buildLabviewRsrc([
+        { ident: "LVzp", sections: [labviewZipArchive(members)] },
+      ]),
+    );
+    const client = await connect();
+
+    const summaryRes = await client.callTool({
+      name: "inspect_labview_artifact",
+      arguments: { path, detail: "summary" },
+    });
+    expect(summaryRes.isError).not.toBe(true);
+    const parentId = (
+      summaryRes.structuredContent as { evidence_links: string[] }
+    ).evidence_links[0];
+
+    const pageRes = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: { kind: "retained-evidence", evidence_id: parentId },
+        view: {
+          kind: "labview-artifact",
+          collection: "program_tree",
+          offset: 0,
+          limit: 64,
+        },
+      },
+    });
+    expect(pageRes.isError).not.toBe(true);
+    const page = (
+      pageRes.structuredContent as {
+        normalized_result: {
+          items: unknown[];
+          coverage: {
+            total: number;
+            next_offset: number | null;
+            exhausted: boolean;
+          };
+        };
+      }
+    ).normalized_result;
+    // 17 names of 65,535 bytes cannot share one 1 MiB page.
+    expect(page.items.length).toBeGreaterThan(0);
+    expect(page.items.length).toBeLessThan(17);
+    expect(page.coverage).toMatchObject({ total: 17, exhausted: false });
+    expect(page.coverage.next_offset).toBe(page.items.length);
   });
 });

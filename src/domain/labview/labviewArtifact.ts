@@ -48,6 +48,34 @@ export const labviewVersionCoverageSchema = z.enum([
   "unknown",
 ]);
 
+/** One file member of the embedded program-tree ZIP (`LVzp`). */
+export const labviewProgramTreeMemberSchema = z.strictObject({
+  /** Path exactly as the ZIP central directory records it. */
+  name: z.string(),
+  /** Uncompressed bytes the central directory declares. */
+  bytes: count,
+  /** Stored bytes the central directory declares. */
+  stored_bytes: count,
+  /** ZIP compression method, preserved as declared. */
+  method: z.number().int().nonnegative(),
+  /** Whether the entry declares ZIP encryption. */
+  encrypted: z.boolean(),
+  /**
+   * Recorded name bytes as hex when the ZIP declares no encoding and the name
+   * is not ASCII, so a CP437 fallback is not presented as exact; null otherwise.
+   */
+  raw_name_hex: z.string().nullable(),
+});
+
+/** The embedded program tree's member inventory; contents are not extracted. */
+export const labviewProgramTreeSchema = z.strictObject({
+  /** File members in the archive; directory entries are omitted. */
+  entry_count: count,
+  /** Sum of the members' declared uncompressed sizes. */
+  total_bytes: count,
+  members: z.array(labviewProgramTreeMemberSchema),
+});
+
 /** One static RSRC observation: container facts and the block inventory. */
 export const labviewArtifactSchema = z.strictObject({
   artifact: z.strictObject({
@@ -81,6 +109,11 @@ export const labviewArtifactSchema = z.strictObject({
   block_diagram: labviewPresenceSchema,
   /** Whether a front-panel heap block (FPH*) is present. */
   front_panel: labviewPresenceSchema,
+  /**
+   * The embedded program tree's ZIP members, when one was decoded. Evidence
+   * saved before this field existed reads as `null`, not as a parse failure.
+   */
+  program_tree: labviewProgramTreeSchema.nullable().default(null),
   blocks: z.array(labviewBlockSchema),
   limitations: z.array(z.string()),
 });

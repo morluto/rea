@@ -1,6 +1,7 @@
 import { crc32 } from "node:zlib";
 
 import { BinaryReader } from "../binaryContainer.js";
+import type { ZipEndOfCentralDirectory } from "../zipEndOfCentralDirectory.js";
 import {
   ZIP_CLASSIC_DIRECTORY_LIMITS,
   ZIP64_END,
@@ -18,6 +19,8 @@ import { readZipCentralExtent } from "../zip/zipCentralHeader.js";
 import { ZIP_EXTRA_FIELD, lastZipExtraField } from "../zip/zipExtraFields.js";
 
 const UTF8_NAME = 0x800;
+/** Aggregate central-record reads one candidate-resolution pass may spend. */
+export const MAX_CANDIDATE_RECORDS = 1_048_576;
 const UNIX_TYPE = 0o170000;
 const UNIX_DIRECTORY = 0o040000;
 const MSDOS_DIRECTORY = 0x10;
@@ -35,11 +38,36 @@ export interface ZipDirectory {
   readonly count: number;
 }
 
-/** Where the directory ends, how long it is and the offset it declares, from the end record and any Zip64 one. */
-const directoryEnd = (reader: BinaryReader) => {
-  const found = zipEndOfCentralDirectoryCandidates(reader.bytes).next();
-  if (found.done === true) return undefined;
-  const eocd = found.value;
+const MAX_ZIP64_SEARCH_BYTES = 1_048_576;
+
+/** Find a complete variable-length Zip64 end record ending at the locator. */
+const findZip64End = (
+  reader: BinaryReader,
+  locatorOffset: number,
+): number | undefined => {
+  const lowest = Math.max(0, locatorOffset - MAX_ZIP64_SEARCH_BYTES);
+  for (let at = locatorOffset - ZIP64_END.fixedBytes; at >= lowest; at -= 1) {
+    if (reader.u32(at) !== ZIP64_END.signature) continue;
+    const record = readZip64DirectoryRecord(reader, at, locatorOffset);
+    if (record.ok && record.value.end === locatorOffset) return at;
+  }
+  return undefined;
+};
+
+/** Where the directory ends, how long it is and the offset it declares, from one end record and any Zip64 one. */
+const directoryEnd = (
+  reader: BinaryReader,
+  eocd: ZipEndOfCentralDirectory,
+  searchZip64: boolean,
+):
+  | {
+      end: number;
+      size: number;
+      declaredOffset: number;
+      entries: bigint;
+      zip64: boolean;
+    }
+  | undefined => {
   const end = eocd.offset;
   const { totalEntries, directorySize, directoryOffset } = eocd;
   const classic =
@@ -54,14 +82,22 @@ const directoryEnd = (reader: BinaryReader) => {
   const locatorOffset = end - ZIP64_LOCATOR.bytes;
   // Like Python's zipfile, follow a locator whether or not the classic record defers to it.
   const locator = readZip64Locator(reader, locatorOffset);
-  if (locator === undefined) return classic;
+  if (locator === undefined)
+    return classic === undefined ? undefined : { ...classic, zip64: false };
   const declared = locator.recordOffset;
   const fallback = locatorOffset - ZIP64_END.fixedBytes;
-  // Keep the fixed-record fallback for archives with an unadjusted prepended offset.
-  for (const at of [
+  const probes = [
     declared <= BigInt(fallback) ? Number(declared) : -1,
     fallback,
-  ]) {
+  ];
+  // A prepended archive's locator offset omits the prefix, and a variable
+  // extensible sector moves the fixed fields; find the complete record.
+  if (searchZip64) {
+    const searched = findZip64End(reader, locatorOffset);
+    if (searched !== undefined && !probes.includes(searched))
+      probes.push(searched);
+  }
+  for (const at of probes) {
     const record = readZip64DirectoryRecord(reader, at, locatorOffset);
     if (!record.ok || record.value.end !== locatorOffset) continue;
     if (
@@ -76,6 +112,7 @@ const directoryEnd = (reader: BinaryReader) => {
       size: Number(record.value.directorySize),
       declaredOffset: Number(record.value.directoryOffset),
       entries: record.value.totalEntries,
+      zip64: true,
     };
   }
   // Keep the classic values for a stray locator when the classic record is complete.
@@ -84,7 +121,8 @@ const directoryEnd = (reader: BinaryReader) => {
     totalEntries === limits.count ||
     directorySize === limits.size ||
     directoryOffset === limits.offset;
-  return deferred ? undefined : classic;
+  if (deferred || classic === undefined) return undefined;
+  return { ...classic, zip64: false };
 };
 
 /** Where one record's name and extra field lie in the archive, and its flags. */
@@ -147,30 +185,30 @@ const endsInSlash = (
   }
 };
 
-/**
- * Read an archive's central directory a record at a time, keeping the first
- * `keep` file entries' records and counting the rest, so no more than those is
- * ever parsed into entries. Directories are told apart as zip.js tells them: a
- * final slash, a Unix directory mode, or the MS-DOS attribute. Undefined when
- * the directory cannot be found or a record in it is malformed.
- */
-export const scanZipDirectory = (
+/** Read one resolved directory extent a record at a time. */
+const scanAt = (
+  reader: BinaryReader,
   bytes: Uint8Array,
+  located: {
+    readonly end: number;
+    readonly size: number;
+    readonly declaredOffset: number;
+    readonly entries: bigint;
+  },
   keep: number,
+  budget: { remaining: number; exhausted: boolean },
 ): ZipDirectory | undefined => {
-  const reader = new BinaryReader(
-    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
-    true,
-    "zip",
-  );
-  const located = directoryEnd(reader);
-  if (located === undefined) return undefined;
   const start = located.end - located.size;
   if (start < 0) return undefined;
   const records: Uint8Array[] = [];
   let count = 0;
   let seen = 0;
   for (let at = start; at < located.end;) {
+    if (budget.remaining <= 0) {
+      budget.exhausted = true;
+      return undefined;
+    }
+    budget.remaining -= 1;
     const extent = readZipCentralExtent(reader, at, located.end);
     if (!extent.ok) return undefined;
     const { name, extra, comment, next } = extent.value;
@@ -195,6 +233,98 @@ export const scanZipDirectory = (
   }
   if (BigInt(seen) !== located.entries) return undefined;
   return { start, declaredOffset: located.declaredOffset, records, count };
+};
+
+/** Why the shared reader could not return one directory. */
+export type ZipDirectoryFailure =
+  | "ambiguous"
+  | "limit"
+  | "malformed"
+  | "missing";
+
+export type ZipDirectoryScan =
+  | { readonly ok: true; readonly directory: ZipDirectory }
+  | { readonly ok: false; readonly reason: ZipDirectoryFailure };
+
+/**
+ * Resolve end records until one describes a complete directory. Each candidate
+ * is admitted against its own declared extent, so a decoy inside a comment is
+ * skipped; a Zip64 layout is more specific than a classic one and wins over
+ * it, while two equally specific layouts are ambiguous.
+ */
+export const scanZipDirectoryResult = (
+  bytes: Uint8Array,
+  keep: number,
+): ZipDirectoryScan => {
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "zip",
+  );
+  let found: ZipDirectory | undefined;
+  let foundZip64 = false;
+  let classicAmbiguous = false;
+  let sawCandidate = false;
+  let candidateIndex = 0;
+  // Several candidates can share a long prefix; bound the aggregate reads.
+  const budget = { remaining: MAX_CANDIDATE_RECORDS, exhausted: false };
+  for (const eocd of zipEndOfCentralDirectoryCandidates(reader.bytes)) {
+    sawCandidate = true;
+    const located = directoryEnd(reader, eocd, candidateIndex === 0);
+    candidateIndex += 1;
+    if (located === undefined) continue;
+    const parsed = scanAt(reader, bytes, located, keep, budget);
+    if (parsed === undefined) continue;
+    if (found === undefined) {
+      found = parsed;
+      foundZip64 = located.zip64;
+      continue;
+    }
+    // A Zip64 declaration is more specific than a classic decoy.
+    if (located.zip64 && !foundZip64) {
+      found = parsed;
+      foundZip64 = true;
+      classicAmbiguous = false;
+      continue;
+    }
+    if (!located.zip64 && foundZip64) continue;
+    if (located.zip64 && foundZip64) return { ok: false, reason: "ambiguous" };
+    // Two classic layouts: defer, because a later Zip64 layout wins.
+    classicAmbiguous = true;
+  }
+  // An exhausted budget may hide the real candidate behind a provisional
+  // decoy, so refuse rather than report that decoy as the archive.
+  if (budget.exhausted) return { ok: false, reason: "limit" };
+  if (foundZip64 && found !== undefined) return { ok: true, directory: found };
+  if (classicAmbiguous) return { ok: false, reason: "ambiguous" };
+  if (found !== undefined) return { ok: true, directory: found };
+  return { ok: false, reason: sawCandidate ? "malformed" : "missing" };
+};
+
+/**
+ * Read an archive's central directory a record at a time, keeping the first
+ * `keep` file entries' records and counting the rest, so no more than those is
+ * ever parsed into entries. Directories are told apart as zip.js tells them: a
+ * final slash, a Unix directory mode, or the MS-DOS attribute. Undefined when
+ * the directory cannot be found, is ambiguous, or a record in it is malformed.
+ */
+export const scanZipDirectory = (
+  bytes: Uint8Array,
+  keep: number,
+): ZipDirectory | undefined => {
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "zip",
+  );
+  const first = zipEndOfCentralDirectoryCandidates(reader.bytes).next();
+  if (first.done === true) return undefined;
+  const located = directoryEnd(reader, first.value, true);
+  if (located === undefined) return undefined;
+  return scanAt(reader, bytes, located, keep, {
+    remaining: Number.MAX_SAFE_INTEGER,
+    exhausted: false,
+  });
 };
 
 /** The kept records and an end record for them alone, which follow the entries in the archive a reader is given. */

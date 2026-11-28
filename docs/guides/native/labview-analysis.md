@@ -43,7 +43,15 @@ SHA-256, then reports:
 - every block identifier with its sections: the section index exactly as the
   container declares it (a negative value is preserved, not renumbered), its
   optional name, stored byte count, coding, and the decoded byte count when
-  this reader decoded the section.
+  this reader decoded the section;
+- the embedded program tree (`LVzp`) members, when one is decoded: the ZIP
+  archive's file members with the name exactly as the central directory records
+  it, the declared uncompressed and stored sizes, and the compression method.
+  The archive is read from its central directory only; member content is never
+  extracted or inflated. A name is decoded from the entry's UTF-8 flag, then a
+  matching Unicode Path extra field, then the CP437 fallback; when the ZIP
+  declares no encoding and the name is not ASCII, the member also reports its
+  recorded bytes as `raw_name_hex`, so the fallback is not presented as exact.
 
 A LabVIEW-built executable is read through its PE resource directory, under
 the `RT_RCDATA` resource type only (other types are skipped before their
@@ -55,14 +63,17 @@ blocks a source `.vi` carries.
 
 ## Delivery
 
-`detail: "complete"` returns the whole block inventory inline. With
-`detail: "summary"`, or with `detail` omitted when the complete result would
-exceed the agent result budget, the reply carries the container, version and
-heap facts with block and section counts. The complete inventory stays in
-retained Evidence. Page it with `inspect_analysis_view` kind
-`labview-artifact`, collection `blocks` or `sections` (optionally filtered to one
-four-character `block`), or read it whole with kind `evidence-json`. The CLI
-takes `--detail` and `--evidence_output` the same way.
+`detail: "complete"` returns the whole block and program-tree inventory
+inline. With `detail: "summary"`, or with `detail` omitted when the complete
+result would exceed the agent result budget, the reply carries the container,
+version and heap facts with block, section and program-tree counts. The
+complete inventory stays in retained Evidence. Page it with
+`inspect_analysis_view` kind `labview-artifact`, collection `blocks`,
+`sections` (optionally filtered to one four-character `block`), or
+`program_tree`, or read it whole with kind `evidence-json`. A `program_tree`
+page is bounded by both `limit` and the 1 MiB analysis-view serialized-byte
+allowance; continue at `next_offset`. The CLI takes `--detail` and
+`--evidence_output` the same way.
 
 ## Coding and decoding
 
@@ -75,8 +86,10 @@ A section is reported with one coding:
 | `xor`     | A LabVIEW XOR-coded block, such as the embedded program tree (`LVzp`)                                                                                        |
 | `unknown` | A zlib section that did not decode to its declared length, declares a preset dictionary (FDICT), or was not attempted because a decode allowance was reached |
 
-Only zlib-coded sections are decoded, and only to establish their decoded byte
-count. No section payload is returned; use another tool to extract content once
+Zlib-coded sections are decoded only to establish their decoded byte count.
+The embedded program tree (`LVzp`) is also decoded, because its ZIP central
+directory is the member inventory; no member content is extracted or inflated.
+No other section payload is returned; use another tool to extract content once
 the inventory identifies a block.
 
 ## Limitations
@@ -94,7 +107,19 @@ the inventory identifies a block.
 - The LabVIEW version is the one recorded by the container's `vers` block. A
   LabVIEW-built executable's outer container typically records none, so the
   field is null there.
-- Member VIs stored inside an `.llb` are not listed in this release.
+- A built executable's embedded program tree (`LVzp`) is listed from its ZIP
+  central directory: member paths, declared sizes and compression method, not
+  their content. A name is decoded from the entry's UTF-8 flag when it is set,
+  then from a matching Info-ZIP Unicode Path extra field (0x7075), and
+  otherwise with the ZIP legacy CP437 mapping (with `raw_name_hex` when the
+  encoding is undeclared and the name is not ASCII). A multi-disk archive, or one
+  whose central directory is damaged or inconsistent, is reported as unlistable
+  rather than failing the inventory; Zip64 archives are read through the shared
+  directory reader. This reader materializes at most 4096 file members: an
+  archive declaring more is reported as unlistable rather than expanded into
+  that many names and records; this release has no override, so use another ZIP
+  inventory for a larger tree.
+  Member VIs stored inside an `.llb` file are not listed in this release.
 - Malformed or oversized containers fail instead of returning a partial
   inventory. The reader accepts complete artifacts up to 256 MiB. A container
   that exceeds the block, total-section, or directory-walk allowance fails with

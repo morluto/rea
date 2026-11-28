@@ -904,6 +904,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: labviewArtifactViewRequestSchema,
     labview: labviewArtifactPageContextSchema,
     items: labviewArtifactViewItemsSchema,
+    coverage: nullableCollectionViewCoverageSchema,
   }),
   uefiFirmwarePageViewResultSchema,
   uefiExtractionPageViewResultSchema,
