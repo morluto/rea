@@ -52,6 +52,13 @@ const environment = () => ({
   ...(process.env._JAVA_OPTIONS === undefined
     ? {}
     : { _JAVA_OPTIONS: process.env._JAVA_OPTIONS }),
+  // Linux JVMs encode file names from the locale; without one they replace
+  // the non-ASCII runtime paths the socket boundary control selects.
+  ...Object.fromEntries(
+    ["LANG", "LC_ALL", "LC_CTYPE"]
+      .filter((name) => process.env[name] !== undefined)
+      .map((name) => [name, process.env[name]]),
+  ),
 });
 
 const verifyGraph = (
