@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { hostHasProcfs } from "./procfsHost.js";
 
 import {
   DEBUGGER_COMMAND_DEADLINE_SETTING,
@@ -256,7 +257,7 @@ export type ProcessStartTimeReader = (pid: string) => Promise<string | null>;
 export const readLinuxProcessStartTime: ProcessStartTimeReader = async (
   pid,
 ) => {
-  if (HOST_PLATFORM.platform !== "linux")
+  if (!hostHasProcfs(HOST_PLATFORM.platform))
     throw new Error(
       "Inferior process identity verification requires Linux /proc.",
     );

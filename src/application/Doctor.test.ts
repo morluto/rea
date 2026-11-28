@@ -513,7 +513,7 @@ describe("doctor", () => {
       ),
     ).toEqual({
       node: `Install ${SUPPORTED_NODE_VERSION_PROSE}.`,
-      host: "REA supports macOS 12+, Linux distributions with a recognized apt, dnf, or pacman package family, and the experimental Windows x64 Ghidra P0 boundary; automated Hopper setup on Linux additionally requires an x86_64 host running Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy.",
+      host: "REA supports macOS 12+, Linux distributions with a recognized apt, dnf, or pacman package family, Termux/Android arm64 or x64 (experimental), and the experimental Windows x64 Ghidra P0 boundary; automated Hopper setup on Linux additionally requires an x86_64 host running Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy.",
       hopper: "Run rea setup to install Hopper, or set HOPPER_LAUNCHER_PATH.",
     });
   });
@@ -560,6 +560,39 @@ describe("doctor", () => {
       ok: false,
       detail: "win32 arm64",
     });
+  });
+
+  it("admits Termux/Android arm64 and x64 hosts", async () => {
+    const androidArm = await runDoctor(
+      undefined,
+      host({
+        platform: "android",
+        architecture: "arm64",
+        macosVersion: () => Promise.resolve(undefined),
+        executable: () => Promise.resolve(false),
+      }),
+    );
+    const androidX64 = await runDoctor(
+      undefined,
+      host({
+        platform: "android",
+        architecture: "x64",
+        macosVersion: () => Promise.resolve(undefined),
+        executable: () => Promise.resolve(false),
+      }),
+    );
+    expect(androidArm.checks.find(({ name }) => name === "host")).toMatchObject(
+      {
+        ok: true,
+        detail: "android arm64",
+      },
+    );
+    expect(androidX64.checks.find(({ name }) => name === "host")).toMatchObject(
+      {
+        ok: true,
+        detail: "android x64",
+      },
+    );
   });
   it("detects a manual configured Hopper before Homebrew", async () => {
     let brewProbes = 0;

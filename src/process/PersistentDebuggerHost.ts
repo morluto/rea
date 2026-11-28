@@ -1,4 +1,6 @@
-/** Both persistent debugger managers require Linux procfs descriptor readback. */
+import { hostHasProcfs } from "./procfsHost.js";
+
+/** Persistent debugger managers require procfs descriptor readback. */
 export const persistentDebuggerHostSupported = (
   platform: NodeJS.Platform,
-): boolean => platform === "linux";
+): boolean => hostHasProcfs(platform);

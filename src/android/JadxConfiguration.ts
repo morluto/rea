@@ -499,7 +499,14 @@ const archiveCancellation = (
 
 const requireSupportedHost = (host: HostPlatform): void => {
   const { platform, architecture } = host;
-  if (platform === "linux" || platform === "darwin") return;
+  // Termux reports `android` while exposing Linux procfs for subprocess ownership.
+  if (
+    platform === "linux" ||
+    platform === "darwin" ||
+    (platform === "android" &&
+      (architecture === "arm64" || architecture === "x64"))
+  )
+    return;
   if (platform === "win32" && architecture === "x64") {
     const loaded = systemWindowsNativeAuthority(host);
     if (loaded.available) {
@@ -545,7 +552,7 @@ const requireSupportedHost = (host: HostPlatform): void => {
   }
   throw configurationFailure(
     "unsupported_host",
-    `Android JADX subprocess ownership is unsupported on ${platform}/${architecture}; use Linux, macOS, or Windows x64 with its bundled native controls.`,
+    `Android JADX subprocess ownership is unsupported on ${platform}/${architecture}; use Linux, macOS, Termux/Android arm64 or x64, or Windows x64 with its bundled native controls.`,
     { platform: platform },
     "unsupported_host",
   );

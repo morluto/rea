@@ -1,3 +1,4 @@
+import { hostHasProcfs } from "../procfsHost.js";
 import { isProcessOwnershipInspectionCancellation } from "../ProcessInspectionCancellation.js";
 import { resolveSystemPs } from "../systemPs.js";
 import { processInspectionCancellations } from "../ProcessInspectionCleanup.js";
@@ -249,7 +250,7 @@ const readRootIdentity = async (
   rootPid: number,
   signal: AbortSignal,
 ): Promise<SamplingObservation<ProcessRow | undefined>> => {
-  if (platform === "linux") return readLinuxProcessStat(rootPid, signal);
+  if (hostHasProcfs(platform)) return readLinuxProcessStat(rootPid, signal);
   const rows = await readPsRows(platform, signal);
   return samplingObservation(
     rows.value?.find(({ pid }) => pid === rootPid),
@@ -272,20 +273,19 @@ const inspectInitializedPtyRoot = async (
     (before.value.session_id !== rootPid && before.value.session_id !== null)
   )
     return samplingObservation(undefined, before.diagnostics);
-  const observedRunId =
-    platform === "linux"
-      ? await readProcSamplingSource(
-          `/proc/${String(rootPid)}/environ`,
+  const observedRunId = hostHasProcfs(platform)
+    ? await readProcSamplingSource(
+        `/proc/${String(rootPid)}/environ`,
+        signal,
+        () => readProcessRunId(rootPid, undefined, signal),
+      )
+    : samplingReadObservation(
+        await readSamplingSource(
+          `run token for PID ${String(rootPid)}`,
           signal,
           () => readProcessRunId(rootPid, undefined, signal),
-        )
-      : samplingReadObservation(
-          await readSamplingSource(
-            `run token for PID ${String(rootPid)}`,
-            signal,
-            () => readProcessRunId(rootPid, undefined, signal),
-          ),
-        );
+        ),
+      );
   const after = await readRootIdentity(platform, rootPid, signal);
   const diagnostics = mergeSamplingDiagnostics(
     before.diagnostics,
@@ -352,10 +352,9 @@ const sampleProcesses = async (
   if (context.platform === "win32" || context.limit <= 0)
     return samplingObservation([]);
 
-  const rows =
-    context.platform === "linux"
-      ? await sampleLinux(context)
-      : await samplePs(context);
+  const rows = hostHasProcfs(context.platform)
+    ? await sampleLinux(context)
+    : await samplePs(context);
 
   const { elapsedMs, identities } = context;
   const samples: ProcessSample[] = [];

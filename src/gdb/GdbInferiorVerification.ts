@@ -1,6 +1,7 @@
 import { constants as fsConstants } from "node:fs";
 import { readlink, realpath, stat } from "node:fs/promises";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { hostHasProcfs } from "../process/procfsHost.js";
 import {
   readLinuxProcessStartTime,
   type OwnedInferiorIdentity,
@@ -67,7 +68,7 @@ export const verifyGdbInferiorOutputSink = async (
   rememberIdentity: (identity: OwnedInferiorIdentity) => void,
 ): Promise<void> => {
   // The descriptors live in this host's /proc, whichever host the manager models.
-  if (HOST_PLATFORM.platform !== "linux")
+  if (!hostHasProcfs(HOST_PLATFORM.platform))
     throw new Error(
       "GDB cannot confirm live inferior output descriptors outside Linux /proc.",
     );
