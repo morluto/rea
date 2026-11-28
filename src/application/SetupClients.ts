@@ -21,7 +21,7 @@ export const failedConfigurationMessage = (
     case "target_changed":
       return "The client began reading a different configuration file after the plan was shown, so no change was made. Rerun setup to review the new target.";
     case "target_unavailable":
-      return `The client configuration read target could not be established because ${result.failure.path} could not be inspected: ${result.failure.detail}. Repair access to that path, then rerun setup.`;
+      return result.failure.detail;
     case "path":
       return "Agent configuration path could not be safely verified. Check its permissions and, if it is a symbolic link, verify that the link resolves to a regular file owned by the current user, then rerun setup.";
     case "backup":

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
@@ -42,8 +42,11 @@ const msixClaudeDesktop = (
   quitBeforeSetup: true,
   msixPackage: {
     packageFamilyName: "Claude_pzs8sxrjxfjjc",
-    privateConfigPath: PRIVATE_CONFIG,
-    appDataConfigPath: APPDATA_CONFIG,
+    storage: {
+      kind: "roaming_overlay",
+      privateConfigPath: PRIVATE_CONFIG,
+      appDataConfigPath: APPDATA_CONFIG,
+    },
     virtualizedRoots: [ROAMING, LOCAL],
     processView,
   },
@@ -411,7 +414,8 @@ it("offers shared skill intent when the detected personal copy is current", asyn
   expect(result.plannedActions).toEqual([
     expect.objectContaining({
       id: "install_skill",
-      target: join(
+      // The fake host simulates macOS, so the target uses POSIX separators on any test host.
+      target: posix.join(
         host.homeDirectory,
         ".agents",
         "skills",

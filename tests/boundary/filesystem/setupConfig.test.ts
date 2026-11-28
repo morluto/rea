@@ -284,7 +284,7 @@ describe("JSON client configuration transaction: writing configuration through s
     });
   });
 
-  it("updates a symlink target without replacing the JSON config symlink", async () => {
+  it("updates a JSON config symlink's target only when its owner can be verified", async () => {
     const directory = await createTestTempDirectory("rea-setup-");
     const targetPath = join(directory, "managed.json");
     const configPath = join(directory, "mcp.json");
@@ -292,15 +292,23 @@ describe("JSON client configuration transaction: writing configuration through s
     await writeFile(targetPath, original);
     await symlink(targetPath, configPath);
 
-    expect(
-      await configureClientConfiguration({
-        name: "cursor",
-        registrationProfile: supportedClientRegistrationProfile("cursor"),
-        configPath,
-        format: "json",
-      }),
-    ).toMatchObject({ status: "configured" });
+    const result = await configureClientConfiguration({
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      configPath,
+      format: "json",
+    });
     expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
+    if (process.getuid === undefined) {
+      expect(result).toEqual({ status: "failed", reason: "path" });
+      expect(await readFile(targetPath, "utf8")).toBe(original);
+      expect((await readdir(directory)).sort()).toEqual([
+        "managed.json",
+        "mcp.json",
+      ]);
+      return;
+    }
+    expect(result).toMatchObject({ status: "configured" });
     expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
     expect(JSON.parse(await readFile(targetPath, "utf8"))).toMatchObject({
       theme: "dark",
@@ -689,8 +697,11 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
         configPath,
         msixPackage: {
           packageFamilyName: "Claude_pzs8sxrjxfjjc",
-          appDataConfigPath: configPath,
-          privateConfigPath,
+          storage: {
+            kind: "roaming_overlay",
+            appDataConfigPath: configPath,
+            privateConfigPath,
+          },
           virtualizedRoots: [],
           processView: "direct",
         },
@@ -759,7 +770,7 @@ it("keeps setup and registration diagnostics blocked for an unrecognized Claude 
     join(
       environment.LOCALAPPDATA,
       "Packages",
-      "AnthropicPBC.Claude_fnn82j28hfe8t",
+      "AnthropicPBC.Claude_abcdefghjkmnp",
     ),
     { recursive: true },
   );

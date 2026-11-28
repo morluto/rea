@@ -39,23 +39,20 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 /** The Windows registration setup writes, independent of the test host. */
 const command = currentClientRegistrationCommand({ platform: "win32" });
 const CONFIG = "claude_desktop_config.json";
+const STORE_FAMILY = "AnthropicPBC.Claude_fnn82j28hfe8t";
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
 
 /** A Windows profile with separate roaming and local AppData roots. */
-const windowsProfile = async () => {
+const windowsProfile = async (family = CLAUDE_DESKTOP_PACKAGE_FAMILY) => {
   const home = await createTestTempDirectory("rea-claude-desktop-");
   const env = {
     APPDATA: join(home, "AppData", "Roaming"),
     LOCALAPPDATA: join(home, "AppData", "Local"),
   };
   const appDataConfig = join(env.APPDATA, "Claude", CONFIG);
-  const container = join(
-    env.LOCALAPPDATA,
-    "Packages",
-    CLAUDE_DESKTOP_PACKAGE_FAMILY,
-  );
+  const container = join(env.LOCALAPPDATA, "Packages", family);
   const privateConfig = join(
     container,
     "LocalCache",
@@ -104,6 +101,24 @@ const readJson = async (path: string): Promise<Record<string, unknown>> =>
 
 const reaEntry = { command: command[0], args: command.slice(1) };
 
+/** The Store app leaves its family-specific marker in the old roaming profile. */
+const migratedStoreProfile = async (
+  localAppData: string,
+  privateConfig: string,
+  config: unknown,
+): Promise<string> => {
+  const family = STORE_FAMILY.toLowerCase();
+  const migratedConfig = join(localAppData, "Claude-Data", family, CONFIG);
+  await mkdir(dirname(privateConfig), { recursive: true });
+  await writeFile(
+    join(dirname(privateConfig), `.user-data-left.${family}`),
+    "",
+  );
+  await mkdir(join(localAppData, "Claude-3p"), { recursive: true });
+  await writeJson(migratedConfig, config);
+  return migratedConfig;
+};
+
 describe("Windows Claude Desktop configuration location", () => {
   it("uses AppData when no MSIX package storage exists", async () => {
     const { home, env, appDataConfig } = await windowsProfile();
@@ -134,8 +149,11 @@ describe("Windows Claude Desktop configuration location", () => {
     expect(client.markerPath).toBe(container);
     expect(client.msixPackage).toEqual({
       packageFamilyName: CLAUDE_DESKTOP_PACKAGE_FAMILY,
-      privateConfigPath: privateConfig,
-      appDataConfigPath: appDataConfig,
+      storage: {
+        kind: "roaming_overlay",
+        privateConfigPath: privateConfig,
+        appDataConfigPath: appDataConfig,
+      },
       virtualizedRoots: [env.APPDATA, env.LOCALAPPDATA],
       processView: "direct",
     });
@@ -154,7 +172,7 @@ describe("Windows Claude Desktop configuration location", () => {
 
     expect(client.configPath).toBe(appDataConfig);
     expect(client.msixPackage).toMatchObject({
-      privateConfigPath: privateConfig,
+      storage: { kind: "roaming_overlay", privateConfigPath: privateConfig },
       processView: "unknown",
     });
     // No private file shows whether the running package started this process.
@@ -210,43 +228,62 @@ describe("Windows Claude Desktop configuration location", () => {
       mcpServers: { rea: reaEntry },
     });
   });
+});
 
+describe("unresolved Windows Claude Desktop deployments", () => {
   it.each([
     "Claude_abcdefghjkmnp",
-    "AnthropicPBC.Claude_fnn82j28hfe8t",
-    "ANTHROPICPBC.CLAUDE_FNN82J28HFE8T",
+    "AnthropicPBC.Claude_abcdefghjkmnp",
+    STORE_FAMILY,
   ])(
     "reports unresolved package %s consistently across the registration lifecycle",
     async (family) => {
-      const { home, env, appDataConfig } = await windowsProfile();
-      const foreign = join(env.LOCALAPPDATA, "Packages", family);
-      await mkdir(foreign, { recursive: true });
+      const { home, env, appDataConfig, privateConfig, container } =
+        await windowsProfile(family);
+      await mkdir(container, { recursive: true });
       const appDataOriginal = { mcpServers: { rea: reaEntry } };
       const deploymentConfig = join(env.LOCALAPPDATA, "Claude-3p", CONFIG);
       const deploymentOriginal = {
         deploymentMode: "3p",
         mcpServers: { other: { command: "other" } },
       };
+      const standardOriginal = { preferences: { theme: "light" } };
+      // The same Store package can have both a standard profile and a 3P deployment.
+      const standardConfig =
+        family === STORE_FAMILY
+          ? await migratedStoreProfile(
+              env.LOCALAPPDATA,
+              privateConfig,
+              standardOriginal,
+            )
+          : undefined;
       await writeJson(appDataConfig, appDataOriginal);
       await writeJson(deploymentConfig, deploymentOriginal);
 
       const client = claudeDesktop(home, env);
 
-      expect(client.configPath).toBe(foreign);
-      expect(client.configPathError).toContain(
-        "unrecognized Claude Desktop package identity or deployment",
+      if (family === STORE_FAMILY) {
+        expect(client.configPathError).toContain("3P");
+      } else {
+        expect(client.configPath).toBe(container);
+        expect(client.configPathError).toContain(
+          "unrecognized Claude Desktop package",
+        );
+      }
+      const detected = await detectClients(home, "win32", env);
+      expect(detected.some(({ name }) => name === "claude_desktop")).toBe(
+        family === STORE_FAMILY,
       );
-      expect(client.configPathError).toContain(CLAUDE_DESKTOP_PACKAGE_FAMILY);
-      expect(
-        (await detectClients(home, "win32", env)).map(({ name }) => name),
-      ).not.toContain("claude_desktop");
       const status = (
         await readClientRegistrationStatuses(home, command[1], {
           platform: "win32",
           environment: env,
         })
       ).find(({ client: name }) => name === "claude_desktop");
-      expect(status).toMatchObject({ state: "unknown", config_path: foreign });
+      expect(status).toMatchObject({
+        state: "unknown",
+        config_path: client.configPath,
+      });
       await expect(
         inspectClientConfiguration(client, {}, command),
       ).resolves.toMatchObject({ status: "invalid" });
@@ -265,6 +302,10 @@ describe("Windows Claude Desktop configuration location", () => {
       expect(await readJson(deploymentConfig)).toEqual(deploymentOriginal);
       expect(await readdir(dirname(appDataConfig))).toEqual([CONFIG]);
       expect(await readdir(dirname(deploymentConfig))).toEqual([CONFIG]);
+      if (standardConfig !== undefined) {
+        expect(await readJson(standardConfig)).toEqual(standardOriginal);
+        expect(await readdir(dirname(standardConfig))).toEqual([CONFIG]);
+      }
     },
   );
 });
@@ -376,68 +417,152 @@ it("preserves explicit AppData root whitespace throughout setup, doctor and unin
   expect(await readJson(`${privateConfig}.rea.backup`)).toEqual(original);
 });
 
-describe("MSIX Claude Desktop registration lifecycle", () => {
-  it("registers in the private copy and reports an AppData-only entry as missing", async () => {
-    const { home, env, appDataConfig, privateConfig } = await windowsProfile();
-    const privateOriginal = {
-      coworkUserFilesPath: "C:\\Users\\a\\Claude",
-      preferences: { menuBarEnabled: false },
-      mcpServers: { other: { command: "other", args: ["serve"] } },
-    };
-    await writeJson(privateConfig, privateOriginal);
-    // Earlier setups wrote AppData, which the package never reads.
-    await writeJson(appDataConfig, { mcpServers: { rea: reaEntry } });
-    const appDataOriginal = await readFile(appDataConfig, "utf8");
-    const status = async () =>
-      (
-        await readClientRegistrationStatuses(home, command[1], {
-          platform: "win32",
-          environment: env,
-        })
-      ).find(({ client }) => client === "claude_desktop");
-
-    expect(await status()).toMatchObject({
-      state: "missing",
-      config_path: privateConfig,
-    });
-    expect((await status())?.remediation).toContain(
-      "Quit Claude Desktop fully",
+describe("Microsoft Store Claude Desktop profile selection", () => {
+  it("recognizes a Store installation before launch, then resolves its initialized standard profile", async () => {
+    const family = STORE_FAMILY.toUpperCase();
+    const { home, env, container, appDataConfig } =
+      await windowsProfile(family);
+    await mkdir(container, { recursive: true });
+    const detected = (await detectClients(home, "win32", env)).find(
+      ({ name }) => name === "claude_desktop",
     );
-
-    const client = claudeDesktop(home, env);
-    await expect(
-      inspectClientConfiguration(client, {}, command),
-    ).resolves.toEqual({
-      status: "update",
-      backupPath: `${privateConfig}.rea.backup`,
-    });
-    await expect(
-      configureClientConfiguration(client, {}, command),
-    ).resolves.toEqual({
-      status: "configured",
-      backupPath: `${privateConfig}.rea.backup`,
+    expect(detected).toMatchObject({
+      markerPath: container,
+      configPathError: expect.stringContaining("not been established"),
     });
 
-    expect(await readJson(privateConfig)).toEqual({
-      ...privateOriginal,
-      mcpServers: {
-        ...privateOriginal.mcpServers,
-        rea: reaEntry,
-      },
+    const profile = join(env.LOCALAPPDATA, "Claude-Data", family.toLowerCase());
+    await mkdir(profile, { recursive: true });
+    await writeFile(join(profile, "ant-did"), "");
+    expect(claudeDesktop(home, env)).toMatchObject({
+      configPath: join(profile, CONFIG),
+      markerPath: container,
     });
-    expect(await readJson(`${privateConfig}.rea.backup`)).toEqual(
-      privateOriginal,
+    // An older configuration could still be the active one before the app has moved it.
+    await writeJson(appDataConfig, {});
+    expect(claudeDesktop(home, env).configPathError).toContain(
+      "without a completed move",
     );
-    expect(await readFile(appDataConfig, "utf8")).toBe(appDataOriginal);
-    expect(await status()).toMatchObject({
-      state: "aligned",
-      config_path: privateConfig,
-    });
-    await expect(
-      configureClientConfiguration(client, {}, command),
-    ).resolves.toEqual({ status: "unchanged" });
   });
 
+  it.each(["ant-did", `.user-data-back.${STORE_FAMILY.toLowerCase()}`])(
+    "blocks the planned Store write when the old profile regains %s",
+    async (name) => {
+      const { home, env, privateConfig } = await windowsProfile(STORE_FAMILY);
+      const original = { preferences: { theme: "light" } };
+      const path = await migratedStoreProfile(
+        env.LOCALAPPDATA,
+        privateConfig,
+        original,
+      );
+      const client = claudeDesktop(home, env);
+      expect(client.configPath).toBe(path);
+      const oldPath = join(dirname(privateConfig), name);
+      await writeFile(oldPath, "");
+      await expect(
+        configureClientConfiguration(client, {}, command),
+      ).resolves.toMatchObject({
+        status: "failed",
+        reason: "target_unavailable",
+        failure: { path: oldPath },
+      });
+      expect(await readJson(path)).toEqual(original);
+      expect(await readdir(dirname(path))).toEqual([CONFIG]);
+    },
+  );
+});
+
+describe("MSIX Claude Desktop registration lifecycle", () => {
+  it.each([CLAUDE_DESKTOP_PACKAGE_FAMILY, STORE_FAMILY])(
+    "detects %s and uses its active profile for setup, doctor and uninstall",
+    async (family) => {
+      const { home, env, appDataConfig, privateConfig } =
+        await windowsProfile(family);
+      const original = {
+        coworkUserFilesPath: "C:\\Users\\a\\Claude",
+        preferences: { menuBarEnabled: false },
+        mcpServers: { other: { command: "other", args: ["serve"] } },
+      };
+      const isStore = family === STORE_FAMILY;
+      const activeConfig = isStore
+        ? await migratedStoreProfile(env.LOCALAPPDATA, privateConfig, original)
+        : privateConfig;
+      if (!isStore) await writeJson(privateConfig, original);
+      // Earlier setups wrote AppData, which the package never reads.
+      await writeJson(appDataConfig, { mcpServers: { rea: reaEntry } });
+      const appDataOriginal = await readFile(appDataConfig, "utf8");
+      const status = async () =>
+        (
+          await readClientRegistrationStatuses(home, command[1], {
+            platform: "win32",
+            environment: env,
+          })
+        ).find(({ client }) => client === "claude_desktop");
+
+      const client = (await detectClients(home, "win32", env)).find(
+        ({ name }) => name === "claude_desktop",
+      );
+      if (client === undefined) throw new Error(`${family} was not detected`);
+      expect(client.configPath).toBe(activeConfig);
+      expect(client.msixPackage?.packageFamilyName).toBe(family);
+      expect(await status()).toMatchObject({
+        state: "missing",
+        config_path: activeConfig,
+        remediation: expect.stringContaining("Quit Claude Desktop fully"),
+      });
+
+      const backupPath = `${activeConfig}.rea.backup`;
+      await expect(
+        inspectClientConfiguration(client, {}, command),
+      ).resolves.toEqual({
+        status: "update",
+        backupPath,
+      });
+      await expect(
+        configureClientConfiguration(client, {}, command),
+      ).resolves.toEqual({
+        status: "configured",
+        backupPath,
+      });
+
+      expect(await readJson(activeConfig)).toEqual({
+        ...original,
+        mcpServers: {
+          ...original.mcpServers,
+          rea: reaEntry,
+        },
+      });
+      expect(await readJson(backupPath)).toEqual(original);
+      expect(await readFile(appDataConfig, "utf8")).toBe(appDataOriginal);
+      expect(await status()).toMatchObject({
+        state: "aligned",
+        config_path: activeConfig,
+      });
+      await expect(
+        configureClientConfiguration(client, {}, command),
+      ).resolves.toEqual({ status: "unchanged" });
+
+      const uninstall = await runUninstall(
+        false,
+        claudeDesktopUninstallHost(home, env),
+      );
+      expect(uninstall.status).toBe("complete");
+      expect(await readJson(activeConfig)).toEqual(original);
+      expect(await readJson(backupPath)).toEqual(original);
+      if (isStore) {
+        expect(await readFile(appDataConfig, "utf8")).toBe(appDataOriginal);
+        expect(await readdir(dirname(appDataConfig))).toEqual([CONFIG]);
+        expect(await readdir(dirname(privateConfig))).toEqual([
+          `.user-data-left.${family.toLowerCase()}`,
+        ]);
+      } else {
+        expect(await readJson(appDataConfig)).toEqual({ mcpServers: {} });
+      }
+    },
+  );
+});
+
+describe("legacy MSIX Claude Desktop registration writes", () => {
   it("refuses to write from a process the running package started", async () => {
     const { home, env, privateConfig } = await windowsProfile();
     await writeJson(privateConfig, { preferences: {} });
@@ -580,26 +705,5 @@ describe("MSIX Claude Desktop uninstall", () => {
     );
     expect(result.status).toBe("complete");
     expect(await readJson(appDataConfig)).toEqual(unrelated);
-  });
-
-  it("removes REA from both the private copy and AppData on uninstall", async () => {
-    const { home, env, appDataConfig, privateConfig } = await windowsProfile();
-    await writeJson(privateConfig, {
-      preferences: {},
-      mcpServers: { other: { command: "other" }, rea: reaEntry },
-    });
-    await writeJson(appDataConfig, { mcpServers: { rea: reaEntry } });
-
-    const result = await runUninstall(
-      false,
-      claudeDesktopUninstallHost(home, env),
-    );
-
-    expect(result.status).toBe("complete");
-    expect(await readJson(privateConfig)).toEqual({
-      preferences: {},
-      mcpServers: { other: { command: "other" } },
-    });
-    expect(await readJson(appDataConfig)).toEqual({ mcpServers: {} });
   });
 });

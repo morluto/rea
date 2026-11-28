@@ -499,11 +499,7 @@ export const detectClients = async (
     platform,
     environment,
   )) {
-    if (
-      candidate.configPathError !== undefined ||
-      candidate.registrationApplicability === true
-    )
-      continue;
+    if (candidate.registrationApplicability === true) continue;
     if (await clientEvidencePresent(candidate)) detected.push(candidate);
   }
   return detected;

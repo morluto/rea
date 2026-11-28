@@ -4,18 +4,24 @@ import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { err, ok, type Result } from "../domain/result.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
-/**
- * How one MSIX-packaged client reads its AppData configuration. A package
- * with write virtualization saves AppData files to its private
- * `LocalCache\Roaming` copy, then reads that copy whenever it exists and the
- * ordinary AppData file otherwise.
- */
+/** The package's process view and the storage its client uses for registration. */
 export interface MsixPackageView {
   readonly packageFamilyName: string;
-  /** The package-private copy, which shadows the AppData file once it exists. */
-  readonly privateConfigPath: string;
-  /** The AppData path that unpackaged processes read and write. */
-  readonly appDataConfigPath: string;
+  readonly storage:
+    | {
+        readonly kind: "roaming_overlay";
+        /** The private copy shadows ordinary AppData as soon as it exists. */
+        readonly privateConfigPath: string;
+        readonly appDataConfigPath: string;
+      }
+    | {
+        readonly kind: "store_profile";
+        /** Resolve the active Store profile again before changing its configuration. */
+        readonly checkConfigPath: () => Result<
+          string,
+          { readonly path: string; readonly message: string }
+        >;
+      };
   /** Roots whose writes the package redirects for processes it starts. */
   readonly virtualizedRoots: readonly string[];
   /**
@@ -174,17 +180,25 @@ interface MsixReadTargetInspectionFailure {
   readonly cause: unknown;
 }
 
-/**
- * Whether the package began reading its private copy after the AppData file
- * was chosen, for example by saving its settings when it quit.
- */
+/** Whether the file the package reads changed after the plan selected it. */
 export const packageReadTargetChanged = async (
   view: MsixPackageView,
   configPath: string,
 ): Promise<Result<boolean, MsixReadTargetInspectionFailure>> => {
-  if (configPath !== view.appDataConfigPath) return ok(false);
+  const { storage } = view;
+  if (storage.kind === "store_profile") {
+    const target = storage.checkConfigPath();
+    if (target.ok) return ok(target.value !== configPath);
+    return err({
+      _tag: "MsixReadTargetInspectionFailure",
+      path: target.error.path,
+      detail: target.error.message,
+      cause: target.error,
+    });
+  }
+  if (configPath !== storage.appDataConfigPath) return ok(false);
   try {
-    await lstat(view.privateConfigPath);
+    await lstat(storage.privateConfigPath);
     return ok(true);
   } catch (cause: unknown) {
     if (
@@ -195,8 +209,8 @@ export const packageReadTargetChanged = async (
       return ok(false);
     return err({
       _tag: "MsixReadTargetInspectionFailure",
-      path: view.privateConfigPath,
-      detail: errorMessage(cause),
+      path: storage.privateConfigPath,
+      detail: `The package-private configuration at ${storage.privateConfigPath} could not be inspected. ${errorMessage(cause)}. Repair access to that path, then rerun setup.`,
       cause,
     });
   }

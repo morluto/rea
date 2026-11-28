@@ -24,12 +24,12 @@ export const uninstallConfigPaths = (
     ...(client.readOnlyLowerLayers === true
       ? [client.configPath]
       : (client.configPaths ?? [client.configPath])),
-    ...(client.msixPackage === undefined
-      ? []
-      : [
-          client.msixPackage.privateConfigPath,
-          client.msixPackage.appDataConfigPath,
-        ]),
+    ...(client.msixPackage?.storage.kind === "roaming_overlay"
+      ? [
+          client.msixPackage.storage.privateConfigPath,
+          client.msixPackage.storage.appDataConfigPath,
+        ]
+      : []),
   ]),
 ];
 
