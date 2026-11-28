@@ -4,7 +4,9 @@ import {
   runOwnedCommand,
 } from "../dist/process/OwnedCommand.js";
 import { prepareProcessOwnershipInspection } from "../dist/process/ProcessOwnershipObservation.js";
-import { resolveWindowsProviderExecutable } from "../dist/process/WindowsProviderExecutable.js";
+import { resolveWindowsProviderExecutable } from "../dist/composition/resolveWindowsProviderExecutable.js";
+import { windowsPathCandidates } from "../dist/process/executableSearch.js";
+import { isRegularFileSync } from "../dist/filesystem/regularFileProbe.js";
 import { snapshotEnvironment } from "../dist/process/snapshotEnvironment.js";
 import { retainOwnedCommandCleanup } from "../dist/providers/OwnedCommandCleanup.js";
 import { HOST_PLATFORM } from "../dist/platform/HostPlatform.js";
@@ -94,14 +96,33 @@ export async function withCommands(
       const selected = resolveWindowsProviderExecutable(command, environment, {
         ...windowsExecutableLookup,
         cwd: options.cwd,
-        allowBatch: true,
       });
-      if (!selected.ok)
+      let resolvedCommand = selected.ok ? selected.value : undefined;
+      if (!selected.ok && selected.error.kind === "not_found") {
+        // The surviving resolver searches runnable image extensions only, so a
+        // bare command that names a batch launcher stays this caller's wrapping
+        // boundary; resolve it here through the batch-aware search before failing.
+        const batch = windowsPathCandidates(command, environment, {
+          cwd: options.cwd,
+          allowBatch: true,
+        });
+        if (batch.ok) {
+          for (const candidate of batch.value) {
+            if (
+              (windowsExecutableLookup.isFile ?? isRegularFileSync)(
+                candidate.path,
+              )
+            )
+              resolvedCommand = candidate.path;
+          }
+        }
+      }
+      if (resolvedCommand === undefined)
         throw new Error(
           `Experiment executable lookup failed for ${command}: ${selected.error.kind}. Select an absolute executable or correct PATH/PATHEXT.`,
           { cause: selected.error },
         );
-      selectedCommand = selected.value;
+      selectedCommand = resolvedCommand;
       if (isWindowsBatchFile(selectedCommand)) {
         const invocation = windowsBatchCommand({
           environment,
