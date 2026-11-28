@@ -347,6 +347,11 @@ it("recognizes an audit record after a BOM or blank lines and ignores other padd
   expect(() => recognize(Buffer.from(nest))).not.toThrow();
   expect(recognize(Buffer.from(nest))).toBeUndefined();
   const claimed = `{"pad":"${"x".repeat(5000)}","auditID":"a","stage":"RequestReceived","requestObject":${"[".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}1${"]".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}}`;
+  const inline = `{"auditID":"a","stage":"RequestReceived","requestObject":${"[".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}1${"]".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}}`;
+  expect(recognize(Buffer.from(inline))).toMatchObject({
+    state: "recognized",
+    format: "kubernetes-audit-log",
+  });
   expect(recognize(Buffer.from(claimed))).toMatchObject({
     state: "recognized",
     format: "kubernetes-audit-log",

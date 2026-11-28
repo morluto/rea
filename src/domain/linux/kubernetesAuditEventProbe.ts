@@ -157,11 +157,15 @@ export class KubernetesAuditEventProbe {
               this.#done = true;
               return;
             }
-            this.#rereadRecord();
+            // Identity from earlier slices stands. Replay only when this
+            // slice may have held the identity that the throw discarded.
+            if (this.#hasAuditId && this.#hasStage) this.#depthStopped = true;
+            else this.#rereadRecord();
             this.#failed = !this.#depthStopped;
             this.#done = true;
             return;
           }
+          if (this.#hasAuditId && this.#hasStage) this.#recordSlices.length = 0;
           index = end;
         }
       }

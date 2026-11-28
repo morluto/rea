@@ -274,7 +274,8 @@ export const parseKubernetesAuditLine = (
       token === "array" &&
       frame.kind === "root" &&
       pendingKey === "sourceIPs"
-    )
+    ) {
+      value.sourceIPs = null;
       stack.push({
         kind: "strings",
         target: "sourceIPs",
@@ -283,11 +284,13 @@ export const parseKubernetesAuditLine = (
         invalid: false,
         overBudget: false,
       });
-    else if (
+    } else if (
       token === "array" &&
       frame.kind === "user" &&
       pendingKey === "groups"
-    )
+    ) {
+      sawUser = true;
+      user.groups = null;
       stack.push({
         kind: "strings",
         target: "groups",
@@ -296,7 +299,7 @@ export const parseKubernetesAuditLine = (
         invalid: false,
         overBudget: false,
       });
-    else {
+    } else {
       invalidatePending();
       stack.push({ kind: "skip" });
     }

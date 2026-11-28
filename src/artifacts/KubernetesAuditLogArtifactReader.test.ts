@@ -593,6 +593,19 @@ it("clears a response object when a later array replaces it", async () => {
   });
 });
 
+it("drops an address list when a later list is cut off by depth", async () => {
+  const nest = `${"[".repeat(KUBERNETES_AUDIT_JSON_DEPTH)}1${"]".repeat(KUBERNETES_AUDIT_JSON_DEPTH)}`;
+  const metadata = await metadataOf(
+    `{"apiVersion":"audit.k8s.io/v1","auditID":"ips","stage":"RequestReceived","verb":"get","sourceIPs":["10.0.0.1"],"sourceIPs":${nest}}\n`,
+  );
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "ips",
+    source_ips: null,
+    verb: "get",
+    depth_limited: true,
+  });
+});
+
 it("clears groups when a later scalar replaces the list", async () => {
   const metadata = await metadataOf(
     '{"auditID":"groups","stage":"RequestReceived","user":{"username":"ada","groups":["system:authenticated"]},"user":{"username":"ada","groups":null},"verb":"get"}\n',
