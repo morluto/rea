@@ -49,12 +49,15 @@ jobs:
       - name: Reuse portable build outputs across runs
         uses: ./.github/actions/portable-build-cache
       - run: npm run test:prepare
+      # Stryker splits concurrency between TypeScript checkers and test
+      # runners, so the configurations' local default of 2 leaves one test
+      # runner. This runner has 4 vCPUs.
       - name: Run the complete configuration
         env:
           MUTATION_CONFIG: ${{ matrix.config }}
         run: |
           node scripts/prepare-reverse-tools-mutation.mjs
-          npx --no-install stryker run "${MUTATION_CONFIG}"
+          npx --no-install stryker run "${MUTATION_CONFIG}" --concurrency 4
       - name: Require both reports from the completed sweep
         env:
           REPORT_BASE: reports/mutation/${{ matrix.suite }}
