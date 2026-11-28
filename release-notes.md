@@ -499,6 +499,7 @@
 * **javascript:** account for active nullish pattern defaults ([c1943f1](https://github.com/morluto/rea/commit/c1943f196cde8d232029e184648bf0a1356b685a))
 * **javascript:** answer an over-budget member-mutation query by escaping whole objects ([#14153](https://github.com/morluto/rea/issues/14153)) ([c4916a6](https://github.com/morluto/rea/commit/c4916a6ff779c1ef39f998bf49b0e11840bd8889))
 * **javascript:** drop a stream acquisition whose options Node refuses ([#9262](https://github.com/morluto/rea/issues/9262)) ([afa3482](https://github.com/morluto/rea/commit/afa34825a81496b6de427ca11ffb9b4781902855))
+* **javascript:** escape values stored into an object that escapes ([#14273](https://github.com/morluto/rea/issues/14273)) ([26741b0](https://github.com/morluto/rea/commit/26741b03bebb6e7d4624ea2265835bca02e7c780))
 * **javascript:** include the underscore in the http token class ([62c4c25](https://github.com/morluto/rea/commit/62c4c25d19b67363784b58961072cd12c509de52))
 * **javascript:** keep Electron options visible past conditional literal spreads ([#9510](https://github.com/morluto/rea/issues/9510)) ([abdf383](https://github.com/morluto/rea/commit/abdf383939bd4190c9a06dd6576f3d698718d842))
 * **javascript:** name minified receiverless import calls by their final callee ([#9095](https://github.com/morluto/rea/issues/9095)) ([f8a12eb](https://github.com/morluto/rea/commit/f8a12eba17e95d0897c4438f629d7bd30b3380cc))
