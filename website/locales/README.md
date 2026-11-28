@@ -143,6 +143,11 @@ Bulgarian (`bg`) has a complete translated README in Cyrillic script. Its
 website catalog is pending and uses the same labeled, nonindexable English
 fallback; the Bulgarian README does not establish website translation coverage.
 
+Hindi (`hi`) has a translated README in Devanagari script, with product and tool
+names kept in Latin script. Its website catalog is pending and uses the same
+labeled, nonindexable English fallback; the Hindi README does not establish
+website translation coverage.
+
 The first catalogs started with machine-assisted drafts. They include editorial
 corrections to navigation, prompts and technical terminology. Traditional Chinese
 started from the Simplified Chinese draft and is maintained independently.

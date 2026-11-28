@@ -142,5 +142,11 @@
     "name": "Български",
     "readme": "docs/readme/README_bg.md",
     "dir": "ltr"
+  },
+  {
+    "code": "hi",
+    "name": "हिन्दी",
+    "readme": "docs/readme/README_hi.md",
+    "dir": "ltr"
   }
 ]
