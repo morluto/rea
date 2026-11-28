@@ -107,6 +107,8 @@ type ClientConfigurationLocation = Pick<
 > & { readonly format?: ClientConfigurationFormat };
 
 interface ClientConfigurationReadOptions {
+  /** Doctor retains readable launch settings for each setting owner to diagnose. */
+  readonly environmentValidation?: "strict" | "diagnostic";
   readonly writeOverrides?: Readonly<Record<string, string>>;
   /** The writer's verified snapshot of the selected path, which must not be reopened here. */
   readonly targetDocument?: ClientConfigurationDocument;
@@ -186,12 +188,16 @@ export const readConfigurationFile = async (
       });
 };
 
-/** Read each layer; setup may validate its writable layer with proposed overrides. */
+/** Read each layer; setup validates admission, while doctor can observe invalid settings. */
 export const readClientConfigurationFiles = async (
   client: ClientConfigurationLocation,
   resources: ArtifactResourceScope | undefined,
   platform: NodeJS.Platform,
-  { writeOverrides, targetDocument }: ClientConfigurationReadOptions = {},
+  {
+    writeOverrides,
+    targetDocument,
+    environmentValidation = "strict",
+  }: ClientConfigurationReadOptions = {},
 ): Promise<
   Result<readonly ClientConfigurationSource[], ClientConfigurationFileError>
 > => {
@@ -205,12 +211,13 @@ export const readClientConfigurationFiles = async (
       validation: "fragment",
       overrides: path === client.configPath ? writeOverrides : undefined,
     });
+  const validateEnvironment = environmentValidation !== "diagnostic";
   const openCode = client.format === "opencode";
   const documents = await readUserConfigurationSources(
     client,
     resources,
     targetDocument,
-    openCode
+    !validateEnvironment || openCode
       ? undefined
       : (path, document) =>
           // Goose can replace the environment of a read-only lower layer as a whole map.
@@ -223,7 +230,7 @@ export const readClientConfigurationFiles = async (
     documents.value,
     platform,
   );
-  if (openCode) {
+  if (openCode && validateEnvironment) {
     // A native row replaces its peers. Only a write target needs separate
     // fragment validation in that dialect.
     const replacesRows = clientServerRowsReplace(effective?.dialect);
@@ -240,12 +247,14 @@ export const readClientConfigurationFiles = async (
       if (failure !== undefined) return err(failure);
     }
   }
-  const failure = configurationEnvironmentFailure(client, platform, {
-    path: client.configPath,
-    document: effective,
-    validation: "effective",
-    overrides: writeOverrides,
-  });
+  const failure = validateEnvironment
+    ? configurationEnvironmentFailure(client, platform, {
+        path: client.configPath,
+        document: effective,
+        validation: "effective",
+        overrides: writeOverrides,
+      })
+    : undefined;
   return failure === undefined ? documents : err(failure);
 };
 
@@ -621,6 +630,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
   resources: ArtifactResourceScope | undefined,
   platform: NodeJS.Platform,
   project?: ProjectConfigurationReadOptions,
+  environmentValidation: "strict" | "diagnostic" = "strict",
 ): Promise<
   Result<EffectiveClientRegistrationConfiguration, ClientConfigurationFileError>
 > => {
@@ -628,9 +638,19 @@ export const readEffectiveClientRegistrationConfiguration = async (
     project === undefined ||
     (client.format !== "opencode" && client.format !== "pi")
   )
-    return readEffectiveUserConfiguration(client, resources, platform);
+    return readEffectiveUserConfiguration(
+      client,
+      resources,
+      platform,
+      environmentValidation,
+    );
   if (client.configPathError !== undefined)
-    return readEffectiveUserConfiguration(client, resources, platform);
+    return readEffectiveUserConfiguration(
+      client,
+      resources,
+      platform,
+      environmentValidation,
+    );
   if (!isQualifiedCallerPath(project.projectDirectory, platform))
     return err({
       kind: "unreadable",
@@ -714,7 +734,12 @@ export const readEffectiveClientRegistrationConfiguration = async (
         candidates.set(path, publication);
     }
   if (layers.length === 0 && userAliasPaths.size === 0)
-    return readEffectiveUserConfiguration(client, resources, platform);
+    return readEffectiveUserConfiguration(
+      client,
+      resources,
+      platform,
+      environmentValidation,
+    );
 
   if (client.format === "pi" && layers.length > 0) {
     const trust = await isPiProjectTrusted(
@@ -738,6 +763,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
         client,
         resources,
         platform,
+        environmentValidation,
       );
       return user.ok
         ? ok(projectViewOfUserRegistration(user.value, "untrusted"))
@@ -824,22 +850,28 @@ export const readEffectiveClientRegistrationConfiguration = async (
       effectiveClientServer(baseline, PRODUCT_IDENTITY.mcpServerKey),
       effectiveClientServer(document, PRODUCT_IDENTITY.mcpServerKey),
     );
-  const environment = clientRegistrationEnvironment(document, client, platform);
   let environmentError: ClientConfigurationFileError | undefined;
-  if (!environment.ok) {
-    const source =
-      contributingEnvironmentSource(active, environment.error, platform) ??
-      last?.source;
-    environmentError = {
-      ...invalidEnvironment(
-        source?.sourcePath ?? client.configPath,
-        environment.error,
-        undefined,
-        platform,
-      ),
-      ...(source?.scope === "project" ? { scope: "project" } : {}),
-    };
-    if (project.mode !== "ownership") return err(environmentError);
+  if (environmentValidation !== "diagnostic") {
+    const environment = clientRegistrationEnvironment(
+      document,
+      client,
+      platform,
+    );
+    if (!environment.ok) {
+      const source =
+        contributingEnvironmentSource(active, environment.error, platform) ??
+        last?.source;
+      environmentError = {
+        ...invalidEnvironment(
+          source?.sourcePath ?? client.configPath,
+          environment.error,
+          undefined,
+          platform,
+        ),
+        ...(source?.scope === "project" ? { scope: "project" } : {}),
+      };
+      if (project.mode !== "ownership") return err(environmentError);
+    }
   }
 
   const projectFacts = {
@@ -952,6 +984,7 @@ const readEffectiveUserConfiguration = async (
   client: SetupClient,
   resources: ArtifactResourceScope | undefined,
   platform: NodeJS.Platform,
+  environmentValidation: "strict" | "diagnostic" = "strict",
 ): Promise<
   Result<EffectiveClientRegistrationConfiguration, ClientConfigurationFileError>
 > => {
@@ -959,6 +992,7 @@ const readEffectiveUserConfiguration = async (
     client,
     resources,
     platform,
+    { environmentValidation },
   );
   if (!nativeSources.ok) return nativeSources;
   const nativeDocument = mergeClientConfigurationDocuments(
@@ -991,6 +1025,7 @@ const readEffectiveUserConfiguration = async (
     fallbackClient,
     resources,
     platform,
+    { environmentValidation },
   );
   if (!fallbackSources.ok) return fallbackSources;
   const document = mergeClientConfigurationDocuments(

@@ -1,4 +1,4 @@
-import { createVerifierCommands } from "../../../scripts/lib/verify-commands.mjs";
+import { createVerifierCommands } from "../../../scripts/lib/verifier-command-owner.mjs";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";

@@ -13,6 +13,7 @@ import {
 import type { SetupClient } from "./SupportedClients.js";
 
 import { launchAnalysisSetting } from "../config/analysisSettings.js";
+import { validateEnvironmentEntries } from "../config/environment.js";
 import {
   DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
@@ -26,7 +27,10 @@ import {
 import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
+import {
+  mergeEnvironmentOverrides,
+  snapshotEnvironment,
+} from "../process/snapshotEnvironment.js";
 import { dshDocument } from "./DshCordisPatch.js";
 import { mergeRegistrationEnvironment } from "./UserConfigurationLocation.js";
 import type { McpToolTimeoutInputs } from "../config/mcpStartupPolicy.js";
@@ -150,15 +154,30 @@ export const clientRegistrationEnvironment = (
   return details.ok ? ok(details.value.values) : details;
 };
 
-/** Retain original strings and the parser-owned timeout facts. */
+/** Retain original strings and parser-owned timeout facts. Diagnostic observation
+ * deliberately supplies no admitted timeout facts and never validates a launch. */
 export const clientRegistrationEnvironmentDetails = (
   parsed: ClientConfigurationDocument | undefined,
   client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
   platform: NodeJS.Platform,
   overrides: Readonly<Record<string, string>> = {},
-  validation: "fragment" | "effective" = "effective",
+  validation: "fragment" | "effective" | "diagnostic" = "effective",
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
   if (parsed?.dialect === "dsh") {
+    if (validation === "diagnostic") {
+      const observed = dshDocument(parsed.document).environmentValues(
+        overrides,
+        platform,
+      );
+      return observed.ok
+        ? validatedDetails(
+            observed.value.values,
+            validation,
+            platform,
+            observed.value.unresolvedSettings,
+          )
+        : observed;
+    }
     const environment = dshDocument(parsed.document).environment(
       overrides,
       validation,
@@ -327,10 +346,20 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
 
 const validatedDetails = (
   environment: Readonly<Record<string, string>>,
-  validation: "fragment" | "effective",
+  validation: "fragment" | "effective" | "diagnostic",
   platform: NodeJS.Platform,
   expressionSettings: ReadonlySet<string>,
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
+  if (validation === "diagnostic") {
+    const entries = validateEnvironmentEntries(environment, expressionSettings);
+    if (!entries.ok) return entries;
+    return ok({
+      values: environment,
+      runtimeEnvironment: snapshotEnvironment(environment, platform),
+      unresolvedSettings: expressionSettings,
+      timeoutInputs: undefined,
+    });
+  }
   const validated = validateRegistrationEnvironment(
     environment,
     expressionSettings,
