@@ -319,6 +319,20 @@ export const parseDevicetree = (
     for (const handle of declared)
       if (handle !== 0 && handle !== 0xffffffff) {
         const existing = handles.get(handle);
+        // A handle claimed by another node leaves both declarations unresolved, and the
+        // reader says which pair it refused rather than dropping the reference silently.
+        if (
+          unambiguous &&
+          existing !== undefined &&
+          existing !== null &&
+          existing !== node.path
+        ) {
+          // Both paths appear in the sentence, so both are charged.
+          admit((existing.length + node.path.length) * 2 + 256);
+          limitations.push(
+            `phandle 0x${handle.toString(16)} is declared by both ${existing} and ${node.path}; references to it are unresolved.`,
+          );
+        }
         handles.set(
           handle,
           unambiguous && (existing === undefined || existing === node.path)

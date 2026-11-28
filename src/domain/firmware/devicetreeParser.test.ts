@@ -476,6 +476,66 @@ it("bounds repeated reference paths before Evidence serialization", () => {
   expect(() => parse(bytes)).toThrow("max_decoded_bytes");
 });
 
+/**
+ * A handle claimed by two nodes cannot identify either of them, so the reader names the
+ * pair it refused instead of dropping every reference to that value in silence.
+ */
+it("names a phandle two nodes declare, instead of resolving it silently", () => {
+  const report = parse(
+    devicetreeFixture({
+      name: "",
+      properties: {
+        compatible: cells(1),
+        "#address-cells": cells(1),
+        "#size-cells": cells(1),
+      },
+      children: [
+        { name: "a@0", properties: { reg: cells(0, 1), phandle: cells(7) } },
+        { name: "b@1", properties: { reg: cells(1, 1), phandle: cells(7) } },
+        {
+          name: "consumer",
+          properties: { "interrupt-parent": cells(7) },
+        },
+      ],
+    }),
+  );
+  expect(
+    report.limitations.filter((line) => line.includes("is declared by both")),
+  ).toEqual([
+    "phandle 0x7 is declared by both /a@0 and /b@1; references to it are unresolved.",
+  ]);
+});
+
+/**
+ * The duplicate-handle sentence names two paths, so both are charged before the
+ * sentence is allocated; a long first owner cannot add text for free.
+ */
+it("charges both paths a duplicate-handle sentence names", () => {
+  const report = parse(
+    devicetreeFixture({
+      name: "",
+      properties: {
+        compatible: cells(1),
+        "#address-cells": cells(1),
+        "#size-cells": cells(1),
+      },
+      children: [
+        {
+          name: `a@${"0".repeat(200)}`,
+          properties: { reg: cells(0, 1), phandle: cells(7) },
+        },
+        { name: "b@1", properties: { reg: cells(1, 1), phandle: cells(7) } },
+      ],
+    }),
+  );
+  const sentence = report.limitations.find((line) =>
+    line.includes("is declared by both"),
+  );
+  expect(sentence).toBeDefined();
+  // The reader charges both paths before pushing the sentence.
+  expect(sentence).toContain(`/a@${"0".repeat(200)}`);
+});
+
 const propertyAt = (report: Devicetree, path: string, name: string) =>
   report.nodes
     .find((node) => node.path === path)
