@@ -1,12 +1,23 @@
 # JavaScript and Electron application artifacts
 
-For captured or bundled JavaScript that needs readable source recovery, use
-`recover_javascript_sources` with an absolute `path` and absent
-`output_directory`. Supply related runtime/shared/lazy files in
-`additional_paths` when advertised, then analyze the returned `analysis_input`
-directory together. Each input retains its own snapshot, digest and byte-range
-provenance; inputs and recovered code are never executed. Recovery requires a
-caller-supplied Wakaru on Linux x64; see [the recovery guide](https://github.com/morluto/rea/blob/main/docs/guides/javascript/javascript-recovery.md).
+For captured or bundled JavaScript that needs readable source recovery, choose
+the workflow based on host support:
+
+- **Supported Linux x64 host (integrated recovery available):** use
+  `recover_javascript_sources` with an absolute `path` and absent
+  `output_directory`. Supply related runtime/shared/lazy files in
+  `additional_paths` when needed, then analyze the returned `analysis_input`
+  directory together. Each input retains its own snapshot, digest and byte-range
+  provenance; inputs and recovered code are never executed. Recovery requires a
+  caller-supplied Wakaru on Linux x64 and `prlimit`; see [the recovery guide](https://github.com/morluto/rea/blob/main/docs/guides/javascript/javascript-recovery.md).
+- **Unsupported host (e.g. Windows) or integrated recovery unavailable:** run
+  Wakaru (or an equivalent recovery process) externally to produce a recovered
+  modules directory, then analyze that directory with
+  `analyze_javascript_application`. Do not claim integrated
+  `recover_javascript_sources` availability or REA-managed guarantees for this
+  manual path (no REA `analysis_input`/`manifest.json`/`reports` binding and no
+  REA snapshot/publication/rollback/provenance contract unless separately
+  produced and verified). See [manual recovery on unsupported hosts](https://github.com/morluto/rea/blob/main/docs/guides/javascript/javascript-recovery.md#unsupported-hosts-and-manual-recovery-example-windows).
 
 Use `analyze_javascript_application` directly on the operator-supplied ASAR or
 extracted tree. When the question concerns known source paths and the connected
