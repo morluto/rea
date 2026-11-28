@@ -882,16 +882,15 @@ class AmigaHunkParser {
         hunk.blockOffset,
         `Hunk ${hunk.index} header allocates ${hunk.declaredLongwords} longwords and the block stores ${nlongs}.`,
       );
-    if (kind === "bss") {
-      hunk.storedLongwords = nlongs;
-      return;
-    }
+    // The size word is an observed fact even when the payload is cut short;
+    // only the extractable range depends on the payload being present.
+    hunk.storedLongwords = nlongs;
+    if (kind === "bss") return;
     const byteLength = nlongs * 4;
     if (!this.fits(byteLength)) {
       this.failTruncated(at, "hunk bytes");
       return;
     }
-    hunk.storedLongwords = nlongs;
     hunk.storedBytes = byteLength;
     hunk.fileOffset = this.offset;
     this.offset += byteLength;

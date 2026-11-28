@@ -267,6 +267,40 @@ it.each([
   },
 );
 
+it.each(["code", "data"] as const)(
+  "keeps the %s block length when its payload is truncated",
+  (type) => {
+    const bytes = amigaLoadFile({
+      hunks: [
+        {
+          type,
+          bytes: Buffer.alloc(8, 0x4e),
+          declaredLongwords: 3,
+          omitEnd: true,
+        },
+      ],
+    });
+    const file = parseAmigaHunk(bytes.subarray(0, -4));
+    expect(file.entries).toEqual([]);
+    expect(file.hunks[0]).toMatchObject({
+      type,
+      declaredLongwords: 3,
+      storedLongwords: 2,
+      storedBytes: null,
+      fileOffset: null,
+    });
+    expect(amigaHunkMetadata(file).hunks[0]).toMatchObject({
+      declared_longwords: 3,
+      stored_longwords: 2,
+      stored_bytes: null,
+      file_offset: null,
+    });
+    expect(file.limitations).toMatchObject([
+      { kind: "truncated", detail: expect.stringContaining("hunk bytes") },
+    ]);
+  },
+);
+
 it("records chip, fast and extended memory flags", () => {
   const file = parseAmigaHunk(
     amigaLoadFile({
