@@ -325,6 +325,7 @@ const parsePeCertificateTable = (
       } catch (cause) {
         // An exhausted decoder allowance is not evidence of malformed DER;
         // the provider reports it as a fixed resource allowance.
+        // The cause keeps structured details such as a signedAttrs defect.
         if (
           cause instanceof PeCertificateAsn1Failure &&
           cause.exhausted === null
